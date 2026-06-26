@@ -915,7 +915,7 @@ function Students({ students, onAdd, onUpdate, onChat, classes=[], onInvite }) {
           ))}
         </div>
       </div>
-      <div style={{flex:1,overflowY:"auto",padding:16,paddingBottom:"calc(120px + env(safe-area-inset-bottom, 34px))"}}>
+      <div style={{flex:1,overflowY:"auto",padding:16,paddingBottom:80}}>
         {list.length===0&&<div style={{textAlign:"center",padding:"32px 0",color:C.mutedDark,fontSize:14}}>No se encontraron alumnos</div>}
         {list.map(s=>{
           const combo=getCombo(s); const rem=getRem(s);
@@ -1631,7 +1631,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
               })}
             </div>
             {/* Timeline - absolute positioned */}
-            <div style={{overflowY:"auto",flex:1,paddingBottom:"calc(120px + env(safe-area-inset-bottom, 34px))"}}>
+            <div style={{overflowY:"auto",flex:1,paddingBottom:80}}>
               <div style={{position:"relative",minHeight:HOURS.length*HOUR_HEIGHT}}>
                 {/* Hour grid lines + buttons */}
                 {HOURS.map((hourVal,hi)=>(
@@ -3096,7 +3096,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
 
         {/* HOME */}
         {tab==="home"&&(
-          <div style={{flex:1,overflowY:"auto",paddingBottom:"calc(120px + env(safe-area-inset-bottom, 34px))",background:C.bg}}>
+          <div style={{flex:1,overflowY:"auto",paddingBottom:80,background:C.bg}}>
 
             {/* Hero card */}
             <div style={{background:C.white,margin:"12px 12px 0",borderRadius:20,padding:16,boxShadow:"0 2px 12px rgba(44,94,247,0.08)",display:"flex",gap:14,alignItems:"flex-start"}}>
@@ -3180,7 +3180,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
 
                 {/* CLASES */}
         {tab==="clases"&&(
-          <div style={{flex:1,overflowY:"auto",padding:16,paddingBottom:"calc(120px + env(safe-area-inset-bottom, 34px))"}}>
+          <div style={{flex:1,overflowY:"auto",padding:16,paddingBottom:80}}>
             <div style={{fontSize:16,fontWeight:800,color:C.text,marginBottom:16}}>Mis Clases</div>
             {myClasses.length===0&&<div style={{textAlign:"center",padding:"32px 0",color:C.mutedDark}}>No tenés clases asignadas aún</div>}
             {myClasses.map(c=>(
@@ -3243,7 +3243,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
 
         {/* PAGOS */}
         {tab==="pagos"&&(
-          <div style={{flex:1,overflowY:"auto",padding:16,paddingBottom:"calc(120px + env(safe-area-inset-bottom, 34px))"}}>
+          <div style={{flex:1,overflowY:"auto",padding:16,paddingBottom:80}}>
             <div style={{fontSize:16,fontWeight:800,color:C.text,marginBottom:16}}>Historial de Pagos</div>
             {student.combos.slice().reverse().map((c,i)=>(
               <WhiteCard key={i} style={{marginBottom:10}}>
@@ -3266,7 +3266,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
 
         {/* CONFIG */}
         {tab==="config"&&(
-          <div style={{flex:1,overflowY:"auto",padding:16,paddingBottom:"calc(120px + env(safe-area-inset-bottom, 34px))"}}>
+          <div style={{flex:1,overflowY:"auto",padding:16,paddingBottom:80}}>
             {/* Avatar */}
             <div style={{textAlign:"center",marginBottom:24}}>
               <div style={{position:"relative",width:88,height:88,margin:"0 auto 8px"}}>
@@ -3849,7 +3849,7 @@ export default function App() {
   return (
     <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden",position:"relative"}}>
       <TopBar onExit={handleLogout} onConfig={()=>setShowConfig(true)}/>
-      <div key={"cur-"+currency} style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",position:"relative",overflow:"hidden",paddingBottom:"calc(64px + env(safe-area-inset-bottom, 34px))"}}>
+      <div key={"cur-"+currency} style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",position:"relative",overflow:"hidden"}}>
         {tab==="dashboard"&&isFirstTime&&<EmptyDashboard onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)}/>}
         {tab==="dashboard"&&!isFirstTime&&<Dashboard students={students} classes={classes} onNavigate={handleNavigate} onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)} expenses={expenses} coachProfile={coachProfile}/>}
         {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={classes} onInvite={()=>setShowInvite(true)}/>}
