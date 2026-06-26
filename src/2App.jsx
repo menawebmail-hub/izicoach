@@ -126,7 +126,7 @@ function NavBar({ tabs, active, onSelect, zIdx=0 }) {
     finanzas:(c)=>(<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>),
   };
   return (
-    <div style={{display:"flex",borderTop:"1px solid rgba(44,94,247,0.07)",background:C.white,paddingBottom:"env(safe-area-inset-bottom,8px)",position:"fixed",bottom:0,left:0,right:0,zIndex:Math.max(zIdx,100),boxShadow:"0 -2px 16px rgba(44,94,247,0.06)"}}>
+    <div style={{display:"flex",borderTop:"1px solid rgba(44,94,247,0.07)",background:C.white,paddingBottom:"env(safe-area-inset-bottom,4px)",flexShrink:0,position:"relative",zIndex:zIdx,boxShadow:"0 -2px 16px rgba(44,94,247,0.06)"}}>
       {tabs.map(t=>{
         const isActive=active===t.id; const col=isActive?C.blue2:"#9BACCB";
         return (
