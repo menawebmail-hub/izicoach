@@ -179,10 +179,10 @@ function NewPackageModal({ onSave, onClose, currency }) {
             ))}
           </div>
         </div>
-        {pType==="combo"&&<div style={{marginBottom:12}}><label style={{fontSize:12,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>CANTIDAD DE CLASES</label><input type="text" inputMode="numeric" pattern="[0-9]*" value={pQty} onChange={e=>setPQty(e.target.value)} placeholder="8" style={iS}/></div>}
+        {pType==="combo"&&<div style={{marginBottom:12}}><label style={{fontSize:12,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>CANTIDAD DE CLASES</label><input type="number" value={pQty} onChange={e=>setPQty(e.target.value)} placeholder="8" style={iS}/></div>}
         <div style={{marginBottom:20}}>
           <label style={{fontSize:12,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>PRECIO ({currency||getCUR()}) *</label>
-          <input type="text" inputMode="numeric" pattern="[0-9]*" value={pPrice} onChange={e=>setPPrice(e.target.value)} placeholder="400000" style={iS}/>
+          <input type="number" value={pPrice} onChange={e=>setPPrice(e.target.value)} placeholder="400000" style={iS}/>
         </div>
         <div style={{display:"flex",gap:10}}>
           <button onClick={onClose} style={{flex:1,padding:"13px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:14,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
@@ -390,8 +390,8 @@ function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, coach
                     ))}
                   </div>
                 </div>
-                {pType==="combo"&&<div style={{marginBottom:10}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>CANTIDAD DE CLASES</label><input type="text" inputMode="numeric" pattern="[0-9]*" value={pQty} onChange={e=>setPQty(e.target.value)} placeholder="8" style={iS}/></div>}
-                <div style={{marginBottom:14}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>PRECIO (₲) *</label><input type="text" inputMode="numeric" pattern="[0-9]*" value={pPrice} onChange={e=>setPPrice(e.target.value)} placeholder="400000" style={iS}/></div>
+                {pType==="combo"&&<div style={{marginBottom:10}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>CANTIDAD DE CLASES</label><input type="number" value={pQty} onChange={e=>setPQty(e.target.value)} placeholder="8" style={iS}/></div>}
+                <div style={{marginBottom:14}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>PRECIO (₲) *</label><input type="number" value={pPrice} onChange={e=>setPPrice(e.target.value)} placeholder="400000" style={iS}/></div>
                 <div style={{display:"flex",gap:8}}>
                   <button onClick={()=>{setShowNewPack(false);setPName("");setPQty("");setPPrice("");}} style={{flex:1,padding:"11px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:13,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
                   <button onClick={()=>{if(!pName.trim()||!pPrice)return;setPackages(prev=>[...prev,{id:Date.now(),name:pName.trim(),type:pType,qty:pType==="combo"?parseInt(pQty)||null:null,price:parseInt(pPrice)}]);setPName("");setPQty("");setPPrice("");setShowNewPack(false);}} style={{flex:1,padding:"11px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:13,fontWeight:800}}>Guardar</button>
@@ -661,7 +661,7 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:10,marginBottom:10}}>
                     <div>
                       <label style={{fontSize:11,color:C.blue2,fontWeight:700,display:"block",marginBottom:4}}>MONTO ({getCUR()})</label>
-                      <input type="text" inputMode="numeric" pattern="[0-9]*" value={sd.amount} onChange={e=>upd(s.id,"amount",e.target.value)} placeholder="400000" style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:13,boxSizing:"border-box",background:C.bg,color:C.text,outline:"none"}}/>
+                      <input type="number" value={sd.amount} onChange={e=>upd(s.id,"amount",e.target.value)} placeholder="400000" style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:13,boxSizing:"border-box",background:C.bg,color:C.text,outline:"none"}}/>
                     </div>
                     <div>
                       <label style={{fontSize:11,color:C.blue2,fontWeight:700,display:"block",marginBottom:4}}>PAQUETE <span style={{fontSize:9,color:C.mutedDark,fontWeight:500}}>(opcional)</span></label>
@@ -1151,7 +1151,7 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
                 </div>
                 <div>
                   <div style={{fontSize:10,fontWeight:700,color:C.mutedDark,marginBottom:4}}>MONTO ({getCUR()})</div>
-                  <input type="text" inputMode="numeric" pattern="[0-9]*" value={studentPacks[sid]?.amount||""} placeholder="0" onChange={e=>setStudentPacks(p=>({...p,[sid]:{...p[sid],amount:parseInt(e.target.value)||0}}))} style={{...iS,padding:"8px 10px",fontSize:12}}/>
+                  <input type="number" value={studentPacks[sid]?.amount||""} placeholder="0" onChange={e=>setStudentPacks(p=>({...p,[sid]:{...p[sid],amount:parseInt(e.target.value)||0}}))} style={{...iS,padding:"8px 10px",fontSize:12}}/>
                 </div>
               </div>
             </div>
@@ -1911,8 +1911,7 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification }) {
 }
 
 
-function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount, newDate, setNewDate, onClose, onUpdate, classes=[], addIncome, packages=[], sendNotification}) {
-  const [showRecordatorioPago,setShowRecordatorioPago]=useState(false);
+function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount, newDate, setNewDate, onClose, onUpdate, classes=[], addIncome, packages=[]}) {
   const [pagoTipo,setPagoTipo]=useState(combo?.total?"clases":"mensual");
   const [payMethod,setPayMethod]=useState("efectivo");
   const [step,setStep]=useState("form");
@@ -2268,7 +2267,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
                 {classDays.map(d=><span key={d} style={{fontSize:10,padding:"2px 6px",borderRadius:20,background:"rgba(25,118,210,0.15)",color:C.blue2,fontWeight:600}}>{d}</span>)}
               </div>}
               {classTime&&<div style={{fontSize:11,color:"#5C7A9F",marginBottom:8}}>{classTime}{classCourt?" · "+classCourt:""}</div>}
-              <button onClick={()=>setShowRecordatorioPago(true)} style={{width:"100%",padding:"8px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:"#fff",fontSize:11,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
+              <button style={{width:"100%",padding:"8px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:"#fff",fontSize:11,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
                 Enviar Recordatorio
               </button>
@@ -2288,13 +2287,13 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               </div>
               <div>
                 <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>Monto (₲)</div>
-                <input type="text" inputMode="numeric" pattern="[0-9]*" value={localAmount||""} placeholder="0" onChange={e=>setLocalAmount(e.target.value)} inputMode="numeric" pattern="[0-9]*" style={iSp}/>
+                <input type="number" value={localAmount||""} placeholder="0" onChange={e=>setLocalAmount(e.target.value)} style={iSp}/>
               </div>
             </div>
           ):(
             <div style={{marginBottom:10}}>
               <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>Monto (₲)</div>
-              <input type="text" inputMode="numeric" pattern="[0-9]*" value={localAmount||""} placeholder="0" onChange={e=>setLocalAmount(e.target.value)} inputMode="numeric" pattern="[0-9]*" style={iSp}/>
+              <input type="number" value={localAmount||""} placeholder="0" onChange={e=>setLocalAmount(e.target.value)} style={iSp}/>
             </div>
           )}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
@@ -2376,52 +2375,12 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
           <button onClick={handleConfirm} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:(parseInt(localClasses)>0&&parseInt(localAmount)>0)||(pagoTipo==="mensual"&&parseInt(localAmount)>0)?"linear-gradient(135deg,#52C048,#65CE5A)":"#CBD5E0",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:800}}>✓ Confirmar pago</button>
         </div>
       </div>
-      {showRecordatorioPago&&<RecordatorioModal student={s} onClose={()=>setShowRecordatorioPago(false)} sendNotification={sendNotification} getRem={()=>getRem(s)} getCombo={()=>getCombo(s)}/>}
     </div>
   );
 }
 
-function RecordatorioModal({ student:s, onClose, sendNotification, getRem, getCombo }) {
-  const rem=getRem();
-  const combo=getCombo();
-  const defaultMsg=combo?.total===null
-    ? s.name+", te recordamos que tu pago mensual está pendiente. Por favor regularizá tu situación a la brevedad. Gracias!"
-    : s.name+", te recordamos que tenés "+Math.abs(rem||0)+" clase"+(Math.abs(rem||0)!==1?"s":"")+" pendientes de pago. Por favor regularizá tu situación a la brevedad. Gracias!";
-  const [msg,setMsg]=useState(defaultMsg);
-  const handleWhatsApp=()=>{
-    const phone=(s.phone||"").replace(/\D/g,"");
-    const url=phone
-      ? "https://wa.me/"+phone+"?text="+encodeURIComponent(msg)
-      : "https://wa.me/?text="+encodeURIComponent(msg);
-    window.open(url,"_blank");
-  };
-  return (
-    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.5)",zIndex:1099,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 16px"}} onClick={onClose}>
-      <div style={{background:C.white,borderRadius:20,padding:20,width:"100%",boxShadow:"0 20px 60px rgba(0,0,0,0.25)"}} onClick={e=>e.stopPropagation()}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-          <div style={{fontWeight:800,fontSize:17,color:C.text}}>Enviar Recordatorio</div>
-          <button onClick={onClose} style={{background:C.bg,border:"none",borderRadius:"50%",width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.mutedDark} strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-        </div>
-        <div style={{fontSize:12,color:C.mutedDark,marginBottom:8}}>Podés editar el mensaje antes de enviarlo</div>
-        <textarea value={msg} onChange={e=>setMsg(e.target.value)} rows={5} style={{width:"100%",padding:"12px",borderRadius:12,border:"1.5px solid "+C.border,fontSize:14,color:C.text,outline:"none",resize:"none",boxSizing:"border-box",fontFamily:"inherit",lineHeight:1.5}}/>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:14}}>
-          <button onClick={handleWhatsApp} style={{padding:"13px",borderRadius:12,border:"none",background:"#25D366",color:"#fff",fontSize:13,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="#fff"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
-            WhatsApp
-          </button>
-          <button onClick={()=>{sendNotification&&sendNotification({to:s.id,text:msg,type:"alert",from:"coach",time:"Ahora"});onClose();}} style={{padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",color:"#fff",fontSize:13,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
-            En la App
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
-function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sendNotification }) {
+function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[] }) {
   const combo=getCombo(s);
   const rem=getRem(s);
   const isExpired=rem!==null&&rem<=0;
@@ -2432,12 +2391,9 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
   const [suspended,setSuspended]=useState(false);
   const [histTab,setHistTab]=useState(0);
   const [showComprobante,setShowComprobante]=useState(null);
-  const [showRecordatorio,setShowRecordatorio]=useState(false);
   const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
   const myClassesH=classes.filter(c=>c.students&&c.students.includes(s.id));
   const classDays=myClassesH.length>0?myClassesH[0].days:[];
-  const classTime=myClassesH.length>0?myClassesH[0].time:"";
-  const classCourt=myClassesH.length>0?myClassesH[0].court:"";
   const [newClasses,setNewClasses]=useState(combo?.total||8);
   const [newAmount,setNewAmount]=useState(combo?.amount||400000);
   const [newDate,setNewDate]=useState("");
@@ -2473,34 +2429,6 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
           <span style={{fontSize:12,padding:"4px 12px",borderRadius:20,background:C.blueL,color:C.blue2,fontWeight:700}}>{"🗓 Último pago: "+(combo?.date||"—")}</span>
           <span style={{fontSize:12,padding:"4px 12px",borderRadius:20,background:combo?.total?C.blueL:C.greenL,color:combo?.total?C.blue2:C.green,fontWeight:700}}>{combo?.total?"📦 "+combo.total+" clases":"📅 Mensual"}</span>
         </div>
-        {/* Class schedule or upcoming dates */}
-        {(()=>{
-          // Get upcoming dates from last paid combo
-          const lastCombo=s.combos&&s.combos.length>0?s.combos[s.combos.length-1]:null;
-          const upcomingDates=lastCombo?.dates?lastCombo.dates.filter(d=>d>=TODAY_DATE):[];
-          const mN=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
-          if(upcomingDates.length>0){
-            return (
-              <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8,alignItems:"center"}}>
-                <span style={{fontSize:10,color:C.mutedDark,fontWeight:600,marginRight:2}}>Próximas:</span>
-                {upcomingDates.slice(0,4).map((d,i)=>{
-                  const dt=new Date(d+"T12:00:00");
-                  return <span key={i} style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:C.blueL,color:C.blue2,fontWeight:700}}>{dt.getDate()+" "+mN[dt.getMonth()]}</span>;
-                })}
-                {upcomingDates.length>4&&<span style={{fontSize:10,color:C.mutedDark}}>+{upcomingDates.length-4}</span>}
-              </div>
-            );
-          }
-          if(classDays.length>0){
-            return (
-              <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8,alignItems:"center"}}>
-                {classDays.map(d=><span key={d} style={{fontSize:10,padding:"2px 6px",borderRadius:20,background:C.blueL,color:C.blue2,fontWeight:600}}>{d}</span>)}
-                {classTime&&<span style={{fontSize:11,color:C.mutedDark,marginLeft:4}}>{classTime}{classCourt?" · "+classCourt:""}</span>}
-              </div>
-            );
-          }
-          return null;
-        })()}
         <div style={{display:"flex",gap:10,marginBottom:12}}>
           {/* Single big number */}
           <div style={{background:C.blueL,borderRadius:12,padding:"12px 16px",minWidth:90,textAlign:"center"}}>
@@ -2546,14 +2474,14 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
               <button onClick={()=>setShowPago(true)} style={{flex:1,padding:"10px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:"#fff",fontSize:13,cursor:"pointer",fontWeight:800}}>Actualizar Pagos</button>
             )}
             <div style={{display:"flex",gap:6}}>
-              <button onClick={()=>setShowRecordatorio(true)} style={{flex:1,padding:"8px 6px",borderRadius:10,border:"none",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",color:"#fff",fontSize:11,cursor:"pointer",fontWeight:700,lineHeight:1.3,textAlign:"center"}}>{"Enviar\nRecordatorio"}</button>
+              <button style={{flex:1,padding:"8px 6px",borderRadius:10,border:"none",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",color:"#fff",fontSize:11,cursor:"pointer",fontWeight:700,lineHeight:1.3,textAlign:"center"}}>{"Enviar\nRecordatorio"}</button>
               <button onClick={()=>setSuspended(v=>!v)} style={{flex:1,padding:"8px 6px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:"#fff",fontSize:11,cursor:"pointer",fontWeight:700}}>{suspended?"Activar":"Suspender"}</button>
             </div>
           </div>
         </div>
       </WhiteCard>
 
-      {showPago&&<PagoModal s={s} combo={combo} newClasses={newClasses} setNewClasses={setNewClasses} newAmount={newAmount} setNewAmount={setNewAmount} newDate={newDate} setNewDate={setNewDate} onClose={()=>setShowPago(false)} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification}/>}
+      {showPago&&<PagoModal s={s} combo={combo} newClasses={newClasses} setNewClasses={setNewClasses} newAmount={newAmount} setNewAmount={setNewAmount} newDate={newDate} setNewDate={setNewDate} onClose={()=>setShowPago(false)} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages}/>}
 
       {showHistory&&(
         <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:999,display:"flex",flexDirection:"column",background:C.bg}}>
@@ -2646,9 +2574,6 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
           </div>
         </div>
       )}
-
-      {/* Recordatorio modal */}
-      {showRecordatorio&&<RecordatorioModal student={s} onClose={()=>setShowRecordatorio(false)} sendNotification={sendNotification} getRem={()=>getRem(s)} getCombo={()=>getCombo(s)}/>}
 
       {/* Comprobante de pago */}
       {showComprobante&&(()=>{
@@ -2839,11 +2764,10 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
   );
 }
 
-function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], sendNotification }) {
+function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[] }) {
   const [search,setSearch]=useState("");
   const [filter,setFilter]=useState("none");
-  // Only show students that have at least one class assigned
-  let list=students.filter(s=>classes.some(c=>c.students&&c.students.includes(s.id)));
+  let list=students;
   if(search.trim()) list=list.filter(s=>s.name.toLowerCase().includes(search.toLowerCase()));
   if(filter==="mora") list=list.filter(s=>{const r=getRem(s);return r!==null&&r<=0;});
   return (
@@ -2857,12 +2781,12 @@ function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], send
           <button key={k} onClick={()=>setFilter(k)} style={{padding:"7px 18px",borderRadius:20,border:"1.5px solid "+(filter===k?(k==="mora"?"#FFCDD2":C.blue2):C.border),cursor:"pointer",fontSize:13,fontWeight:600,background:filter===k?(k==="mora"?"#FFEBEE":C.blue2):C.white,color:filter===k?(k==="mora"?"#C62828":C.white):C.mutedDark}}>{l}</button>
         ))}
       </div>
-      {list.map(s=><PaymentCard key={s.id} student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification}/>)}
+      {list.map(s=><PaymentCard key={s.id} student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages}/>)}
     </div>
   );
 }
 
-function Finances({ students, classes, initialTab="payments", onUpdate, expenses=[], setExpenses, addIncome, packages=[], sendNotification }) {
+function Finances({ students, classes, initialTab="payments", onUpdate, expenses=[], setExpenses, addIncome, packages=[] }) {
   const [tab,setTab]=useState(initialTab);
   const [selMonth,setSelMonth]=useState((()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");})());
   const [showMovModal,setShowMovModal]=useState(null);
@@ -2890,7 +2814,7 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
         <div style={{fontSize:13,color:C.muted,marginTop:4}}>{initialTab==="payments"?"Estado de cobros por alumno":"Resumen financiero del mes"}</div>
       </div>
       <div style={{padding:"16px",marginTop:-8}}>
-        {tab==="payments"&&<PaymentsTab students={students} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification}/>}
+        {tab==="payments"&&<PaymentsTab students={students} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages}/>}
         {tab==="expenses"&&(
           <div>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:C.white,borderRadius:14,padding:"12px 16px",marginBottom:14,border:"1px solid "+C.border}}>
@@ -3077,7 +3001,7 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
             </div>
             <div style={{marginBottom:14}}>
               <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Monto (₲)</label>
-              <input type="text" inputMode="numeric" pattern="[0-9]*" value={movAmount} onChange={e=>setMovAmount(e.target.value)} placeholder="200000" style={{width:"100%",padding:"13px 16px",borderRadius:12,border:"none",fontSize:15,fontWeight:700,boxSizing:"border-box",background:C.blueL,color:C.text,outline:"none"}}/>
+              <input type="number" value={movAmount} onChange={e=>setMovAmount(e.target.value)} placeholder="200000" style={{width:"100%",padding:"13px 16px",borderRadius:12,border:"none",fontSize:15,fontWeight:700,boxSizing:"border-box",background:C.blueL,color:C.text,outline:"none"}}/>
             </div>
             <div style={{marginBottom:24}}>
               <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Fecha</label>
@@ -3416,7 +3340,7 @@ function OnboardingFlow({ onComplete }) {
   const [courts,setCourts]=useState([]);
   const [cName,setCName]=useState(""); const [cCity,setCCity]=useState("");
   const [packages,setPackages]=useState([]);
-  const [pType,setPType]=useState("combo"); const [pQty,setPQty]=useState("8"); const [pPrice,setPPrice]=useState(""); const [pNameOnboard,setPNameOnboard]=useState("");
+  const [pType,setPType]=useState("combo"); const [pQty,setPQty]=useState("8"); const [pPrice,setPPrice]=useState("");
 
   const COUNTRIES=[
     {code:"PY",name:"Paraguay",currency:"₲",currencyName:"Guaraní"},
@@ -3541,17 +3465,12 @@ function OnboardingFlow({ onComplete }) {
               {packages.map(p=>(
                 <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,background:"rgba(255,255,255,0.15)",borderRadius:12,padding:"10px 14px",marginBottom:8}}>
                   <span style={{fontSize:18}}>{p.type==="individual"?"🎯":p.type==="combo"?"📦":"📅"}</span>
-                  <div style={{flex:1}}><div style={{fontWeight:700,color:"#fff",fontSize:14}}>{p.name||(p.type==="individual"?"Individual":p.type==="combo"?"Combo "+p.qty+" clases":"Mensual")}</div><div style={{fontSize:12,color:"rgba(255,255,255,0.7)"}}>{fmtMoneyShort(p.price)}</div></div>
+                  <div style={{flex:1}}><div style={{fontWeight:700,color:"#fff",fontSize:14}}>{p.type==="individual"?"Individual":p.type==="combo"?"Combo "+p.qty+" clases":"Mensual"}</div><div style={{fontSize:12,color:"rgba(255,255,255,0.7)"}}>{fmtMoneyShort(p.price)}</div></div>
                   <button onClick={()=>setPackages(pr=>pr.filter(x=>x.id!==p.id))} style={{background:"rgba(255,255,255,0.2)",border:"none",borderRadius:"50%",width:26,height:26,cursor:"pointer",color:"#fff",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
                 </div>
               ))}
             </div>
           )}
-          <div style={{marginBottom:10}}>
-            <label style={lS}>NOMBRE DEL PAQUETE *</label>
-            <input value={pNameOnboard} onChange={e=>setPNameOnboard(e.target.value)} placeholder="Ej: Combo 8 clases, Plan Mensual..." style={{...iS,border:pNameOnboard===null&&"2px solid #FF6B6B"}}/>
-            {pNameOnboard===null&&<div style={{fontSize:11,color:"#FF6B6B",marginTop:4,fontWeight:600}}>⚠️ El nombre es requerido</div>}
-          </div>
           <div style={{display:"flex",gap:8,marginBottom:10}}>
             {[["individual","🎯"],["combo","📦"],["mensual","📅"]].map(([k,ic])=>(
               <button key={k} onClick={()=>setPType(k)} style={{flex:1,padding:"10px 4px",borderRadius:12,border:"2px solid "+(pType===k?"#fff":"rgba(255,255,255,0.3)"),background:pType===k?"rgba(255,255,255,0.25)":"transparent",color:"#fff",fontSize:12,cursor:"pointer",fontWeight:700}}>{ic+" "+k.charAt(0).toUpperCase()+k.slice(1)}</button>
@@ -3560,21 +3479,15 @@ function OnboardingFlow({ onComplete }) {
           {pType==="combo"&&(
             <div style={{marginBottom:8}}>
               <label style={lS}>CANTIDAD DE CLASES</label>
-              <input value={pQty} onChange={e=>setPQty(e.target.value)} placeholder="Ej: 8" type="text" inputMode="numeric" pattern="[0-9]*" style={iS}/>
+              <input value={pQty} onChange={e=>setPQty(e.target.value)} placeholder="Ej: 8" type="number" style={iS}/>
             </div>
           )}
           <div style={{display:"flex",gap:8,marginBottom:20,alignItems:"flex-end"}}>
             <div style={{flex:1}}>
               <label style={lS}>PRECIO ({selectedCountry?.currency||getCUR()})</label>
-              <input value={pPrice} onChange={e=>setPPrice(e.target.value)} placeholder={"Ej: 400000"} type="text" inputMode="numeric" pattern="[0-9]*" style={iS}/>
+              <input value={pPrice} onChange={e=>setPPrice(e.target.value)} placeholder={"Ej: 400000"} type="number" style={iS}/>
             </div>
-            <button onClick={()=>{
-              if(!pNameOnboard||!pNameOnboard.trim()){setPNameOnboard(null);return;}
-              if(!pPrice)return;
-              const qty=pType==="combo"?parseInt(pQty):null;
-              setPackages(p=>[...p,{id:Date.now(),name:pNameOnboard.trim(),type:pType,qty,price:parseInt(pPrice)}]);
-              setPPrice("");setPQty("8");setPNameOnboard("");
-            }} style={{padding:"14px 18px",borderRadius:14,border:"none",background:"#fff",color:"#1565C0",fontSize:14,cursor:"pointer",fontWeight:800,flexShrink:0}}>+ Agregar</button>
+            <button onClick={()=>{if(!pPrice)return;setPackages(p=>[...p,{id:Date.now(),type:pType,qty:pType==="combo"?parseInt(pQty):null,price:parseInt(pPrice)}]);setPPrice("");setPQty("8");}} style={{padding:"14px 18px",borderRadius:14,border:"none",background:"#fff",color:"#1565C0",fontSize:14,cursor:"pointer",fontWeight:800,flexShrink:0}}>+ Agregar</button>
           </div>
           <div style={{marginTop:"auto",display:"flex",gap:10}}>
             <button onClick={()=>setStep(3)} style={{flex:1,padding:"14px",borderRadius:14,border:"2px solid rgba(255,255,255,0.3)",background:"transparent",color:"rgba(255,255,255,0.7)",fontSize:14,cursor:"pointer",fontWeight:700}}>Saltar</button>
@@ -3942,7 +3855,7 @@ export default function App() {
         {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={classes} onInvite={()=>setShowInvite(true)}/>}
         {tab==="agenda"&&<Agenda students={students} classes={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onDeleteClass={handleDeleteClass}/>}
         {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification}/>}
-        {tab==="cobros"&&<Finances students={students} classes={classes} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification}/>}
+        {tab==="cobros"&&<Finances students={students} classes={classes} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages}/>}
         {tab==="finanzas"&&<Finances students={students} classes={classes} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages}/>}
         {showNewClass&&<NewClassModal onClose={()=>{setShowNewClass(false);if(classes.length===0)setTab("agenda");}} onSave={handleSaveClass} students={students} dateLabel="Nueva clase" onCreateStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])}/>}
         {showNewStudent&&<NewStudentModal onClose={()=>setShowNewStudent(false)} onSave={(d)=>setStudents(p=>[...p,{id:Date.now(),...d}])}/>}
