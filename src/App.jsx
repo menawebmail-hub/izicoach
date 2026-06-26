@@ -1,0 +1,3941 @@
+import { useState } from "react";
+
+// Inject Inter font
+if(typeof document!=="undefined"){
+  const link=document.createElement("link");
+  link.rel="stylesheet";
+  link.href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap";
+  document.head.appendChild(link);
+  document.body.style.fontFamily="'Inter', system-ui, sans-serif";
+}
+
+const C = {
+  blue:"#0D1B4B",      // deep navy-indigo for headers
+  blue2:"#1A3DB5",     // royal blue primary
+  blue3:"#2C5EF7",     // bright royal blue
+  blueL:"#EEF2FF",     // very light blue background tint
+  white:"#FFFFFF",
+  whiteA:"rgba(255,255,255,0.15)",
+  whiteB:"rgba(255,255,255,0.25)",
+  text:"#0D1B4B",      // deep navy text
+  muted:"rgba(255,255,255,0.70)",
+  mutedDark:"#6B7BAD", // muted blue-grey
+  bg:"#F0F4FF",        // soft blue-white background
+  card:"#FFFFFF",
+  border:"rgba(13,27,75,0.10)",
+  green:"#65CE5A",     // brand green accent
+  greenL:"#EDFBEC",    // light green
+};
+
+
+const TODAY_DATE=(()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
+
+// Currency formatting
+const _cur={v:"₲"};
+const formatNum=(n,cur)=>{
+  const abs=Math.floor(Math.abs(parseInt(n)||0));
+  const str=abs.toString();
+  const sep=["₲","R$","€","$U","S/"].includes(cur)?".":","
+  return str.replace(/\B(?=(\d{3})+(?!\d))/g,sep);
+};
+const getCUR=()=>_cur.v;
+const setCUR=(v)=>{_cur.v=v;};
+const fmtMoney=(amount)=>{const c=_cur.v;return c+" "+formatNum(amount,c);};
+const fmtMoneyShort=(amount)=>{const c=_cur.v;return c+" "+formatNum(amount,c);};
+
+// Hide number input spinners globally
+const styleEl=document.createElement('style');
+styleEl.textContent='input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}input[type=number]{-moz-appearance:textfield}*{font-family:Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}';
+document.head.appendChild(styleEl);
+
+const ALL_DAYS = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"];
+const DAY_LABELS = ["L","M","M","J","V","S","D"];
+const MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+
+const INIT_STUDENTS = [
+  {id:1,name:"Martina López",sport:"Tenis",status:"active",avatar:"ML",phone:"0981 123 456",email:"",createdAt:"2026-06-01",
+   combos:[{id:1,total:8,used:8,paid:true,date:"2026-06-01",amount:400000,
+     dates:["2026-06-01","2026-05-04","2026-05-06","2026-05-08","2026-05-11","2026-05-13","2026-05-15","2026-05-18"]}]},
+  {id:2,name:"Diego Fernández",sport:"Fútbol",status:"active",avatar:"DF",phone:"0982 234 567",email:"",createdAt:"2026-06-01",
+   combos:[{id:1,total:null,used:2,paid:true,date:"2026-06-01",amount:300000}]},
+  {id:3,name:"Valeria Torres",sport:"Pádel",status:"active",avatar:"VT",phone:"0983 345 678",email:"",createdAt:"2026-06-01",
+   combos:[{id:1,total:8,used:4,paid:true,date:"2026-06-01",amount:500000,
+     dates:["2026-05-04","2026-05-06","2026-05-11","2026-05-13","2026-05-18","2026-05-20","2026-05-25","2026-05-27"]}]},
+  {id:4,name:"Rodrigo Méndez",sport:"Natación",status:"inactive",avatar:"RM",phone:"0984 456 789",email:"",createdAt:"2026-06-01",
+   combos:[{id:1,total:8,used:0,paid:false,date:"2026-06-01",amount:400000,
+     dates:["2026-06-01","2026-06-04","2026-06-06","2026-06-09","2026-06-11","2026-06-13","2026-06-16","2026-06-18"]}]},
+  {id:5,name:"Sofía Ramírez",sport:"Tenis",status:"active",avatar:"SR",phone:"0985 567 890",email:"",createdAt:"2026-06-01",
+   combos:[{id:1,total:4,used:0,paid:false,date:"2026-06-01",amount:200000,
+     dates:["2026-06-01","2026-06-04","2026-06-06","2026-06-09"]}]},
+];
+
+const INIT_CLASSES = [
+  {id:1,title:"Tenis - Mañana",students:[1,5],date:"2026-05-19",time:"08:00",timeEnd:"09:00",court:"Cancha A",days:["Lun","Mié","Vie"],
+   attendanceLog:[
+     {date:"2026-06-01",day:"Viernes",present:[1,5]},
+     {date:"2026-05-04",day:"Lunes",present:[1,5]},
+     {date:"2026-05-06",day:"Miércoles",present:[1]},
+     {date:"2026-05-08",day:"Viernes",present:[1,5]},
+     {date:"2026-05-11",day:"Lunes",present:[1,5]},
+     {date:"2026-05-13",day:"Miércoles",present:[5]},
+     {date:"2026-05-15",day:"Viernes",present:[1,5]},
+     {date:"2026-05-18",day:"Lunes",present:[1,5]},
+     {date:"2026-05-19",day:"Martes",present:[1]},
+     {date:"2026-05-21",day:"Miércoles",present:[1]},
+   ]},
+  {id:2,title:"Fútbol - Tarde",students:[2],date:"2026-05-19",time:"17:00",timeEnd:"18:00",court:"Cancha B",days:["Mar","Jue"],attendanceLog:[]},
+  {id:3,title:"Pádel - Tarde",students:[3],date:"2026-05-20",time:"18:30",timeEnd:"19:30",court:"Cancha C",days:["Lun","Mié"],attendanceLog:[]},
+];
+
+const _nowM=(()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");})();
+const EXPENSES = [
+  {id:1,category:"Canchas",amount:450000,type:"gasto",date:_nowM+"-05"},
+  {id:2,category:"Equipamiento",amount:180000,type:"gasto",date:_nowM+"-08"},
+  {id:3,category:"Cobros clases",amount:1200000,type:"ingreso",date:_nowM+"-10"},
+  {id:4,category:"Transporte",amount:80000,type:"gasto",date:_nowM+"-12"},
+  {id:5,category:"Cobros clases",amount:600000,type:"ingreso",date:_nowM+"-15"},
+];
+
+function getCombo(s) { return s.combos[s.combos.length-1]; }
+function getRem(s) {
+  const c=getCombo(s);
+  if(!c||!c.total) return null;
+  const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
+  if(paidCount===0) return -(c.total); // nothing paid → A cobrar
+  const remaining=paidCount-(c.used||0);
+  if(paidCount<c.total) return -(c.total-paidCount); // partial payment → show unpaid as negative
+  return Math.max(0,remaining); // fully paid → Por dar
+}
+
+function IziLogoBlack({ height=34 }) {
+  return <div style={{fontWeight:900,fontSize:height*0.7,color:"#fff",letterSpacing:-1,fontFamily:"'Inter',system-ui"}}>izi<span style={{color:"#65CE5A"}}>coach</span></div>;
+}
+
+function WhiteCard({ children, style, onClick }) {
+  return <div onClick={onClick} style={{background:C.white,borderRadius:16,padding:"14px 16px",boxShadow:"0 2px 12px rgba(44,94,247,0.08)",border:"1px solid rgba(44,94,247,0.06)",marginBottom:10,...style}}>{children}</div>;
+}
+
+function NavBar({ tabs, active, onSelect, zIdx=0 }) {
+  const ICONS = {
+    dashboard:(c)=>(<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z"/><path d="M9 21V12h6v9"/></svg>),
+    students:(c)=>(<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="8" cy="8" r="3.5"/><path d="M2 20c0-3.5 2.7-6 6-6s6 2.5 6 6"/><circle cx="17" cy="8" r="3"/><path d="M22 20c0-3-2-5-5-5"/></svg>),
+    agenda:(c)=>(<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>),
+    chat:(c)=>(<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>),
+    finances:(c)=>(<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="6" width="20" height="14" rx="2"/><path d="M2 10h20"/><circle cx="12" cy="15" r="2"/></svg>),
+    cobros:(c)=>(<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="6" width="20" height="14" rx="2"/><path d="M2 10h20"/><circle cx="12" cy="15" r="2"/></svg>),
+    finanzas:(c)=>(<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>),
+  };
+  return (
+    <div style={{display:"flex",borderTop:"1px solid rgba(44,94,247,0.07)",background:C.white,paddingBottom:"env(safe-area-inset-bottom,4px)",flexShrink:0,position:"relative",zIndex:zIdx,boxShadow:"0 -2px 16px rgba(44,94,247,0.06)"}}>
+      {tabs.map(t=>{
+        const isActive=active===t.id; const col=isActive?C.blue2:"#9BACCB";
+        return (
+          <button key={t.id} onClick={()=>onSelect(t.id)} style={{flex:1,background:"none",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"8px 0 6px",position:"relative"}}>
+            {isActive&&<div style={{position:"absolute",top:0,left:"50%",transform:"translateX(-50%)",width:28,height:3,borderRadius:"0 0 4px 4px",background:C.blue2}}></div>}
+            <div style={{width:38,height:38,borderRadius:12,background:isActive?"linear-gradient(135deg,"+C.blueL+",#D0E4FF)":"transparent",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.15s"}}>
+              {ICONS[t.id]?ICONS[t.id](col):<span style={{fontSize:20,color:col}}>{t.icon}</span>}
+            </div>
+            <span style={{fontSize:10,color:col,fontWeight:isActive?700:500,letterSpacing:0.1}}>{t.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function TopBar({ onExit, onConfig }) {
+  return (
+    <div style={{background:"#000",padding:"12px 16px",display:"flex",alignItems:"center",flexShrink:0}}>
+      <div style={{flex:1}}><IziLogoBlack height={28}/></div>
+      <button onClick={onConfig} style={{background:"none",border:"none",cursor:"pointer",padding:"6px",display:"flex"}}>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+      </button>
+      <button onClick={onExit} style={{background:"none",border:"none",cursor:"pointer",padding:"6px",display:"flex"}}>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      </button>
+    </div>
+  );
+}
+
+function NewPackageModal({ onSave, onClose, currency }) {
+  const [pName,setPName]=useState("");
+  const [pType,setPType]=useState("combo");
+  const [pQty,setPQty]=useState("8");
+  const [pPrice,setPPrice]=useState("");
+  const iS={width:"100%",padding:"12px 14px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",background:C.white,color:C.text,outline:"none"};
+  return (
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.5)",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 20px"}}>
+      <div style={{background:C.white,borderRadius:20,padding:24,width:"100%",boxShadow:"0 20px 60px rgba(0,0,0,0.2)",border:"1.5px solid "+C.blue2}}>
+        <div style={{fontWeight:800,fontSize:17,color:C.text,marginBottom:20}}>Nuevo paquete</div>
+        <div style={{marginBottom:12}}>
+          <label style={{fontSize:12,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>NOMBRE *</label>
+          <input value={pName} onChange={e=>setPName(e.target.value)} placeholder="Ej: Combo 8 clases" style={iS}/>
+        </div>
+        <div style={{marginBottom:12}}>
+          <label style={{fontSize:12,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>TIPO</label>
+          <div style={{display:"flex",gap:6}}>
+            {[["individual","🎯 Individual"],["combo","📦 Combo"],["mensual","📅 Mensual"]].map(([k,l])=>(
+              <button key={k} onClick={()=>setPType(k)} style={{flex:1,padding:"10px 4px",borderRadius:10,border:"2px solid "+(pType===k?C.blue2:C.border),background:pType===k?C.blueL:C.white,color:pType===k?C.blue2:C.mutedDark,fontSize:12,cursor:"pointer",fontWeight:700}}>{l}</button>
+            ))}
+          </div>
+        </div>
+        {pType==="combo"&&<div style={{marginBottom:12}}><label style={{fontSize:12,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>CANTIDAD DE CLASES</label><input type="number" value={pQty} onChange={e=>setPQty(e.target.value)} placeholder="8" style={iS}/></div>}
+        <div style={{marginBottom:20}}>
+          <label style={{fontSize:12,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>PRECIO ({currency||getCUR()}) *</label>
+          <input type="number" value={pPrice} onChange={e=>setPPrice(e.target.value)} placeholder="400000" style={iS}/>
+        </div>
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={onClose} style={{flex:1,padding:"13px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:14,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
+          <button onClick={()=>{
+            if(!pName.trim()||!pPrice) return;
+            const pkg={id:Date.now(),name:pName.trim(),type:pType,qty:pType==="combo"?parseInt(pQty)||null:null,price:parseInt(pPrice)};
+            onSave(pkg);
+          }} style={{flex:1,padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:14,fontWeight:800}}>Guardar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, coachProfile, setCoachProfile }) {
+  const [section,setSection]=useState("general");
+  const [showNewCourt,setShowNewCourt]=useState(false);
+  const [showNewPack,setShowNewPack]=useState(false);
+  const [cName,setCName]=useState(""); const [cAddr,setCAddr]=useState(""); const [cCity,setCCity]=useState("");
+  const [pName,setPName]=useState(""); const [pType,setPType]=useState("combo"); const [pQty,setPQty]=useState(""); const [pPrice,setPPrice]=useState("");
+  // Profile fields — init from coachProfile
+  const [profName,setProfName]=useState(coachProfile?.name||"");
+  const [profEmail,setProfEmail]=useState(coachProfile?.email||"");
+  const [profPhone,setProfPhone]=useState(coachProfile?.phone||"");
+  const [profSport,setProfSport]=useState(coachProfile?.sport||"");
+  const [profPhoto,setProfPhoto]=useState(coachProfile?.photo||null);
+  const [profSaved,setProfSaved]=useState(false);
+  const [oldPass,setOldPass]=useState(""); const [newPass,setNewPass]=useState(""); const [newPass2,setNewPass2]=useState("");
+  const [notifClases,setNotifClases]=useState(true); const [notifPagos,setNotifPagos]=useState(true); const [notifMensajes,setNotifMensajes]=useState(false);
+  const iS={width:"100%",padding:"12px 14px",borderRadius:12,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",background:C.white,color:C.text,outline:"none"};
+  const packTypeLabel=(t)=>t==="individual"?"Individual":t==="combo"?"Combo clases":"Mensual";
+  const packIcon=(t)=>t==="individual"?"🎯":t==="combo"?"📦":"📅";
+  const TABS=[["general","👤 Perfil"],["security","🔒 Seguridad"],["notif","🔔 Notif."],["courts","🏟 Canchas"],["packages","💳 Paquetes"]];
+
+  const handlePhotoChange=(e)=>{
+    const file=e.target.files[0];
+    if(!file) return;
+    const reader=new FileReader();
+    reader.onload=(ev)=>setProfPhoto(ev.target.result);
+    reader.readAsDataURL(file);
+  };
+
+  const handleSaveProfile=()=>{
+    setCoachProfile(p=>({...p,name:profName,email:profEmail,phone:profPhone,sport:profSport,photo:profPhoto}));
+    setProfSaved(true);
+    setTimeout(()=>setProfSaved(false),2000);
+  };
+  return (
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:299,display:"flex",flexDirection:"column",background:C.bg}}>
+      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
+        <button onClick={onClose} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
+        <span style={{flex:1,fontWeight:800,fontSize:16,color:C.white}}>Configuración</span>
+      </div>
+      {/* Tabs */}
+      <div style={{display:"flex",background:C.white,borderBottom:"1px solid "+C.border,flexShrink:0,overflowX:"auto"}}>
+        {TABS.map(([k,l])=>(
+          <button key={k} onClick={()=>setSection(k)} style={{flexShrink:0,padding:"12px 14px",border:"none",background:"none",cursor:"pointer",fontSize:12,fontWeight:700,color:section===k?C.blue2:C.mutedDark,borderBottom:"3px solid "+(section===k?C.blue2:"transparent"),whiteSpace:"nowrap"}}>{l}</button>
+        ))}
+      </div>
+      <div style={{flex:1,overflowY:"auto",padding:16}}>
+
+        {section==="general"&&(
+          <>
+            {/* Photo upload */}
+            <div style={{textAlign:"center",marginBottom:24}}>
+              <div style={{position:"relative",display:"inline-block"}}>
+                {profPhoto
+                  ?<img src={profPhoto} style={{width:90,height:90,borderRadius:"50%",objectFit:"cover",border:"3px solid "+C.blue2}}/>
+                  :<div style={{width:90,height:90,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,fontWeight:900,color:C.white,border:"3px solid "+C.blue2}}>
+                    {profName?profName[0].toUpperCase():"C"}
+                  </div>
+                }
+                <label htmlFor="prof-photo-input" style={{position:"absolute",bottom:0,right:0,width:28,height:28,borderRadius:"50%",background:C.blue2,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",border:"2px solid #fff"}}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                </label>
+                <input id="prof-photo-input" type="file" accept="image/*" onChange={handlePhotoChange} style={{display:"none"}}/>
+              </div>
+              <div style={{fontSize:13,color:C.mutedDark,marginTop:8}}>Tocá el ícono para cambiar la foto</div>
+            </div>
+            {/* Fields */}
+            {[
+              {l:"Nombre",v:profName,s:setProfName,p:"Tu nombre completo"},
+              {l:"Deporte",v:profSport,s:setProfSport,p:"Tenis, Fútbol, Natación..."},
+              {l:"Email",v:profEmail,s:setProfEmail,p:"tu@correo.com"},
+              {l:"Teléfono",v:profPhone,s:setProfPhone,p:"0981 000 000"},
+            ].map(f=>(
+              <div key={f.l} style={{marginBottom:14}}>
+                <label style={{fontSize:12,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>{f.l.toUpperCase()}</label>
+                <input value={f.v} onChange={e=>f.s(e.target.value)} placeholder={f.p} style={iS}/>
+              </div>
+            ))}
+            <button onClick={handleSaveProfile} style={{width:"100%",padding:"14px",borderRadius:12,border:"none",background:profSaved?"linear-gradient(135deg,#2E7D32,#65CE5A)":"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:700,marginBottom:20,transition:"background 0.3s"}}>
+              {profSaved?"✓ Guardado!":"Guardar cambios"}
+            </button>
+            {profPhoto&&(
+              <button onClick={()=>setProfPhoto(null)} style={{width:"100%",padding:"12px",borderRadius:12,border:"1.5px solid #FFEBEE",background:"#FFEBEE",color:"#C62828",fontSize:13,cursor:"pointer",fontWeight:700,marginBottom:20}}>
+                🗑 Eliminar foto
+              </button>
+            )}
+          </>
+        )}
+
+        {section==="security"&&(
+          <>
+            <WhiteCard style={{marginBottom:14}}>
+              <div style={{fontSize:14,fontWeight:700,color:C.text,marginBottom:14}}>Cambiar contraseña</div>
+              {[{l:"Contraseña actual",v:oldPass,s:setOldPass},{l:"Nueva contraseña",v:newPass,s:setNewPass},{l:"Confirmar nueva",v:newPass2,s:setNewPass2}].map(f=>(
+                <div key={f.l} style={{marginBottom:12}}>
+                  <label style={{fontSize:12,color:C.blue2,fontWeight:700,display:"block",marginBottom:4}}>{f.l.toUpperCase()}</label>
+                  <input type="password" value={f.v} onChange={e=>f.s(e.target.value)} placeholder="••••••••" style={iS}/>
+                </div>
+              ))}
+              <button style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:700,marginTop:4}}>Actualizar contraseña</button>
+            </WhiteCard>
+            <WhiteCard>
+              <div style={{fontSize:14,fontWeight:700,color:C.text,marginBottom:4}}>💳 Facturación</div>
+              <div style={{fontSize:12,color:C.mutedDark,marginBottom:12}}>Plan actual: <b>Pro</b></div>
+              {["Ver historial de pagos","Cambiar plan","Métodos de pago"].map(item=>(
+                <div key={item} style={{padding:"11px 0",borderBottom:"1px solid "+C.border,fontSize:14,color:C.text,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  {item}<span style={{color:C.mutedDark}}>{"›"}</span>
+                </div>
+              ))}
+            </WhiteCard>
+          </>
+        )}
+
+        {section==="notif"&&(
+          <WhiteCard>
+            <div style={{fontSize:14,fontWeight:700,color:C.text,marginBottom:16}}>Notificaciones</div>
+            {[["Recordatorio de clases",notifClases,setNotifClases],["Alertas de pagos",notifPagos,setNotifPagos],["Nuevos mensajes",notifMensajes,setNotifMensajes]].map(([label,val,setter])=>(
+              <div key={label} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 0",borderBottom:"1px solid "+C.border}}>
+                <span style={{fontSize:14,color:C.text}}>{label}</span>
+                <div onClick={()=>setter(v=>!v)} style={{width:44,height:24,borderRadius:12,background:val?"linear-gradient(135deg,"+C.blue2+","+C.blue3+")":"#DDD",cursor:"pointer",position:"relative",transition:"background 0.2s"}}>
+                  <div style={{position:"absolute",top:2,left:val?22:2,width:20,height:20,borderRadius:"50%",background:C.white,transition:"left 0.2s"}}></div>
+                </div>
+              </div>
+            ))}
+          </WhiteCard>
+        )}
+
+        {section==="courts"&&(
+          <>
+            <div style={{fontSize:13,color:C.mutedDark,marginBottom:16}}>Configurá los lugares donde dás clases. Aparecerán como opciones rápidas al crear una clase.</div>
+            {courts.map(c=>(
+              <WhiteCard key={c.id} style={{marginBottom:10}}>
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  <div style={{width:40,height:40,borderRadius:10,background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>🏟</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:700,fontSize:14,color:C.text}}>{c.name}</div>
+                    {c.address&&<div style={{fontSize:12,color:C.mutedDark}}>📍 {c.address}</div>}
+                    {c.city&&<div style={{fontSize:11,color:C.mutedDark}}>{c.city}</div>}
+                  </div>
+                  <button onClick={()=>setCourts(p=>p.filter(x=>x.id!==c.id))} style={{background:"#FFEBEE",border:"none",borderRadius:"50%",width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#C62828" strokeWidth="3" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </button>
+                </div>
+              </WhiteCard>
+            ))}
+            {courts.length===0&&<div style={{textAlign:"center",padding:"24px 0",color:C.mutedDark,fontSize:13}}>Aún no hay canchas configuradas</div>}
+            {showNewCourt?(
+              <WhiteCard style={{border:"1.5px solid "+C.blue2}}>
+                <div style={{fontWeight:700,fontSize:14,color:C.text,marginBottom:12}}>Nueva cancha</div>
+                <div style={{marginBottom:10}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>NOMBRE *</label><input value={cName} onChange={e=>setCName(e.target.value)} placeholder="Ej: Cancha A" style={iS}/></div>
+                <div style={{marginBottom:10}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>DIRECCIÓN</label><input value={cAddr} onChange={e=>setCAddr(e.target.value)} placeholder="Ej: Av. España 1234" style={iS}/></div>
+                <div style={{marginBottom:14}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>LOCALIDAD</label><input value={cCity} onChange={e=>setCCity(e.target.value)} placeholder="Ej: Asunción" style={iS}/></div>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>{setShowNewCourt(false);setCName("");setCAddr("");setCCity("");}} style={{flex:1,padding:"11px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:13,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
+                  <button onClick={()=>{if(!cName.trim())return;setCourts(p=>[...p,{id:Date.now(),name:cName.trim(),address:cAddr.trim(),city:cCity.trim()}]);setCName("");setCAddr("");setCCity("");setShowNewCourt(false);}} style={{flex:1,padding:"11px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:13,fontWeight:800}}>Guardar</button>
+                </div>
+              </WhiteCard>
+            ):(
+              <button onClick={()=>setShowNewCourt(true)} style={{width:"100%",padding:"13px",borderRadius:12,border:"1.5px dashed "+C.blue2,background:C.blueL,color:C.blue2,fontSize:14,cursor:"pointer",fontWeight:700,marginTop:4}}>+ Agregar cancha</button>
+            )}
+          </>
+        )}
+
+        {section==="packages"&&(
+          <>
+            <div style={{fontSize:13,color:C.mutedDark,marginBottom:16}}>Configurá tus paquetes con precios sugeridos. Aparecerán como opciones al actualizar pagos.</div>
+            {packages.map(p=>(
+              <WhiteCard key={p.id} style={{marginBottom:10}}>
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  <div style={{width:40,height:40,borderRadius:10,background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{packIcon(p.type)}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:700,fontSize:14,color:C.text}}>{p.name}</div>
+                    <div style={{fontSize:12,color:C.mutedDark}}>{packTypeLabel(p.type)}{p.qty?" · "+p.qty+" clases":""}</div>
+                    <div style={{fontSize:13,fontWeight:700,color:C.blue2}}>{fmtMoneyShort(p.price)}</div>
+                  </div>
+                  <button onClick={()=>setPackages(prev=>prev.filter(x=>x.id!==p.id))} style={{background:"#FFEBEE",border:"none",borderRadius:"50%",width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#C62828" strokeWidth="3" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </button>
+                </div>
+              </WhiteCard>
+            ))}
+            {packages.length===0&&<div style={{textAlign:"center",padding:"24px 0",color:C.mutedDark,fontSize:13}}>Aún no hay paquetes configurados</div>}
+            {showNewPack?(
+              <WhiteCard style={{border:"1.5px solid "+C.blue2}}>
+                <div style={{fontWeight:700,fontSize:14,color:C.text,marginBottom:12}}>Nuevo paquete</div>
+                <div style={{marginBottom:10}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>NOMBRE *</label><input value={pName} onChange={e=>setPName(e.target.value)} placeholder="Ej: Combo 8 clases" style={iS}/></div>
+                <div style={{marginBottom:10}}>
+                  <label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>TIPO</label>
+                  <div style={{display:"flex",gap:6}}>
+                    {[["individual","🎯 Individual"],["combo","📦 Combo"],["mensual","📅 Mensual"]].map(([k,l])=>(
+                      <button key={k} onClick={()=>setPType(k)} style={{flex:1,padding:"8px 4px",borderRadius:10,border:"2px solid "+(pType===k?C.blue2:C.border),background:pType===k?C.blueL:C.white,color:pType===k?C.blue2:C.mutedDark,fontSize:11,cursor:"pointer",fontWeight:700}}>{l}</button>
+                    ))}
+                  </div>
+                </div>
+                {pType==="combo"&&<div style={{marginBottom:10}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>CANTIDAD DE CLASES</label><input type="number" value={pQty} onChange={e=>setPQty(e.target.value)} placeholder="8" style={iS}/></div>}
+                <div style={{marginBottom:14}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>PRECIO (₲) *</label><input type="number" value={pPrice} onChange={e=>setPPrice(e.target.value)} placeholder="400000" style={iS}/></div>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>{setShowNewPack(false);setPName("");setPQty("");setPPrice("");}} style={{flex:1,padding:"11px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:13,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
+                  <button onClick={()=>{if(!pName.trim()||!pPrice)return;setPackages(prev=>[...prev,{id:Date.now(),name:pName.trim(),type:pType,qty:pType==="combo"?parseInt(pQty)||null:null,price:parseInt(pPrice)}]);setPName("");setPQty("");setPPrice("");setShowNewPack(false);}} style={{flex:1,padding:"11px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:13,fontWeight:800}}>Guardar</button>
+                </div>
+              </WhiteCard>
+            ):(
+              <button onClick={()=>setShowNewPack(true)} style={{width:"100%",padding:"13px",borderRadius:12,border:"1.5px dashed "+C.blue2,background:C.blueL,color:C.blue2,fontSize:14,cursor:"pointer",fontWeight:700,marginTop:4}}>+ Agregar paquete</button>
+            )}
+          </>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+function AuthFlow({ onLogin, onStudentRegister }) {
+  const [screen,setScreen]=useState("login");
+  const [role,setRole]=useState(null);
+  const [email,setEmail]=useState(""); const [pass,setPass]=useState("");
+  const [name,setName]=useState(""); const [pass2,setPass2]=useState("");
+  const [err,setErr]=useState("");
+  const iS={width:"100%",padding:"13px 16px",borderRadius:12,border:"1.5px solid rgba(255,255,255,0.3)",fontSize:14,boxSizing:"border-box",background:"rgba(255,255,255,0.15)",color:C.white,outline:"none"};
+  const lS={fontSize:12,color:C.muted,fontWeight:700,display:"block",marginBottom:6};
+  return (
+    <div style={{minHeight:"100%",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{marginBottom:32,textAlign:"center"}}>
+        <img src="data:image/png;base64,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" alt="izicoach" style={{height:120,objectFit:"contain",display:"block",margin:"0 auto 8px"}}/>
+        <div style={{fontSize:13,color:"rgba(255,255,255,0.6)"}}>Gestión deportiva inteligente</div>
+      </div>
+      <div style={{width:"100%",maxWidth:340,background:"rgba(255,255,255,0.12)",borderRadius:24,padding:"28px 24px",border:"1px solid rgba(255,255,255,0.2)"}}>
+        {screen==="student_register"?(
+          <div style={{flex:1}}>
+            <StudentRegisterScreen coachName="tu entrenador" onComplete={(data)=>{onStudentRegister&&onStudentRegister(data);}}/>
+          </div>
+        ):screen==="login"?(
+          <div>
+            <div style={{fontSize:20,fontWeight:800,color:C.white,marginBottom:4}}>Iniciar sesión</div>
+            <div style={{fontSize:13,color:C.muted,marginBottom:20}}>Ingresá tus credenciales</div>
+
+            {/* Demo user hints */}
+            <div style={{background:"rgba(0,0,0,0.2)",borderRadius:12,padding:"10px 14px",marginBottom:20}}>
+              <div style={{fontSize:11,color:"rgba(255,255,255,0.6)",fontWeight:700,marginBottom:8,letterSpacing:0.5}}>USUARIOS DE PRUEBA</div>
+              {[
+                {email:"alumno@test.com",label:"🎾 Alumno",desc:"Portal del alumno"},
+                {email:"entrenador@test.com",label:"🏋️ Entrenador",desc:"App completa con datos"},
+                {email:"primero@test.com",label:"🚀 Nuevo entrenador",desc:"Onboarding inicial"},
+              ].map(u=>(
+                <div key={u.email} onClick={()=>{setEmail(u.email);setPass("1234");}} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:"1px solid rgba(255,255,255,0.1)",cursor:"pointer"}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:12,fontWeight:700,color:"#fff"}}>{u.label}</div>
+                    <div style={{fontSize:10,color:"rgba(255,255,255,0.5)"}}>{u.email}</div>
+                  </div>
+                  <div style={{fontSize:10,color:"rgba(255,255,255,0.4)"}}>{u.desc}</div>
+                </div>
+              ))}
+              <div style={{fontSize:10,color:"rgba(255,255,255,0.4)",marginTop:6}}>Tocá un usuario para autocompletar · contraseña: 1234</div>
+            </div>
+
+            <div style={{marginBottom:16}}><label style={lS}>CORREO</label><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="tu@correo.com" style={iS}/></div>
+            <div style={{marginBottom:8}}><label style={lS}>CONTRASEÑA</label><input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="••••••••" style={iS}/></div>
+            <div style={{textAlign:"right",marginBottom:20}}><button style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:C.muted}}>¿Olvidaste tu contraseña?</button></div>
+            {err&&<div style={{background:"rgba(229,57,53,0.3)",borderRadius:10,padding:"10px 14px",fontSize:13,color:"#FFCDD2",marginBottom:16}}>{err}</div>}
+            <button onClick={()=>{
+              if(!email||!pass){setErr("Completá todos los campos.");return;}
+              if(email==="alumno@test.com") onLogin("student");
+              else if(email==="entrenador@test.com") onLogin("coach_full");
+              else if(email==="primero@test.com") onLogin("coach_new");
+              else if(email.includes("alumno")) onLogin("student");
+              else onLogin("coach_new");
+            }} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:C.white,color:C.blue2,fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:16}}>Iniciar sesión</button>
+            <div style={{textAlign:"center",fontSize:13,color:C.muted}}>¿No tenés cuenta?{" "}<button onClick={()=>{setScreen("register");setErr("");}} style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:C.white,fontWeight:800}}>Registrarse</button></div>
+            <div style={{textAlign:"center",marginTop:12}}>
+              <button onClick={()=>setScreen("student_register")} style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:"rgba(255,255,255,0.6)",textDecoration:"underline"}}>¿Sos alumno? Registrate aquí</button>
+            </div>
+          </div>
+        ):(
+          <div>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
+              <button onClick={()=>{setScreen("login");setErr("");}} style={{background:"rgba(255,255,255,0.2)",border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>{"<"}</button>
+              <div style={{fontSize:20,fontWeight:800,color:C.white}}>Crear cuenta</div>
+            </div>
+            <div style={{marginBottom:20}}>
+              <label style={lS}>TIPO DE CUENTA</label>
+              <div style={{display:"flex",gap:10}}>
+                {[["coach","🏋️ Entrenador"],["student","🎾 Alumno"]].map(([k,l])=>(
+                  <button key={k} onClick={()=>setRole(k)} style={{flex:1,padding:"12px 8px",borderRadius:12,border:"2px solid "+(role===k?C.white:"rgba(255,255,255,0.3)"),background:role===k?"rgba(255,255,255,0.25)":"transparent",color:C.white,fontSize:13,cursor:"pointer",fontWeight:700}}>{l}</button>
+                ))}
+              </div>
+            </div>
+            {[{l:"NOMBRE",v:name,s:setName,p:"Tu nombre"},{l:"CORREO",v:email,s:setEmail,p:"tu@correo.com"},{l:"CONTRASEÑA",v:pass,s:setPass,p:"Mínimo 8 caracteres",t:"password"},{l:"CONFIRMAR",v:pass2,s:setPass2,p:"Repetí la contraseña",t:"password"}].map(f=>(
+              <div key={f.l} style={{marginBottom:14}}><label style={lS}>{f.l}</label><input type={f.t||"text"} value={f.v} onChange={e=>f.s(e.target.value)} placeholder={f.p} style={iS}/></div>
+            ))}
+            {err&&<div style={{background:"rgba(229,57,53,0.3)",borderRadius:10,padding:"10px 14px",fontSize:13,color:"#FFCDD2",marginBottom:16}}>{err}</div>}
+            <button onClick={()=>{if(!name||!email||!pass||!pass2){setErr("Completá todos los campos.");return;}if(pass!==pass2){setErr("Las contraseñas no coinciden.");return;}if(!role){setErr("Elegí tu tipo de cuenta.");return;}onLogin(role);}} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:C.white,color:C.blue2,fontSize:15,cursor:"pointer",fontWeight:800}}>Crear cuenta</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DayPicker({ value, onChange }) {
+  const toggle=(d)=>onChange(value.includes(d)?value.filter(x=>x!==d):[...value,d]);
+  return (
+    <div style={{display:"flex",justifyContent:"space-between"}}>
+      {ALL_DAYS.map((day,i)=>{
+        const active=value.includes(day);
+        return <button key={day} onClick={()=>toggle(day)} style={{width:38,height:38,borderRadius:"50%",border:"none",background:active?"linear-gradient(135deg,#0D1B4B,#1A3DB5)":C.blueL,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:active?C.white:C.mutedDark,cursor:"pointer"}}>{DAY_LABELS[i]}</button>;
+      })}
+    </div>
+  );
+}
+
+function StudentSearch({ students, selected, onAdd }) {
+  const [query,setQuery]=useState("");
+  const selectedIds=selected.map(x=>x.id);
+  const results=query.trim().length>0?students.filter(s=>s.name.toLowerCase().includes(query.toLowerCase())&&!selectedIds.includes(s.id)):[];
+  return (
+    <div style={{marginBottom:12,position:"relative"}}>
+      <div style={{position:"relative"}}>
+        <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Buscar alumno..." style={{width:"100%",padding:"11px 36px 11px 14px",borderRadius:12,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",background:C.bg,color:C.text,outline:"none"}}/>
+        {query&&<button onClick={()=>setQuery("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:C.mutedDark,fontSize:18}}>×</button>}
+      </div>
+      {query.trim().length>0&&(
+        <div style={{position:"absolute",top:"100%",left:0,right:0,background:C.white,borderRadius:12,border:"1.5px solid "+C.border,zIndex:50,overflow:"hidden",marginTop:4}}>
+          {results.length===0?<div style={{padding:"12px 14px",fontSize:13,color:C.mutedDark}}>No se encontraron alumnos</div>
+          :results.map(s=>(
+            <div key={s.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderBottom:"1px solid "+C.border,cursor:"pointer"}} onClick={()=>{onAdd(s);setQuery("");}}>
+              <div style={{width:34,height:34,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:C.white,flexShrink:0}}>{s.avatar}</div>
+              <div style={{flex:1}}><div style={{fontWeight:600,fontSize:14,color:C.text}}>{s.name}</div></div>
+              <div style={{background:C.blue2,borderRadius:8,padding:"5px 12px",color:C.white,fontSize:12,fontWeight:700}}>+ Agregar</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, onCreateStudent, prefill, courts=[], packages=[], onAddPackage }) {
+  const [title,setTitle]=useState(""); const [court,setCourt]=useState("");
+  const [sel,setSel]=useState([]);
+  const [startDate,setStartDate]=useState(prefill?.date||"");
+  const [endDate,setEndDate]=useState("");
+  const [days,setDays]=useState([]);
+  const [t1,setT1]=useState(prefill?.time||"08:00"); const [t2,setT2]=useState(prefill?.timeEnd||"09:00");
+  const [showCreateStudent,setShowCreateStudent]=useState(false);
+  const [showNewPackModal,setShowNewPackModal]=useState(false);
+  const [pendingPackStudent,setPendingPackStudent]=useState(null);
+  const [allStudents,setAllStudents]=useState(initialStudents);
+  const iS={width:"100%",padding:"12px 14px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",background:C.blueL,color:C.text,outline:"none"};
+
+  const DAY_MAP={"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6,"Dom":0};
+  const mNShort=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+  const wDShort=["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
+
+  // Generate all class occurrences between startDate and endDate
+  const generateOccurrences=()=>{
+    if(!startDate||days.length===0) return [];
+    const dowSet=new Set(days.map(d=>DAY_MAP[d]));
+    const result=[];
+    let cur=new Date(startDate+"T12:00:00");
+    // If no end date, generate 1 year of occurrences
+    const end=endDate
+      ?new Date(endDate+"T12:00:00")
+      :new Date(new Date(startDate+"T12:00:00").setFullYear(new Date(startDate+"T12:00:00").getFullYear()+1));
+    const maxOccurrences=endDate?200:365;
+    while(cur<=end&&result.length<maxOccurrences){
+      if(dowSet.has(cur.getDay())){
+        const ds=cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0");
+        result.push(ds);
+      }
+      cur.setDate(cur.getDate()+1);
+    }
+    return result;
+  };
+
+  const occurrences=generateOccurrences();
+
+  const handleSave=()=>{
+    if(!title||sel.length===0){alert("Agregá título y al menos un alumno.");return;}
+    if(!startDate){alert("Agregá una fecha de inicio.");return;}
+    // Validate all students have a package OR have chosen to skip
+    const missing=sel.filter(sd=>!sd.pack||sd.pack==="");
+    if(missing.length>0){
+      const names=missing.map(sd=>sd.name||"alumno").join(", ");
+      if(!window.confirm("Algunos alumnos no tienen paquete asignado ("+names+"). Continuar y asignarlo desde Cobros?")){
+        return;
+      }
+    }
+    const firstDate=occurrences.length>0?occurrences[0]:startDate||TODAY_DATE;
+    onSave({title,court,studentData:sel,students:sel.map(x=>x.id),date:firstDate,time:t1,timeEnd:t2,days,startDate,endDate,occurrences});
+    onClose();
+  };
+
+  const upd=(id,f,v)=>setSel(prev=>prev.map(x=>x.id===id?{...x,[f]:v}:x));
+  const handleCreateStudent=(data)=>{
+    const newS={id:Date.now(),...data};
+    setAllStudents(prev=>[...prev,newS]);
+    setSel(prev=>[...prev,{id:newS.id,pack:"",amount:"",paid:true}]);
+    onCreateStudent&&onCreateStudent(newS);
+    setShowCreateStudent(false);
+  };
+
+  return (
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:199,display:"flex",alignItems:"flex-end"}}>
+      <div style={{background:C.white,borderRadius:"24px 24px 0 0",padding:"24px 20px 32px",width:"100%",maxHeight:"92%",overflowY:"auto",boxSizing:"border-box"}}>
+        <div style={{fontWeight:900,fontSize:22,color:C.text,marginBottom:4}}>Nueva clase</div>
+        <div style={{fontSize:14,color:C.mutedDark,marginBottom:20}}>{dateLabel}</div>
+
+        <div style={{marginBottom:14}}>
+          <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Título</label>
+          <input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Ej: Tenis - Mañana" style={iS}/>
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+          <div>
+            <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Fecha de inicio</label>
+            <input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} style={iS}/>
+          </div>
+          <div>
+            <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Fecha de expiración <span style={{fontSize:11,color:C.mutedDark,fontWeight:400}}>(opcional)</span></label>
+            <input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} style={iS}/>
+            {!endDate&&<div style={{fontSize:10,color:C.mutedDark,marginTop:4}}>♾ Sin fecha límite — repite indefinidamente</div>}
+          </div>
+        </div>
+
+        <div style={{marginBottom:14}}>
+          <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:8}}>Días</label>
+          <DayPicker value={days} onChange={setDays}/>
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+          <div><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Desde</label><input type="time" value={t1} onChange={e=>setT1(e.target.value)} style={iS}/></div>
+          <div><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Hasta</label><input type="time" value={t2} onChange={e=>setT2(e.target.value)} style={iS}/></div>
+        </div>
+
+        {/* Cancha */}
+        <div style={{marginBottom:14}}>
+          <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Cancha</label>
+          <input value={court} onChange={e=>setCourt(e.target.value)} placeholder="Ej: Cancha A" style={iS}/>
+          {courts.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:8}}>
+            {courts.map(c=><button key={c.id} onClick={()=>setCourt(c.name)} style={{padding:"4px 12px",borderRadius:20,border:"1.5px solid "+(court===c.name?C.blue2:C.border),background:court===c.name?C.blueL:C.white,color:court===c.name?C.blue2:C.mutedDark,fontSize:12,cursor:"pointer",fontWeight:600}}>{c.name}{c.city?" · "+c.city:""}</button>)}
+          </div>}
+        </div>
+
+        <div style={{marginBottom:14}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+            <label style={{fontSize:13,color:C.blue,fontWeight:700}}>Alumnos</label>
+            <button onClick={()=>setShowCreateStudent(true)} style={{padding:"6px 12px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:11,cursor:"pointer",fontWeight:800,letterSpacing:0.3}}>+ CREAR ALUMNO</button>
+          </div>
+          <StudentSearch students={allStudents} selected={sel} onAdd={(s)=>setSel(prev=>[...prev,{id:s.id,pack:"",packId:"",amount:"",paid:true}])}/>
+          {sel.map(sd=>{
+            const s=allStudents.find(x=>x.id===sd.id); if(!s) return null;
+            return (
+              <div key={s.id} style={{borderRadius:14,border:"1.5px solid "+C.blue2,background:C.blueL,marginBottom:10,overflow:"hidden"}}>
+                <div style={{display:"flex",alignItems:"center",gap:12,padding:"10px 12px"}}>
+                  <div style={{width:34,height:34,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:C.white,flexShrink:0}}>{s.avatar}</div>
+                  <div style={{flex:1}}><div style={{fontWeight:600,fontSize:14,color:C.text}}>{s.name}</div></div>
+                  <button onClick={()=>setSel(prev=>prev.filter(x=>x.id!==s.id))} style={{background:"#FFEBEE",border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#C62828" strokeWidth="3" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </button>
+                </div>
+                <div style={{padding:"0 12px 12px",background:C.white,borderTop:"1px solid "+C.border}}>
+                  {/* Monto + Paquete row */}
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:10,marginBottom:10}}>
+                    <div>
+                      <label style={{fontSize:11,color:C.blue2,fontWeight:700,display:"block",marginBottom:4}}>MONTO ({getCUR()})</label>
+                      <input type="number" value={sd.amount} onChange={e=>upd(s.id,"amount",e.target.value)} placeholder="400000" style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:13,boxSizing:"border-box",background:C.bg,color:C.text,outline:"none"}}/>
+                    </div>
+                    <div>
+                      <label style={{fontSize:11,color:C.blue2,fontWeight:700,display:"block",marginBottom:4}}>PAQUETE <span style={{fontSize:9,color:C.mutedDark,fontWeight:500}}>(opcional)</span></label>
+                      <select value={sd.packId||""} onChange={e=>{
+                        const val=e.target.value;
+                        if(val==="otro"){setPendingPackStudent(s.id);setShowNewPackModal(true);return;}
+                        if(!val){upd(s.id,"packId","");upd(s.id,"pack","");return;}
+                        const pkg=packages.find(p=>String(p.id)===val);
+                        if(pkg){
+                          upd(s.id,"packId",val);
+                          upd(s.id,"pack",pkg.type==="mensual"?"mensual":String(pkg.qty||""));
+                          upd(s.id,"amount",pkg.price||0);
+                        }
+                      }} style={{width:"100%",padding:"10px 8px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:13,boxSizing:"border-box",background:C.bg,color:C.text,outline:"none",cursor:"pointer"}}>
+                        <option value="">Elegir paquete</option>
+                        {packages.length>0?(
+                          packages.map(p=>(
+                            <option key={p.id} value={String(p.id)}>
+                              {p.name}
+                            </option>
+                          ))
+                        ):(
+                          <>
+                            <option value="mensual">📅 Mensual</option>
+                            {Array.from({length:20},(_,i)=>i+1).map(n=><option key={n} value={n}>{n} clase{n>1?"s":""}</option>)}
+                          </>
+                        )}
+                        <option value="otro">✏️ Crear nuevo pago...</option>
+                      </select>
+                      {sd.pack==="otro"&&<div style={{fontSize:11,color:C.mutedDark,marginTop:4}}>Creá el paquete en Settings y volvé a elegirlo</div>}
+                    </div>
+                  </div>
+                  {/* No need to show # de clases - already in package */}
+                  {/* Guardar pago + Pago efectuado */}
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                    {sd.pack==="mensual"?(
+                      <div>
+                        <label style={{fontSize:11,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>INICIO DE PAGO</label>
+                        <input type="date" value={sd.payDate||TODAY_DATE} onChange={e=>upd(s.id,"payDate",e.target.value)} style={{width:"100%",padding:"8px 10px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:12,boxSizing:"border-box",background:C.bg,color:C.text,outline:"none"}}/>
+                      </div>
+                    ):<div/>}
+                    <div>
+                      <label style={{fontSize:11,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>PAGO EFECTUADO</label>
+                      <div style={{display:"flex",gap:12}}>
+                        {[true,false].map(v=>(
+                          <div key={String(v)} onClick={()=>upd(s.id,"paid",v)} style={{display:"flex",alignItems:"center",gap:5,cursor:"pointer"}}>
+                            <div style={{width:20,height:20,borderRadius:"50%",background:sd.paid===v?"linear-gradient(135deg,#0D1B4B,#1A3DB5)":C.blueL,border:"2px solid "+(sd.paid===v?C.blue2:C.border),display:"flex",alignItems:"center",justifyContent:"center"}}>{sd.paid===v&&<div style={{width:7,height:7,borderRadius:"50%",background:C.white}}></div>}</div>
+                            <span style={{fontSize:12,fontWeight:sd.paid===v?700:500,color:sd.paid===v?C.blue2:C.mutedDark}}>{v?"✓ Sí":"✗ No"}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{display:"flex",gap:12}}>
+          <button onClick={onClose} style={{flex:1,padding:"15px",borderRadius:14,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:15,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
+          <button onClick={handleSave} style={{flex:1,padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:15,fontWeight:800}}>Crear clase</button>
+        </div>
+      </div>
+      {showCreateStudent&&<NewStudentModal onClose={()=>setShowCreateStudent(false)} onSave={handleCreateStudent}/>}
+      {showNewPackModal&&<NewPackageModal onClose={()=>{setShowNewPackModal(false);setPendingPackStudent(null);}} onSave={(pkg)=>{
+        // Add to packages list
+        if(onAddPackage) onAddPackage(pkg);
+        else packages.push(pkg);
+        // Auto-select for the student who triggered it
+        if(pendingPackStudent){
+          upd(pendingPackStudent,"packId",String(pkg.id));
+          upd(pendingPackStudent,"pack",pkg.type==="mensual"?"mensual":String(pkg.qty||""));
+          upd(pendingPackStudent,"amount",pkg.price||0);
+        }
+        setShowNewPackModal(false);
+        setPendingPackStudent(null);
+      }}/>}
+    </div>
+  );
+}
+
+function NewStudentModal({ onClose, onSave }) {
+  const [name,setName]=useState("");
+  const [phone,setPhone]=useState(""); const [email,setEmail]=useState("");
+  const [photo,setPhoto]=useState(null);
+  const iS={width:"100%",padding:"14px 16px",borderRadius:12,border:"none",fontSize:14,boxSizing:"border-box",background:C.blueL,color:C.text,outline:"none"};
+  const initials=name.trim().split(" ").filter(Boolean).slice(0,2).map(w=>w[0]).join("").toUpperCase()||"?";
+  const handlePhoto=(e)=>{const file=e.target.files[0];if(file){const r=new FileReader();r.onload=ev=>setPhoto(ev.target.result);r.readAsDataURL(file);}};
+  return (
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:199,display:"flex",alignItems:"flex-end"}}>
+      <div style={{background:C.white,borderRadius:"24px 24px 0 0",padding:"24px 20px 32px",width:"100%",maxHeight:"90%",overflowY:"auto",boxSizing:"border-box"}}>
+        <div style={{fontWeight:900,fontSize:22,color:C.text,marginBottom:20}}>Nuevo Alumno</div>
+        <div style={{textAlign:"center",marginBottom:24}}>
+          <div style={{position:"relative",width:88,height:88,margin:"0 auto"}}>
+            {photo
+              ?<img src={photo} style={{width:88,height:88,borderRadius:"50%",objectFit:"cover",border:"3px solid "+C.blue2}}/>
+              :<div style={{width:88,height:88,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,fontWeight:800,color:C.white}}>{initials}</div>
+            }
+            <label htmlFor="newAvInput" style={{position:"absolute",bottom:0,right:0,width:28,height:28,borderRadius:"50%",background:C.blue2,border:"2px solid "+C.white,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.white} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+            </label>
+            <input id="newAvInput" type="file" accept="image/*" style={{display:"none"}} onChange={handlePhoto}/>
+          </div>
+          <div style={{fontSize:12,color:C.mutedDark,marginTop:8}}>Tocá la cámara para subir foto</div>
+        </div>
+        {[{l:"Nombre *",v:name,s:setName,p:"Ej: Martina López"},{l:"Teléfono",v:phone,s:setPhone,p:"0981 123 456"},{l:"Email",v:email,s:setEmail,p:"alumno@correo.com"}].map(f=>(
+          <div key={f.l} style={{marginBottom:14}}><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>{f.l}</label><input value={f.v} onChange={e=>f.s(e.target.value)} placeholder={f.p} style={iS}/></div>
+        ))}
+        <div style={{display:"flex",gap:12,marginTop:8}}>
+          <button onClick={onClose} style={{flex:1,padding:"15px",borderRadius:14,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:15,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
+          <button onClick={()=>{if(!name.trim()){alert("El nombre es obligatorio.");return;}const init=name.split(" ").slice(0,2).map(w=>w[0]).join("").toUpperCase();onSave({name,phone,email,photo,avatar:init,status:"active",combos:[{id:1,total:null,used:0,paid:false,date:new Date().toISOString().split("T")[0],amount:0}]});onClose();}} style={{flex:1,padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:15,fontWeight:800}}>Crear Alumno</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, onInvite, expenses=[], coachProfile={} }) {
+  const now=new Date();
+  const curMonth=now.getMonth();
+  const curYear=now.getFullYear();
+  // Real income from this month's expenses
+  const monthExpenses=expenses.filter(e=>{
+    const d=new Date(e.date+"T12:00:00");
+    return d.getMonth()===curMonth&&d.getFullYear()===curYear;
+  });
+  const income=monthExpenses.filter(e=>e.type==="ingreso").reduce((a,b)=>a+b.amount,0);
+  const exp=monthExpenses.filter(e=>e.type==="gasto").reduce((a,b)=>a+b.amount,0);
+  // Cobros alerts - students with unpaid combos
+  const cobrosAlerts=students.filter(s=>{const r=getRem(s);return r!==null&&r<0||(!getCombo(s)?.paid&&getCombo(s)?.total);});
+  const todayC=classes.filter(c=>c.date===TODAY_DATE&&!c.cancelled);
+  const mN=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+  const todayLabel=new Date(TODAY_DATE+"T12:00:00").getDate()+" de "+mN[new Date(TODAY_DATE+"T12:00:00").getMonth()];
+  return (
+    <div style={{flex:1,overflowY:"auto",background:C.bg,display:"flex",flexDirection:"column"}}>
+      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"16px 16px 32px",flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20}}>
+          <div style={{width:46,height:46,borderRadius:"50%",background:C.whiteA,border:"2px solid "+C.whiteB,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:800,color:C.white,overflow:"hidden",flexShrink:0}}>
+            {coachProfile.photo?<img src={coachProfile.photo} style={{width:46,height:46,objectFit:"cover"}}/>:(coachProfile.name||"C")[0].toUpperCase()}
+          </div>
+          <div><div style={{fontSize:12,color:C.muted}}>Bienvenido</div><div style={{fontSize:18,fontWeight:700,color:C.white}}>{coachProfile.name||"Coach"}</div></div>
+          <div style={{marginLeft:"auto",background:C.whiteA,borderRadius:20,padding:"4px 12px",fontSize:12,color:C.white}}>{students.filter(s=>s.status==="active").length+" activos"}</div>
+        </div>
+        <div style={{background:C.whiteA,borderRadius:16,padding:"16px"}}>
+          <div style={{fontSize:12,color:C.muted,marginBottom:4}}>Balance del mes · {mN[curMonth]+" "+curYear}</div>
+          <div style={{fontSize:28,fontWeight:800,color:C.white,marginBottom:12}}>{fmtMoneyShort(income-exp)}</div>
+          <div style={{display:"flex",gap:16}}>
+            <div><div style={{fontSize:11,color:C.muted}}>INGRESOS</div><div style={{fontSize:15,fontWeight:700,color:"#A5D6A7"}}>{income>0?fmtMoneyShort(income):"—"}</div></div>
+            <div style={{width:1,background:C.whiteB}}></div>
+            <div><div style={{fontSize:11,color:C.muted}}>GASTOS</div><div style={{fontSize:15,fontWeight:700,color:"#EF9A9A"}}>{exp>0?fmtMoneyShort(exp):"—"}</div></div>
+            <div style={{width:1,background:C.whiteB}}></div>
+            <div><div style={{fontSize:11,color:C.muted}}>A COBRAR</div><div style={{fontSize:15,fontWeight:700,color:"#FFF59D"}}>{cobrosAlerts.length>0?cobrosAlerts.length+" alumnos":"✓ Al día"}</div></div>
+          </div>
+        </div>
+      </div>
+      <div style={{padding:16,marginTop:-16}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:20,marginTop:8}}>
+          {[
+            {label:"CREAR\nNUEVA CLASE",action:onNewClass,icon:<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke={C.white} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="12" y1="15" x2="12" y2="19"/><line x1="10" y1="17" x2="14" y2="17"/></svg>,color:"linear-gradient(160deg,#3AAD35,#65CE5A)"},
+            {label:"VER\nCOBROS",action:()=>onNavigate("cobros"),icon:<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke={C.white} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="6" width="20" height="14" rx="2"/><path d="M2 10h20"/><circle cx="12" cy="15" r="2"/></svg>,color:"linear-gradient(160deg,#3AAD35,#65CE5A)"},
+            {label:"INVITAR\nALUMNOS",action:onInvite,icon:<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke={C.white} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>,color:"linear-gradient(160deg,#3AAD35,#65CE5A)"},
+          ].map((s,i)=>(
+            <div key={i} onClick={s.action} style={{background:s.color||"linear-gradient(135deg,#0D1B4B,#1A3DB5)",borderRadius:20,padding:"20px 8px 16px",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10,cursor:"pointer",minHeight:110,boxShadow:"0 6px 18px rgba(0,0,0,0.15)"}}>
+              {s.icon}
+              <span style={{fontSize:11,fontWeight:800,color:C.white,textAlign:"center",lineHeight:1.4,whiteSpace:"pre-line",letterSpacing:0.5}}>{s.label}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Clases de hoy */}
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+          <div style={{fontSize:13,fontWeight:800,color:C.text}}>📅 Clases de hoy · {todayLabel}</div>
+          <button onClick={()=>onNavigate("agenda")} style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:C.blue2,fontWeight:700}}>Ver agenda →</button>
+        </div>
+        {todayC.length===0&&<WhiteCard style={{marginBottom:16}}><div style={{textAlign:"center",color:C.mutedDark,fontSize:13}}>Sin clases hoy</div></WhiteCard>}
+        {todayC.slice(0,4).map(c=>(
+          <WhiteCard key={c.id} style={{marginBottom:8}}>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <div style={{background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",borderRadius:10,padding:"8px 10px",textAlign:"center",flexShrink:0}}>
+                <div style={{fontSize:13,fontWeight:800,color:C.white}}>{c.time}</div>
+              </div>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,fontSize:14,color:C.text}}>{c.title}{c.cancelled?" (Cancelada)":""}</div>
+                <div style={{fontSize:12,color:C.mutedDark}}>{c.court+" · "+c.students.length+" alumno"+(c.students.length>1?"s":"")}</div>
+              </div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:3,maxWidth:80,justifyContent:"flex-end"}}>
+                {c.days.map(d=><span key={d} style={{fontSize:9,padding:"2px 5px",borderRadius:10,background:C.blueL,color:C.blue2,fontWeight:600}}>{d}</span>)}
+              </div>
+            </div>
+          </WhiteCard>
+        ))}
+        {todayC.length>4&&<button onClick={()=>onNavigate("agenda")} style={{width:"100%",padding:"10px",borderRadius:12,border:"1.5px solid "+C.blue2,background:C.blueL,color:C.blue2,fontSize:13,cursor:"pointer",fontWeight:700,marginBottom:8}}>Ver {todayC.length-4} clases más →</button>}
+
+        {/* Alertas cobros */}
+        {cobrosAlerts.length>0&&(
+          <div style={{marginTop:8}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+              <div style={{fontSize:13,fontWeight:800,color:C.text}}>⚠️ Cobros pendientes</div>
+              <button onClick={()=>onNavigate("cobros")} style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:C.blue2,fontWeight:700}}>Ver cobros →</button>
+            </div>
+            {cobrosAlerts.slice(0,4).map(s=>{
+              const r=getRem(s);
+              const combo=getCombo(s);
+              const count=r<0?Math.abs(r):combo?.total||0;
+              return (
+                <div key={s.id} onClick={()=>onNavigate("cobros")} style={{background:"#FFF3E0",border:"1.5px solid #FFB74D",borderRadius:12,padding:"10px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
+                  <div style={{width:36,height:36,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:C.white,flexShrink:0}}>{s.avatar}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:13,fontWeight:700,color:C.text}}>{s.name}</div>
+                    <div style={{fontSize:11,color:"#E65100",fontWeight:600}}>{count+" clase"+(count>1?"s":"")+" a cobrar"}</div>
+                  </div>
+                  <span style={{fontSize:20,fontWeight:900,color:"#E65100"}}>{count}</span>
+                </div>
+              );
+            })}
+            {cobrosAlerts.length>4&&<button onClick={()=>onNavigate("cobros")} style={{width:"100%",padding:"10px",borderRadius:12,border:"1.5px solid #FFB74D",background:"#FFF3E0",color:"#E65100",fontSize:13,cursor:"pointer",fontWeight:700}}>Ver {cobrosAlerts.length-4} más →</button>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Students({ students, onAdd, onUpdate, onChat, classes=[], onInvite }) {
+  const [f,setF]=useState("all");
+  const [editS,setEditS]=useState(null);
+  const [search,setSearch]=useState("");
+  const [infoS,setInfoS]=useState(null);
+  let list=f==="all"?students:students.filter(s=>s.status===f);
+  if(search.trim()) list=list.filter(s=>s.name.toLowerCase().includes(search.toLowerCase()));
+  return (
+    <div style={{flex:1,display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden"}}>
+      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"16px 16px 16px",flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+          <div style={{fontSize:18,fontWeight:800,color:C.white}}>Mis Alumnos</div>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={onInvite} style={{padding:"8px 12px",borderRadius:20,border:"none",background:"rgba(255,255,255,0.2)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>📲 Invitar</button>
+            <button onClick={onAdd} style={{padding:"8px 16px",borderRadius:20,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>+ Nuevo</button>
+          </div>
+        </div>
+        <div style={{position:"relative",marginBottom:12}}>
+          <div style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",pointerEvents:"none"}}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </div>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar alumno..." style={{width:"100%",padding:"10px 36px 10px 36px",borderRadius:12,border:"none",fontSize:14,boxSizing:"border-box",background:"rgba(255,255,255,0.18)",color:C.white,outline:"none"}}/>
+          {search&&<button onClick={()=>setSearch("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,0.7)",fontSize:18,lineHeight:1}}>×</button>}
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          {[["all","Todos"],["active","Activos"],["inactive","Inactivos"]].map(([k,l])=>(
+            <button key={k} onClick={()=>setF(k)} style={{padding:"6px 14px",borderRadius:20,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:f===k?C.white:C.whiteA,color:f===k?C.blue2:C.white}}>{l}</button>
+          ))}
+        </div>
+      </div>
+      <div style={{flex:1,overflowY:"auto",padding:16,paddingBottom:80}}>
+        {list.length===0&&<div style={{textAlign:"center",padding:"32px 0",color:C.mutedDark,fontSize:14}}>No se encontraron alumnos</div>}
+        {list.map(s=>{
+          const combo=getCombo(s); const rem=getRem(s);
+          return (
+            <WhiteCard key={s.id} style={{marginBottom:10}}>
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                {s.photo?<img src={s.photo} style={{width:44,height:44,borderRadius:"50%",objectFit:"cover",flexShrink:0}}/>:<div style={{width:44,height:44,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white,flexShrink:0}}>{s.avatar}</div>}
+                <div style={{flex:1}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{fontWeight:700,fontSize:14,color:C.text}}>{s.name}</span>
+                    <button onClick={()=>setEditS({...s})} style={{background:"none",border:"none",cursor:"pointer",padding:2}}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
+                  </div>
+                  <div style={{fontSize:12,color:C.mutedDark,marginBottom:4}}>{"Alta: "+(s.createdAt||getCombo(s)?.date||"—")}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:7,height:7,borderRadius:"50%",background:s.status==="active"?C.green:"#BDBDBD"}}></div><span style={{fontSize:11,color:s.status==="active"?C.green:"#BDBDBD",fontWeight:600}}>{s.status==="active"?"Activo":"Inactivo"}</span></div>
+                </div>
+                {/* Right icons */}
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  <button onClick={()=>setInfoS(infoS?.id===s.id?null:s)} style={{background:C.blueL,border:"none",borderRadius:"50%",width:36,height:36,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                  </button>
+                  <button onClick={()=>onChat&&onChat(s)} style={{background:C.blueL,border:"none",borderRadius:"50%",width:36,height:36,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                  </button>
+                </div>
+              </div>
+              {/* Info panel */}
+              {infoS?.id===s.id&&(()=>{
+                const myClasses=classes.filter(c=>c.students&&c.students.includes(s.id));
+                const rem=getRem(s); const combo=getCombo(s);
+                const isRed=rem!==null&&rem<0||(!combo?.paid);
+                const noData=!combo||(!combo.total&&!combo.paidCount&&!combo.paid);
+                const statusColor=noData?"#9BACCB":rem===null?C.blue2:isRed?"#C62828":rem===0?"#43A047":C.blue2;
+                const statusLabel=noData?"Sin registro":rem===null?"Mensual":isRed?"A cobrar":rem===0?"Al día":"Por dar";
+                return (
+                  <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid "+C.border}}>
+                    {/* Classes */}
+                    {myClasses.length>0&&(
+                      <div style={{marginBottom:10}}>
+                        <div style={{fontSize:11,fontWeight:700,color:C.mutedDark,marginBottom:6}}>CLASES</div>
+                        {[...new Map(myClasses.map(c=>[c.title,c])).values()].slice(0,3).map(cls=>(
+                          <div key={cls.id} style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                            <div style={{flex:1,fontSize:12,fontWeight:600,color:C.text}}>{cls.title}</div>
+                            <div style={{fontSize:11,color:C.mutedDark}}>{cls.time}</div>
+                            <div style={{display:"flex",gap:3}}>
+                              {(cls.days||[]).map(d=><span key={d} style={{fontSize:9,padding:"2px 5px",borderRadius:10,background:C.blueL,color:C.blue2,fontWeight:600}}>{d}</span>)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {myClasses.length===0&&<div style={{fontSize:12,color:C.mutedDark,marginBottom:10}}>Sin clases asignadas</div>}
+                    {/* Estado de cuenta */}
+                    <div style={{background:C.blueL,borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                      <div style={{fontSize:12,fontWeight:700,color:C.mutedDark}}>Estado de Cuenta</div>
+                      <div style={{display:"flex",alignItems:"baseline",gap:6}}>
+                        <span style={{fontSize:noData?14:26,fontWeight:900,color:statusColor}}>{noData?"Sin registro":rem===null?"∞":Math.abs(rem)}</span>
+                        {!noData&&<span style={{fontSize:11,fontWeight:700,color:statusColor}}>{statusLabel}</span>}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </WhiteCard>
+          );
+        })}
+      </div>
+      <button onClick={onAdd} style={{position:"fixed",bottom:72,right:20,width:56,height:56,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:28,cursor:"pointer",zIndex:50,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+      {editS&&(
+        <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:99,display:"flex",flexDirection:"column",background:C.bg}}>
+          <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
+            <button onClick={()=>setEditS(null)} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
+            <span style={{flex:1,fontWeight:800,fontSize:16,color:C.white}}>Editar Alumno</span>
+          </div>
+          <div style={{flex:1,overflowY:"auto",background:C.bg,padding:20}}>
+            <div style={{textAlign:"center",marginBottom:24}}>
+              <div style={{position:"relative",width:88,height:88,margin:"0 auto"}}>
+                {editS.photo
+                  ?<img src={editS.photo} style={{width:88,height:88,borderRadius:"50%",objectFit:"cover",border:"3px solid "+C.blue2}}/>
+                  :<div style={{width:88,height:88,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,fontWeight:800,color:C.white}}>{editS.avatar}</div>
+                }
+                <label htmlFor="editAvInput" style={{position:"absolute",bottom:0,right:0,width:28,height:28,borderRadius:"50%",background:C.blue2,border:"2px solid "+C.white,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.white} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                </label>
+                <input id="editAvInput" type="file" accept="image/*" style={{display:"none"}} onChange={e=>{const file=e.target.files[0];if(file){const r=new FileReader();r.onload=ev=>setEditS({...editS,photo:ev.target.result});r.readAsDataURL(file);}}}/>
+              </div>
+              {editS.photo&&<button onClick={()=>setEditS({...editS,photo:null})} style={{marginTop:8,background:"none",border:"none",cursor:"pointer",fontSize:12,color:C.mutedDark,textDecoration:"underline"}}>Eliminar foto</button>}
+            </div>
+            <div style={{marginBottom:14}}><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Nombre completo</label><input value={editS.name} onChange={e=>setEditS({...editS,name:e.target.value})} style={{width:"100%",padding:"13px 16px",borderRadius:12,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",color:C.text,background:C.white,outline:"none"}}/></div>
+            <div style={{marginBottom:14}}><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Teléfono</label><input value={editS.phone||""} onChange={e=>setEditS({...editS,phone:e.target.value})} placeholder="0981 123 456" style={{width:"100%",padding:"13px 16px",borderRadius:12,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",color:C.text,background:C.white,outline:"none"}}/></div>
+            <div style={{marginBottom:20}}><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Email</label><input value={editS.email||""} onChange={e=>setEditS({...editS,email:e.target.value})} placeholder="alumno@correo.com" type="email" style={{width:"100%",padding:"13px 16px",borderRadius:12,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",color:C.text,background:C.white,outline:"none"}}/></div>
+            <div style={{marginBottom:24}}>
+              <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:8}}>Estado</label>
+              <div style={{display:"flex",gap:10}}>
+                {[["active","● Activo"],["inactive","○ Inactivo"]].map(([k,l])=>(
+                  <button key={k} onClick={()=>setEditS({...editS,status:k})} style={{flex:1,padding:"13px",borderRadius:12,border:"2px solid "+(editS.status===k?(k==="active"?C.green:C.border):"transparent"),background:editS.status===k?(k==="active"?C.greenL:C.bg):C.bg,color:editS.status===k?(k==="active"?C.green:C.mutedDark):C.mutedDark,fontSize:14,cursor:"pointer",fontWeight:700}}>{l}</button>
+                ))}
+              </div>
+            </div>
+            <button onClick={()=>{if(!editS.name.trim())return;onUpdate(editS);setEditS(null);}} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:10}}>Guardar cambios</button>
+            <button style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"#FFF0F0",color:"#D32F2F",fontSize:15,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:20}}>🗑 Eliminar alumno</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MiniCalendar({ year, month, selDay, onSelect, classes=[] }) {
+  const mN=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+  const dL=["Do","Lu","Ma","Mi","Ju","Vi","Sá"];
+  const firstDow=new Date(year,month,1).getDay();
+  const dim=new Date(year,month+1,0).getDate();
+  const cells=[];
+  for(let i=0;i<firstDow;i++) cells.push(null);
+  for(let d=1;d<=dim;d++) cells.push(d);
+  while(cells.length%7!==0) cells.push(null);
+  return (
+    <div style={{background:C.white,borderRadius:16,margin:"0 16px",padding:"14px",boxShadow:"0 2px 16px rgba(21,101,192,0.10)"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <span style={{fontWeight:700,fontSize:15,color:C.text}}>{mN[month]+" "+year}</span>
+        <div style={{display:"flex",gap:6}}>
+          <button onClick={()=>onSelect("prev")} style={{background:C.blueL,border:"none",borderRadius:8,width:28,height:28,cursor:"pointer",color:C.blue2,fontWeight:700}}>{"‹"}</button>
+          <button onClick={()=>onSelect("next")} style={{background:C.blueL,border:"none",borderRadius:8,width:28,height:28,cursor:"pointer",color:C.blue2,fontWeight:700}}>{"›"}</button>
+        </div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",marginBottom:4}}>
+        {dL.map(l=><div key={l} style={{textAlign:"center",fontSize:11,fontWeight:700,color:C.mutedDark,padding:"2px 0"}}>{l}</div>)}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)"}}>
+        {cells.map((d,i)=>{
+          if(!d) return <div key={"e"+i}></div>;
+          const mm=String(month+1).padStart(2,"0"); const dd=String(d).padStart(2,"0");
+          const ds=year+"-"+mm+"-"+dd; const isA=selDay===ds; const isTodayCell=ds===TODAY_DATE;
+          const dayClasses=classes.filter(c=>c.date===ds&&!c.cancelled);
+          const hasClasses=dayClasses.length>0;
+          return (
+            <button key={i} onClick={()=>onSelect(ds)} style={{background:isA?"linear-gradient(135deg,"+C.blue2+","+C.blue3+")":isTodayCell?C.blueL:"transparent",border:isTodayCell&&!isA?"2px solid "+C.blue2:"none",borderRadius:"50%",width:34,height:34,margin:"auto",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:1,position:"relative"}}>
+              <span style={{fontSize:13,fontWeight:isA||hasClasses?700:400,color:isA?C.white:isTodayCell?C.blue2:C.text,lineHeight:1}}>{d}</span>
+              {hasClasses&&(
+                <div style={{display:"flex",gap:2,position:"absolute",bottom:4}}>
+                  {dayClasses.slice(0,3).map((_,ci)=>(
+                    <div key={ci} style={{width:4,height:4,borderRadius:"50%",background:isA?"rgba(255,255,255,0.8)":C.blue2}}></div>
+                  ))}
+                </div>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCreateStudent, packages=[], onDelete }) {
+  const [title,setTitle]=useState(cls.title); const [court,setCourt]=useState(cls.court);
+  const [days,setDays]=useState([...cls.days]);
+  const [t1,setT1]=useState(cls.time); const [t2,setT2]=useState(cls.timeEnd||"09:00");
+  const [clsSt,setClsSt]=useState([...cls.students]);
+  const [query,setQuery]=useState("");
+  const [showCreateStudent,setShowCreateStudent]=useState(false);
+  const [allStudents,setAllStudents]=useState(initialStudents);
+  // Per-student package/amount editing
+  const [studentPacks,setStudentPacks]=useState(()=>{
+    const init={};
+    cls.students.forEach(sid=>{
+      const st=initialStudents.find(s=>s.id===sid);
+      const combo=st?.combos?.[st.combos.length-1];
+      // Pack value should match select options: "mensual", "8", "12", etc.
+      const packVal=!combo?"":combo.total===null?"mensual":String(combo.total);
+      init[sid]={pack:packVal,amount:combo?.amount||0};
+    });
+    return init;
+  });
+  const available=allStudents.filter(s=>!clsSt.includes(s.id)&&(query.trim()===""||s.name.toLowerCase().includes(query.toLowerCase())));
+  const iS={width:"100%",padding:"12px 14px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",background:C.white,color:C.text,outline:"none"};
+
+  const handleCreateStudent=(data)=>{
+    const newS={id:Date.now(),...data};
+    setAllStudents(prev=>[...prev,newS]);
+    setClsSt(prev=>[...prev,newS.id]);
+    onCreateStudent&&onCreateStudent(newS);
+    setShowCreateStudent(false);
+  };
+
+  return (
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:99,display:"flex",flexDirection:"column",background:C.bg}}>
+      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
+        <button onClick={onClose} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
+        <span style={{flex:1,fontWeight:800,fontSize:16,color:C.white}}>Modificar Clase</span>
+      </div>
+      <div style={{flex:1,overflowY:"auto",padding:16}}>
+        <div style={{marginBottom:14}}><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Título</label><input value={title} onChange={e=>setTitle(e.target.value)} style={iS}/></div>
+        <div style={{marginBottom:14}}><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Local / Cancha</label><input value={court} onChange={e=>setCourt(e.target.value)} style={iS}/></div>
+        <div style={{marginBottom:14}}><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:8}}>Días</label><DayPicker value={days} onChange={setDays}/></div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+          <div><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Hora inicio</label><input type="time" value={t1} onChange={e=>setT1(e.target.value)} style={iS}/></div>
+          <div><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Hora fin</label><input type="time" value={t2} onChange={e=>setT2(e.target.value)} style={iS}/></div>
+        </div>
+        <div style={{marginBottom:20}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+            <label style={{fontSize:13,color:C.blue,fontWeight:700}}>Alumnos</label>
+            <button onClick={()=>setShowCreateStudent(true)} style={{padding:"6px 12px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:11,cursor:"pointer",fontWeight:800,letterSpacing:0.3}}>+ CREAR ALUMNO</button>
+          </div>
+          {clsSt.map(sid=>{const st=allStudents.find(s=>s.id===sid);return st?(
+            <div key={sid} style={{borderRadius:12,background:C.white,border:"1.5px solid "+C.border,marginBottom:8,overflow:"hidden"}}>
+              <div style={{display:"flex",alignItems:"center",gap:12,padding:"10px 12px"}}>
+                {st.photo?<img src={st.photo} style={{width:36,height:36,borderRadius:"50%",objectFit:"cover",flexShrink:0}}/>:<div style={{width:36,height:36,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:C.white,flexShrink:0}}>{st.avatar}</div>}
+                <div style={{flex:1}}><div style={{fontWeight:600,fontSize:14,color:C.text}}>{st.name}</div></div>
+                <button onClick={()=>setClsSt(prev=>prev.filter(x=>x!==sid))} style={{background:"#FFEBEE",border:"none",borderRadius:"50%",width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#C62828" strokeWidth="3" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+              {/* Package/amount per student */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,padding:"0 12px 10px"}}>
+                <div>
+                  <div style={{fontSize:10,fontWeight:700,color:C.mutedDark,marginBottom:4}}>PAQUETE</div>
+                  <select value={studentPacks[sid]?.pack||""} onChange={e=>{
+                    const val=e.target.value;
+                    const pkg=packages.find(p=>String(p.qty)===val||(val==="mensual"&&p.type==="mensual")||(val==="individual"&&p.type==="individual"));
+                    setStudentPacks(p=>({...p,[sid]:{pack:val,amount:pkg?pkg.price:(p[sid]?.amount||0)}}));
+                  }} style={{...iS,padding:"8px 10px",fontSize:12}}>
+                    <option value="">Elegir...</option>
+                    {packages.length>0?packages.map(p=>(
+                      <option key={p.id} value={p.type==="mensual"?"mensual":String(p.qty)}>{p.name}</option>
+                    )):<><option value="mensual">📅 Mensual</option><option value="8">📦 8 clases</option></>}
+                    <option value="otro">✏️ Otro</option>
+                  </select>
+                  {studentPacks[sid]?.pack==="otro"&&(
+                    <input type="text" placeholder="Ej: 5 clases, Mensual..." value={studentPacks[sid]?.customLabel||""} onChange={e=>setStudentPacks(p=>({...p,[sid]:{...p[sid],customLabel:e.target.value}}))} style={{...iS,padding:"8px 10px",fontSize:12,marginTop:6}}/>
+                  )}
+                </div>
+                <div>
+                  <div style={{fontSize:10,fontWeight:700,color:C.mutedDark,marginBottom:4}}>MONTO ({getCUR()})</div>
+                  <input type="number" value={studentPacks[sid]?.amount||""} placeholder="0" onChange={e=>setStudentPacks(p=>({...p,[sid]:{...p[sid],amount:parseInt(e.target.value)||0}}))} style={{...iS,padding:"8px 10px",fontSize:12}}/>
+                </div>
+              </div>
+            </div>
+          ):null;})}
+          <div style={{position:"relative",marginTop:4}}>
+            <div style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",pointerEvents:"none"}}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.mutedDark} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            </div>
+            <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Buscar alumno para agregar..." style={{width:"100%",padding:"11px 14px 11px 34px",borderRadius:12,border:"1.5px dashed "+C.blue2,fontSize:13,boxSizing:"border-box",background:C.blueL,color:C.text,outline:"none"}}/>
+            {query&&<button onClick={()=>setQuery("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:C.mutedDark,fontSize:18}}>×</button>}
+          </div>
+          {query.trim().length>0&&(
+            <div style={{background:C.white,borderRadius:12,border:"1.5px solid "+C.border,marginTop:4,overflow:"hidden"}}>
+              {available.length===0
+                ?<div style={{padding:"12px 14px",fontSize:13,color:C.mutedDark}}>No se encontraron alumnos</div>
+                :available.map(s=>(
+                  <div key={s.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderBottom:"1px solid "+C.border,cursor:"pointer"}} onClick={()=>{setClsSt(prev=>[...prev,s.id]);setQuery("");}}>
+                    {s.photo?<img src={s.photo} style={{width:34,height:34,borderRadius:"50%",objectFit:"cover",flexShrink:0}}/>:<div style={{width:34,height:34,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:C.white,flexShrink:0}}>{s.avatar}</div>}
+                    <div style={{flex:1}}><div style={{fontWeight:600,fontSize:14,color:C.text}}>{s.name}</div></div>
+                    <div style={{background:C.blue2,borderRadius:8,padding:"5px 12px",color:C.white,fontSize:12,fontWeight:700}}>+ Agregar</div>
+                  </div>
+                ))
+              }
+            </div>
+          )}
+        </div>
+        <button onClick={()=>onSave({...cls,title,court,days,time:t1,timeEnd:t2,students:clsSt,studentPacks})} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:10}}>Actualizar Clase</button>
+        <button onClick={()=>{if(window.confirm("¿Eliminar esta clase? Todas las instancias serán eliminadas del calendario.")) {onDelete&&onDelete(cls.id);onClose();}}} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"#FFF0F0",color:"#D32F2F",fontSize:15,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:20}}>🗑 Eliminar Clase</button>
+      </div>
+      {showCreateStudent&&<NewStudentModal onClose={()=>setShowCreateStudent(false)} onSave={handleCreateStudent}/>}
+    </div>
+  );
+}
+
+function ReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent }) {
+  const [newDate,setNewDate]=useState("");
+  const [newTime,setNewTime]=useState(cls.time||"08:00");
+  const [notified,setNotified]=useState(false);
+  const mN=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+
+  const currentDate=new Date(cls.date+"T12:00:00");
+  const currentLabel=currentDate.getDate()+" de "+mN[currentDate.getMonth()]+" "+currentDate.getFullYear();
+
+  const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+  const classDowSet=new Set((cls.days||[]).map(d=>DAY_MAP[d]));
+  const getNextClassDate=(fromDate)=>{
+    const d=new Date(fromDate+"T12:00:00");
+    d.setDate(d.getDate()+1);
+    for(let i=0;i<14;i++){
+      if(classDowSet.size===0||classDowSet.has(d.getDay())){
+        return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+      }
+      d.setDate(d.getDate()+1);
+    }
+    return null;
+  };
+
+  const nextAuto=getNextClassDate(cls.date);
+  const targetDate=newDate||nextAuto;
+  const targetDateObj=targetDate?new Date(targetDate+"T12:00:00"):null;
+  const targetLabel=targetDateObj?targetDateObj.getDate()+" de "+mN[targetDateObj.getMonth()]+" "+targetDateObj.getFullYear():null;
+
+  const clsStudents=(cls.students||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean);
+
+  const handleNotify=()=>{
+    // Mark as notified — in a real app this would send messages
+    setNotified(true);
+  };
+
+  const handleConfirm=()=>{
+    if(!targetDate) return;
+    const oldDate=cls.date;
+    // Update class
+    onSave({...cls, date:targetDate, time:newTime});
+    // Update student combo dates that contain the old date
+    if(onUpdateStudent){
+      clsStudents.forEach(s=>{
+        const updatedCombos=s.combos.map(c=>{
+          if(!c.dates) return c;
+          const idx=c.dates.indexOf(oldDate);
+          if(idx===-1) return c;
+          const newDates=[...c.dates];
+          newDates[idx]=targetDate;
+          newDates.sort();
+          return {...c,dates:newDates};
+        });
+        if(JSON.stringify(updatedCombos)!==JSON.stringify(s.combos)){
+          onUpdateStudent({...s,combos:updatedCombos});
+        }
+      });
+    }
+  };
+
+  return (
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:199,display:"flex",alignItems:"flex-end"}}>
+      <div style={{background:C.white,borderRadius:"24px 24px 0 0",padding:"24px 20px 32px",width:"100%",maxHeight:"90%",overflowY:"auto",boxSizing:"border-box"}}>
+        <div style={{fontWeight:900,fontSize:20,color:C.text,marginBottom:4}}>Reprogramar clase</div>
+        <div style={{fontSize:13,color:C.mutedDark,marginBottom:20}}>{cls.title} · actualmente {currentLabel} {cls.time}</div>
+
+        {/* Date + Time row */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div>
+            <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Nueva fecha</label>
+            <input type="date" value={newDate} onChange={e=>setNewDate(e.target.value)} style={{width:"100%",padding:"13px 12px",borderRadius:12,border:"none",fontSize:13,boxSizing:"border-box",background:C.blueL,color:C.text,outline:"none",cursor:"pointer"}}/>
+          </div>
+          <div>
+            <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Nueva hora</label>
+            <input type="time" value={newTime} onChange={e=>setNewTime(e.target.value)} style={{width:"100%",padding:"13px 12px",borderRadius:12,border:"none",fontSize:13,boxSizing:"border-box",background:C.blueL,color:C.text,outline:"none",cursor:"pointer"}}/>
+          </div>
+        </div>
+
+        {/* Info box */}
+        <div style={{background:"#FFF8E1",borderRadius:12,padding:"12px 14px",marginBottom:16,display:"flex",gap:10,alignItems:"flex-start"}}>
+          <span style={{fontSize:16,flexShrink:0}}>💡</span>
+          <div style={{fontSize:12,color:"#E65100",lineHeight:1.5}}>
+            {targetLabel
+              ?<>La clase se moverá al <b>{targetLabel}</b> a las <b>{newTime}</b>. Las fechas del combo en Cobros se actualizarán.</>
+              :"Elegí una nueva fecha o se usará la siguiente clase programada."
+            }
+          </div>
+        </div>
+
+        {/* Notify students */}
+        <div style={{background:notified?C.greenL:C.blueL,borderRadius:12,padding:"12px 14px",marginBottom:20}}>
+          <div style={{fontSize:13,fontWeight:700,color:notified?C.green:C.text,marginBottom:8}}>
+            {notified?"✓ Alumnos notificados":"Informar a los alumnos"}
+          </div>
+          {!notified&&(
+            <>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
+                {clsStudents.map(st=>(
+                  <div key={st.id} style={{display:"flex",alignItems:"center",gap:5,background:C.white,borderRadius:20,padding:"4px 10px 4px 6px",fontSize:12,color:C.blue2,fontWeight:600}}>
+                    <div style={{width:18,height:18,borderRadius:"50%",background:C.blue2,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:C.white,fontWeight:700}}>{st.avatar[0]}</div>
+                    {st.name.split(" ")[0]}
+                  </div>
+                ))}
+              </div>
+              <div style={{fontSize:11,color:C.mutedDark,marginBottom:10,fontStyle:"italic"}}>
+                {targetLabel?`"⚠️ Clase reprogramada al ${targetLabel} a las ${newTime}"`:'"⚠️ Tu clase fue reprogramada"'}
+              </div>
+              <button onClick={handleNotify} style={{width:"100%",padding:"10px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#FF8F00,#FFA726)",color:"#fff",fontSize:13,cursor:"pointer",fontWeight:800}}>
+                📲 Enviar alerta a alumnos
+              </button>
+            </>
+          )}
+          {notified&&(
+            <div style={{fontSize:12,color:C.green}}>Se envió un mensaje y alerta a {clsStudents.length} alumno{clsStudents.length!==1?"s":""}.</div>
+          )}
+        </div>
+
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={onClose} style={{flex:1,padding:"14px",borderRadius:14,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:14,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
+          <button onClick={handleConfirm} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:14,fontWeight:800}}>Confirmar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AttModal({ att, students, onAttendance, onClose }) {
+  const [attStatus,setAttStatus]=useState(()=>{
+    const init={};
+    att.students.forEach(sid=>{ init[sid]="presente"; });
+    return init;
+  });
+
+  const handleSave=()=>{
+    const presentStudents=att.students.filter(sid=>attStatus[sid]==="presente");
+    onAttendance({...att,students:presentStudents});
+    onClose();
+  };
+
+  const presentCount=Object.values(attStatus).filter(v=>v==="presente").length;
+  const ausentCount=Object.values(attStatus).filter(v=>v==="ausente").length;
+
+  return (
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:99,display:"flex",alignItems:"flex-end"}}>
+      <div style={{background:C.white,borderRadius:"20px 20px 0 0",width:"100%",boxSizing:"border-box",maxHeight:"85%",display:"flex",flexDirection:"column"}}>
+        {/* Header */}
+        <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",borderRadius:"20px 20px 0 0",padding:"16px 20px"}}>
+          <div style={{fontWeight:800,fontSize:16,color:C.white}}>{att.title}</div>
+          <div style={{fontSize:12,color:C.muted,marginTop:2}}>{att.date}</div>
+          <div style={{display:"flex",gap:12,marginTop:10}}>
+            <span style={{fontSize:12,background:"rgba(255,255,255,0.2)",borderRadius:20,padding:"4px 12px",color:C.white,fontWeight:600}}>✓ {presentCount} presentes</span>
+            <span style={{fontSize:12,background:"rgba(255,255,255,0.2)",borderRadius:20,padding:"4px 12px",color:C.white,fontWeight:600}}>✗ {ausentCount} ausentes</span>
+          </div>
+        </div>
+        {/* Student list */}
+        <div style={{flex:1,overflowY:"auto",padding:"12px 16px"}}>
+          {att.students.map(sid=>{
+            const st=students.find(s=>s.id===sid);
+            if(!st) return null;
+            const isPresente=attStatus[sid]==="presente";
+            return (
+              <div key={sid} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0",borderBottom:"1px solid "+C.border}}>
+                {st.photo
+                  ?<img src={st.photo} style={{width:40,height:40,borderRadius:"50%",objectFit:"cover",flexShrink:0}}/>
+                  :<div style={{width:40,height:40,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white,flexShrink:0}}>{st.avatar}</div>
+                }
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:700,fontSize:14,color:C.text}}>{st.name}</div>
+                  <div style={{fontSize:11,color:C.mutedDark}}>{st.sport}</div>
+                </div>
+                {/* Toggle Presente/Ausente */}
+                <div style={{display:"flex",borderRadius:20,overflow:"hidden",border:"1.5px solid "+(isPresente?"#43A047":"#E65100")}}>
+                  <button onClick={()=>setAttStatus(p=>({...p,[sid]:"presente"}))}
+                    style={{padding:"6px 14px",border:"none",cursor:"pointer",fontSize:12,fontWeight:700,
+                      background:isPresente?"#43A047":"#fff",color:isPresente?"#fff":"#9E9E9E"}}>
+                    ✓ Presente
+                  </button>
+                  <button onClick={()=>setAttStatus(p=>({...p,[sid]:"ausente"}))}
+                    style={{padding:"6px 14px",border:"none",cursor:"pointer",fontSize:12,fontWeight:700,
+                      background:!isPresente?"#E65100":"#fff",color:!isPresente?"#fff":"#9E9E9E"}}>
+                    ✗ Ausente
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {/* Footer */}
+        <div style={{padding:"12px 16px 28px",borderTop:"1px solid "+C.border,display:"flex",gap:10}}>
+          <button onClick={onClose} style={{flex:1,padding:"12px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:14,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
+          <button onClick={handleSave} style={{flex:2,padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:14,fontWeight:800}}>Guardar asistencia</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, courts=[], packages=[], onUpdateStudent, onDeleteClass }) {
+  const [selDay,setSelDay]=useState(TODAY_DATE);
+  const [viewYear,setViewYear]=useState(new Date().getFullYear());
+  const [viewMonth,setViewMonth]=useState(new Date().getMonth());
+  const [viewMode,setViewMode]=useState("month");
+  const [weekOffset,setWeekOffset]=useState(0);
+  const [showNew,setShowNew]=useState(false);
+  const [att,setAtt]=useState(null);
+  const [editCls,setEditCls]=useState(null);
+  const [gridNewTime,setGridNewTime]=useState(null);
+  const [highlightCls,setHighlightCls]=useState(null);
+  const [confirmDelete,setConfirmDelete]=useState(null); // class to delete
+  const mN=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+  const wD=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+  const wDShort=["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
+
+  const handleCalNav=(a)=>{
+    if(a==="prev"){if(viewMonth===0){setViewMonth(11);setViewYear(y=>y-1);}else setViewMonth(m=>m-1);}
+    else if(a==="next"){if(viewMonth===11){setViewMonth(0);setViewYear(y=>y+1);}else setViewMonth(m=>m+1);}
+    else setSelDay(a);
+  };
+
+  // Week view helpers
+  const getWeekDays=(offset)=>{
+    const base=new Date(TODAY_DATE+"T12:00:00");
+    const dow=base.getDay();
+    const monday=new Date(base);
+    monday.setDate(base.getDate()-(dow===0?6:dow-1)+(offset*7));
+    return Array.from({length:7},(_,i)=>{
+      const d=new Date(monday);
+      d.setDate(monday.getDate()+i);
+      return d;
+    });
+  };
+  const weekDays=getWeekDays(weekOffset);
+  const fmt=(d)=>{const mm=String(d.getMonth()+1).padStart(2,"0");const dd=String(d.getDate()).padStart(2,"0");return d.getFullYear()+"-"+mm+"-"+dd;};
+  const weekLabel=()=>{
+    const s=weekDays[0]; const e=weekDays[6];
+    if(s.getMonth()===e.getMonth()) return s.getDate()+" – "+e.getDate()+" de "+mN[s.getMonth()]+" "+s.getFullYear();
+    return s.getDate()+" "+mN[s.getMonth()].slice(0,3)+" – "+e.getDate()+" "+mN[e.getMonth()].slice(0,3)+" "+e.getFullYear();
+  };
+
+  const dayC=classes.filter(c=>c.date===selDay);
+  const sd=new Date(selDay+"T12:00:00");
+  const selLabel=wD[sd.getDay()]+" "+sd.getDate()+" de "+mN[sd.getMonth()];
+
+  const [reprog,setReprog]=useState(null); // class to reschedule
+
+  const ClassCard=({c})=>(
+    <WhiteCard style={{marginBottom:12}}>
+      <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+        <div><div style={{fontWeight:800,fontSize:15,color:C.text}}>{c.title}{c.cancelled?" (Cancelada)":""}</div><div style={{fontSize:12,color:C.mutedDark}}>{c.time+" · "+c.court}</div></div>
+        <span style={{background:C.blueL,color:C.blue2,fontSize:11,padding:"4px 10px",borderRadius:20,fontWeight:600,height:"fit-content"}}>{c.days.join(" · ")}</span>
+      </div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
+        {c.students.map(sid=>{const st=students.find(s=>s.id===sid);return st?(<div key={sid} style={{display:"flex",alignItems:"center",gap:6,background:C.blueL,borderRadius:20,padding:"4px 10px 4px 6px",fontSize:12,color:C.blue2,fontWeight:600}}><div style={{width:20,height:20,borderRadius:"50%",background:C.blue2,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,color:C.white,fontWeight:700}}>{st.avatar[0]}</div>{st.name.split(" ")[0]}</div>):null;})}
+      </div>
+      <div style={{display:"flex",gap:8,marginBottom:8}}>
+        <button onClick={()=>setEditCls(c)} style={{flex:1,padding:"9px",borderRadius:10,border:"none",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>Modificar</button>
+        <button onClick={()=>setAtt(c)} style={{flex:1,padding:"9px",borderRadius:10,border:"none",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>Asistencia</button>
+        <button onClick={()=>{setConfirmDelete(c);}} style={{width:38,padding:"9px",borderRadius:10,border:"none",background:"#FFEBEE",color:"#C62828",fontSize:14,cursor:"pointer",flexShrink:0}}>🗑</button>
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={()=>setReprog(c)} style={{flex:1,padding:"9px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>📅 Reprogramar</button>
+        <button onClick={()=>onSaveClass({...c,cancelled:!c.cancelled},true)} style={{flex:1,padding:"9px",borderRadius:10,border:"1.5px solid "+(c.cancelled?"#C62828":"#FFB74D"),background:c.cancelled?"#FFEBEE":"#FFF3E0",color:c.cancelled?"#C62828":"#E65100",fontSize:12,cursor:"pointer",fontWeight:700}}>{c.cancelled?"❌ Clase Cancelada":"⛔ Cancelar clase"}</button>
+      </div>
+    </WhiteCard>
+  );
+
+  return (
+    <div style={{flex:1,display:"flex",flexDirection:"column",background:C.bg,position:"relative",overflow:"hidden"}}>
+      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"16px 16px 16px",flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+          <div style={{fontSize:18,fontWeight:800,color:C.white}}>Agenda</div>
+          <button onClick={()=>setShowNew(true)} style={{padding:"7px 12px",borderRadius:20,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:11,cursor:"pointer",fontWeight:700}}>+ Crear Clase</button>
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          {[["month","Mensual"],["week","Semanal"]].map(([k,l])=>(
+            <button key={k} onClick={()=>setViewMode(k)} style={{padding:"6px 18px",borderRadius:20,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:viewMode===k?C.white:C.whiteA,color:viewMode===k?C.blue2:C.white}}>{l}</button>
+          ))}
+        </div>
+      </div>
+
+      {viewMode==="month"&&(
+        <div style={{flex:1,overflowY:"auto",background:C.bg}}>
+          {/* Calendar */}
+          <div style={{background:C.white,margin:"12px 12px 0",borderRadius:20,padding:"16px",boxShadow:"0 2px 12px rgba(44,94,247,0.08)"}}>
+            {/* Month nav */}
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+              <button onClick={()=>handleCalNav("prev")} style={{background:C.bg,border:"1px solid "+C.border,borderRadius:10,width:36,height:36,cursor:"pointer",color:C.blue2,fontWeight:800,fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>{"<"}</button>
+              <div style={{fontSize:16,fontWeight:800,color:C.text}}>{mN[viewMonth]+" "+viewYear}</div>
+              <button onClick={()=>handleCalNav("next")} style={{background:C.bg,border:"1px solid "+C.border,borderRadius:10,width:36,height:36,cursor:"pointer",color:C.blue2,fontWeight:800,fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>{">"}</button>
+            </div>
+            {/* Day headers */}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",marginBottom:8}}>
+              {["Lu","Ma","Mi","Ju","Vi","Sá","Do"].map(d=>(
+                <div key={d} style={{textAlign:"center",fontSize:11,fontWeight:700,color:C.mutedDark,padding:"4px 0"}}>{d}</div>
+              ))}
+            </div>
+            {/* Calendar cells */}
+            {(()=>{
+              const firstDay=new Date(viewYear,viewMonth,1).getDay();
+              const daysInMonth=new Date(viewYear,viewMonth+1,0).getDate();
+              const startOffset=firstDay===0?6:firstDay-1;
+              const cells=[];
+              for(let i=0;i<startOffset;i++) cells.push(null);
+              for(let d=1;d<=daysInMonth;d++) cells.push(d);
+              while(cells.length%7!==0) cells.push(null);
+              return (
+                <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2}}>
+                  {cells.map((d,i)=>{
+                    if(!d) return <div key={"e"+i}/>;
+                    const mm=String(viewMonth+1).padStart(2,"0");
+                    const dd=String(d).padStart(2,"0");
+                    const ds=viewYear+"-"+mm+"-"+dd;
+                    const isA=selDay===ds; const isToday=ds===TODAY_DATE;
+                    const dayCls=classes.filter(c=>c.date===ds&&!c.cancelled);
+                    const count=dayCls.length;
+                    return (
+                      <button key={i} onClick={()=>handleCalNav(ds)} style={{background:isA?"linear-gradient(135deg,"+C.blue2+","+C.blue3+")":isToday?C.blueL:"transparent",border:isToday&&!isA?"2px solid "+C.blue2:"2px solid transparent",borderRadius:12,padding:"6px 2px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2,minHeight:48}}>
+                        <span style={{fontSize:14,fontWeight:isA||isToday?800:400,color:isA?C.white:isToday?C.blue2:C.text,lineHeight:1}}>{d}</span>
+                        {count>0&&(
+                          <div style={{display:"flex",gap:2,justifyContent:"center",flexWrap:"wrap"}}>
+                            {count<=3?dayCls.map((_,ci)=>(
+                              <div key={ci} style={{width:5,height:5,borderRadius:"50%",background:isA?"rgba(255,255,255,0.8)":C.blue2}}/>
+                            )):(
+                              <span style={{fontSize:9,fontWeight:700,color:isA?C.white:C.blue2}}>{count}</span>
+                            )}
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Selected day classes - compact */}
+          <div style={{padding:"12px 12px 80px"}}>
+            <div style={{fontSize:14,fontWeight:800,color:C.blue2,marginBottom:10}}>{selLabel+" | "+dayC.length+" clase"+(dayC.length!==1?"s":"")}</div>
+            {dayC.length===0?(
+              <div style={{textAlign:"center",padding:"24px 0",color:C.mutedDark}}>
+                <div style={{fontSize:28,marginBottom:8}}>📅</div>
+                <div style={{fontSize:14,fontWeight:600}}>Sin clases este día</div>
+                <div style={{fontSize:12,marginTop:4}}>Tocá + para agregar</div>
+              </div>
+            ):dayC.map(c=>(
+              <div key={c.id} style={{background:c.cancelled?"#FFF3E0":C.white,borderRadius:16,padding:"12px 14px",marginBottom:10,boxShadow:"0 2px 10px rgba(44,94,247,0.07)",border:"1px solid "+C.border}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:800,fontSize:15,color:c.cancelled?"#C62828":C.text}}>{c.title}{c.cancelled?" (Cancelada)":""}</div>
+                    <div style={{fontSize:12,color:C.mutedDark,marginTop:2}}>{c.time+(c.timeEnd?" - "+c.timeEnd:"")} · {c.court}</div>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+                    <span style={{fontSize:11,padding:"3px 8px",borderRadius:20,background:C.blueL,color:C.blue2,fontWeight:600}}>{(c.days||[]).join(" · ")}</span>
+                    <button onClick={()=>setHighlightCls(c.id===highlightCls?null:c.id)} style={{width:32,height:32,borderRadius:"50%",background:C.bg,border:"1px solid "+C.border,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                      <span style={{fontSize:14,color:C.mutedDark,fontWeight:800,letterSpacing:1}}>···</span>
+                    </button>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:4,marginTop:8,flexWrap:"wrap"}}>
+                  {(c.students||[]).map(sid=>{const st=students.find(s=>s.id===sid);return st?(
+                    <div key={sid} style={{display:"flex",alignItems:"center",gap:4,background:C.blueL,borderRadius:20,padding:"3px 8px 3px 4px"}}>
+                      <div style={{width:18,height:18,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,fontWeight:800,color:C.white}}>{st.avatar[0]}</div>
+                      <span style={{fontSize:11,color:C.blue2,fontWeight:600}}>{st.name.split(" ")[0]}</span>
+                    </div>
+                  ):null;})}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Class action modal */}
+          {highlightCls&&(()=>{
+            const c=classes.find(x=>x.id===highlightCls);
+            if(!c) return null;
+            return (
+              <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.45)",zIndex:99,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 16px"}} onClick={()=>setHighlightCls(null)}>
+                <div style={{background:C.white,borderRadius:24,padding:"20px 20px 24px",width:"100%",boxShadow:"0 20px 60px rgba(0,0,0,0.25)"}} onClick={e=>e.stopPropagation()}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+                    <div>
+                      <div style={{fontWeight:900,fontSize:20,color:C.text}}>{c.title}</div>
+                      <div style={{fontSize:13,color:C.mutedDark,marginTop:2}}>{c.time+(c.timeEnd?" – "+c.timeEnd:"")} · {c.court}</div>
+                    </div>
+                    <div style={{display:"flex",gap:8}}>
+                      <button onClick={()=>{setConfirmDelete(c);setHighlightCls(null);}} style={{width:36,height:36,borderRadius:"50%",background:"#FFEBEE",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#C62828" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+                      </button>
+                      <button onClick={()=>setHighlightCls(null)} style={{width:36,height:36,borderRadius:"50%",background:C.bg,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.mutedDark} strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:18}}>
+                    {(c.students||[]).map(sid=>{const st=students.find(s=>s.id===sid);return st?(
+                      <div key={sid} style={{display:"flex",alignItems:"center",gap:5,background:C.blueL,borderRadius:20,padding:"4px 10px 4px 4px"}}>
+                        <div style={{width:22,height:22,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:800,color:C.white}}>{st.avatar[0]}</div>
+                        <span style={{fontSize:12,color:C.blue2,fontWeight:700}}>{st.name.split(" ")[0]}</span>
+                      </div>
+                    ):null;})}
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                    {[
+                      {label:"Editar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,action:()=>{setEditCls(c);setHighlightCls(null);}},
+                      {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt(c);setHighlightCls(null);}},
+                      {label:"Reprogramar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14l2 2 4-4"/></svg>,action:()=>{setReprog(c);setHighlightCls(null);}},
+                      {label:c.cancelled?"Reactivar":"Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>,action:()=>{onSaveClass({...c,cancelled:!c.cancelled},true);setHighlightCls(null);}},
+                    ].map(btn=>(
+                      <button key={btn.label} onClick={btn.action} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"13px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)",color:"#fff",fontSize:14,cursor:"pointer",fontWeight:700,boxShadow:"0 4px 12px rgba(101,206,90,0.3)"}}>
+                        {btn.icon}{btn.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {viewMode==="week"&&(()=>{
+        const HOURS=Array.from({length:17},(_,i)=>i+6); // 6-22
+        const HOUR_HEIGHT=80;
+        const fmtHourLabel=(h)=>h<12?h+" AM":(h===12?"12 PM":(h-12)+" PM");
+        const timeToMins=(t)=>{if(!t)return null;const[h,m]=(t).split(":").map(Number);return h*60+(m||0);};
+        return (
+          <div style={{display:"flex",flexDirection:"column",height:"100%",overflow:"hidden",background:C.bg}}>
+            {/* Week nav */}
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px 8px",background:C.white,flexShrink:0,boxShadow:"0 1px 0 "+C.border}}>
+              <button onClick={()=>setWeekOffset(w=>w-1)} style={{background:C.bg,border:"1px solid "+C.border,borderRadius:10,width:36,height:36,cursor:"pointer",color:C.blue2,fontWeight:800,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>{"<"}</button>
+              <div style={{fontSize:15,fontWeight:800,color:C.text}}>{weekLabel()}</div>
+              <button onClick={()=>setWeekOffset(w=>w+1)} style={{background:C.bg,border:"1px solid "+C.border,borderRadius:10,width:36,height:36,cursor:"pointer",color:C.blue2,fontWeight:800,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>{">"}</button>
+            </div>
+            {/* Day selector row */}
+            <div style={{display:"flex",padding:"10px 16px",gap:4,background:C.white,flexShrink:0,borderBottom:"1px solid "+C.border}}>
+              {weekDays.map((day,i)=>{
+                const ds=fmt(day); const isToday=ds===TODAY_DATE; const isSel=ds===selDay;
+                return (
+                  <div key={i} onClick={()=>setSelDay(ds)} style={{flex:1,textAlign:"center",cursor:"pointer"}}>
+                    <div style={{borderRadius:12,padding:"8px 2px",background:isSel?"linear-gradient(135deg,"+C.blue2+","+C.blue3+")":isToday?C.blueL:"transparent"}}>
+                      <div style={{fontSize:18,fontWeight:900,color:isSel?C.white:isToday?C.blue2:C.text,lineHeight:1}}>{day.getDate()}</div>
+                      <div style={{fontSize:9,fontWeight:700,color:isSel?"rgba(255,255,255,0.8)":C.mutedDark,marginTop:2}}>{wDShort[day.getDay()].toUpperCase()}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {/* Timeline - absolute positioned */}
+            <div style={{overflowY:"auto",flex:1,paddingBottom:80}}>
+              <div style={{position:"relative",minHeight:HOURS.length*HOUR_HEIGHT}}>
+                {/* Hour grid lines + buttons */}
+                {HOURS.map((hourVal,hi)=>(
+                  <div key={hourVal} style={{position:"absolute",top:hi*HOUR_HEIGHT,left:0,right:0,height:HOUR_HEIGHT,borderBottom:"1px solid "+C.border,display:"flex",alignItems:"flex-start",pointerEvents:"none"}}>
+                    <div style={{width:56,flexShrink:0,padding:"6px 6px 0",display:"flex",flexDirection:"column",alignItems:"center",gap:3,pointerEvents:"all"}}>
+                      <span style={{fontSize:11,fontWeight:600,color:C.mutedDark}}>{fmtHourLabel(hourVal)}</span>
+                      <button onClick={()=>{setGridNewTime({date:selDay,time:String(hourVal).padStart(2,"0")+":00",timeEnd:String(hourVal+1).padStart(2,"0")+":00"});setShowNew(true);}}
+                        style={{width:24,height:24,borderRadius:7,background:C.blueL,border:"1px solid "+C.border,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.8" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {/* Classes - absolutely positioned with collision detection */}
+                {(()=>{
+                  const dayCls=classes.filter(c=>c.date===selDay).map(c=>({
+                    ...c,
+                    startMins:timeToMins(c.time)||360,
+                    endMins:timeToMins(c.timeEnd)||(timeToMins(c.time)||360)+60,
+                    col:0,totalCols:1,
+                  }));
+                  // Assign columns for overlapping classes
+                  dayCls.forEach((c,i)=>{
+                    const overlapping=dayCls.filter((o,j)=>j<i&&o.startMins<c.endMins&&o.endMins>c.startMins);
+                    const usedCols=new Set(overlapping.map(o=>o.col));
+                    let col=0; while(usedCols.has(col)) col++;
+                    c.col=col;
+                    const allOverlap=dayCls.filter((o,j)=>j!==i&&o.startMins<c.endMins&&o.endMins>c.startMins);
+                    c.totalCols=Math.max(allOverlap.length+1,col+1);
+                  });
+                  // Second pass to normalize totalCols within each overlap group
+                  dayCls.forEach(c=>{
+                    const group=dayCls.filter(o=>o.startMins<c.endMins&&o.endMins>c.startMins);
+                    const maxCols=Math.max(...group.map(o=>o.col))+1;
+                    group.forEach(o=>o.totalCols=maxCols);
+                  });
+                  const LEFT=60; const RIGHT=8;
+                  return dayCls.map(c=>{
+                    const durMins=Math.max(30,c.endMins-c.startMins);
+                    const offsetFromStart=c.startMins-(HOURS[0]*60);
+                    const topPx=(offsetFromStart/60)*HOUR_HEIGHT+2;
+                    const heightPx=Math.max(36,(durMins/60)*HOUR_HEIGHT-4);
+                    const colW=`calc((100% - ${LEFT}px - ${RIGHT}px) / ${c.totalCols} - 4px)`;
+                    const colL=`calc(${LEFT}px + (100% - ${LEFT}px - ${RIGHT}px) / ${c.totalCols} * ${c.col} + ${c.col*2}px)`;
+                    return (
+                      <div key={c.id} onClick={()=>setHighlightCls(c.id===highlightCls?null:c.id)}
+                        style={{position:"absolute",top:topPx,left:colL,width:colW,height:heightPx,background:c.cancelled?"#FFF3E0":C.white,borderRadius:12,padding:"6px 10px",border:"1.5px solid "+(highlightCls===c.id?C.blue2:C.border),cursor:"pointer",boxShadow:"0 2px 8px rgba(44,94,247,0.10)",overflow:"hidden",borderLeft:"4px solid "+(c.cancelled?"#E65100":C.blue2),zIndex:2}}>
+                        <div style={{fontSize:13,fontWeight:800,color:c.cancelled?"#C62828":C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.title}{c.cancelled?" (Cancelada)":""}</div>
+                        <div style={{fontSize:11,color:C.mutedDark,marginTop:1}}>{c.time+(c.timeEnd?" – "+c.timeEnd:"")} · {c.court}</div>
+                        {heightPx>44&&<div style={{display:"flex",gap:3,marginTop:4,flexWrap:"wrap"}}>
+                          {(c.students||[]).map(sid=>{const st=students.find(s=>s.id===sid);return st?(
+                            <div key={sid} style={{display:"flex",alignItems:"center",gap:3,background:C.blueL,borderRadius:20,padding:"2px 6px 2px 3px"}}>
+                              <div style={{width:14,height:14,borderRadius:"50%",background:C.blue2,display:"flex",alignItems:"center",justifyContent:"center",fontSize:7,fontWeight:800,color:C.white}}>{st.avatar[0]}</div>
+                              <span style={{fontSize:10,color:C.blue2,fontWeight:600}}>{st.name.split(" ")[0]}</span>
+                            </div>
+                          ):null;})}
+                        </div>}
+                      </div>
+                    );
+                  });
+                })()}
+              {/* Class detail modal */}
+              {highlightCls&&(()=>{
+                const c=classes.find(x=>x.id===highlightCls);
+                if(!c) return null;
+                return (
+                  <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.45)",zIndex:99,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 16px"}} onClick={()=>setHighlightCls(null)}>
+                    <div style={{background:C.white,borderRadius:24,padding:"20px 20px 24px",width:"100%",boxShadow:"0 20px 60px rgba(0,0,0,0.25)"}} onClick={e=>e.stopPropagation()}>
+                      {/* Header */}
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+                        <div>
+                          <div style={{fontWeight:900,fontSize:20,color:C.text}}>{c.title}</div>
+                          <div style={{fontSize:13,color:C.mutedDark,marginTop:2}}>{c.time+(c.timeEnd?" – "+c.timeEnd:"")} · {c.court}</div>
+                        </div>
+                        <div style={{display:"flex",gap:8}}>
+                          <button onClick={()=>{setConfirmDelete(c);setHighlightCls(null);}} style={{width:36,height:36,borderRadius:"50%",background:"#FFEBEE",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#C62828" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+                          </button>
+                          <button onClick={()=>setHighlightCls(null)} style={{width:36,height:36,borderRadius:"50%",background:C.bg,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.mutedDark} strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                          </button>
+                        </div>
+                      </div>
+                      {/* Students */}
+                      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:18}}>
+                        {(c.students||[]).map(sid=>{const st=students.find(s=>s.id===sid);return st?(
+                          <div key={sid} style={{display:"flex",alignItems:"center",gap:5,background:C.blueL,borderRadius:20,padding:"4px 10px 4px 4px"}}>
+                            <div style={{width:22,height:22,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:800,color:C.white}}>{st.avatar[0]}</div>
+                            <span style={{fontSize:12,color:C.blue2,fontWeight:700}}>{st.name.split(" ")[0]}</span>
+                          </div>
+                        ):null;})}
+                      </div>
+                      {/* Action buttons */}
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                        {[
+                          {label:"Editar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,action:()=>{setEditCls(c);setHighlightCls(null);}},
+                          {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt(c);setHighlightCls(null);}},
+                          {label:"Reprogramar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14l2 2 4-4"/></svg>,action:()=>{setReprog(c);setHighlightCls(null);}},
+                          {label:c.cancelled?"Reactivar":"Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>,action:()=>{onSaveClass({...c,cancelled:!c.cancelled},true);setHighlightCls(null);}},
+                        ].map(btn=>(
+                          <button key={btn.label} onClick={btn.action} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"13px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)",color:"#fff",fontSize:14,cursor:"pointer",fontWeight:700,boxShadow:"0 4px 12px rgba(101,206,90,0.3)"}}>
+                            {btn.icon}{btn.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+            </div>
+            {/* Selected day label */}
+            <div style={{position:"absolute",bottom:72,left:0,right:0,padding:"6px 16px",pointerEvents:"none"}}>
+              <div style={{fontSize:13,fontWeight:800,color:C.blue2}}>{wD[new Date(selDay+"T12:00:00").getDay()]+" "+new Date(selDay+"T12:00:00").getDate()+" de "+mN[new Date(selDay+"T12:00:00").getMonth()]+" | "+classes.filter(c=>c.date===selDay).length+" clase"+(classes.filter(c=>c.date===selDay).length!==1?"s":"")}</div>
+            </div>
+          </div>
+        );
+      })()}
+
+      <button onClick={()=>setShowNew(true)} style={{position:"fixed",bottom:72,right:20,width:56,height:56,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:28,cursor:"pointer",zIndex:50,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+      {editCls&&<EditClassScreen cls={editCls} students={students} onClose={()=>setEditCls(null)} onSave={(u)=>{onSaveClass(u,true);setEditCls(null);}} onCreateStudent={onAddStudent} packages={packages} onDelete={(id)=>{onDeleteClass&&onDeleteClass(id);setEditCls(null);}}/>}
+
+      {/* Custom delete confirmation modal */}
+      {confirmDelete&&(
+        <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.5)",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 20px"}}>
+          <div style={{background:"#fff",borderRadius:20,padding:24,width:"100%",boxShadow:"0 20px 60px rgba(0,0,0,0.25)"}}>
+            <div style={{width:48,height:48,borderRadius:"50%",background:"#FFEBEE",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#C62828" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+            </div>
+            <div style={{fontSize:17,fontWeight:800,color:"#0D1B4B",textAlign:"center",marginBottom:8}}>Eliminar clase</div>
+            <div style={{fontSize:14,color:"#6B7BAD",textAlign:"center",marginBottom:24,lineHeight:1.5}}>Todas las instancias de <strong>{confirmDelete.title}</strong> serán eliminadas del calendario. Esta acción no se puede deshacer.</div>
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={()=>setConfirmDelete(null)} style={{flex:1,padding:"13px",borderRadius:12,border:"1.5px solid #E0E7FF",background:"#fff",cursor:"pointer",fontSize:14,color:"#6B7BAD",fontWeight:700}}>Cancelar</button>
+              <button onClick={()=>{onDeleteClass&&onDeleteClass(confirmDelete.id);setConfirmDelete(null);}} style={{flex:1,padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#C62828,#E53935)",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:800}}>Eliminar</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {reprog&&<ReprogModal cls={reprog} onClose={()=>setReprog(null)} onSave={(updated)=>{onSaveClass(updated,true);setReprog(null);}} students={students} onUpdateStudent={onUpdateStudent}/>}
+      {showNew&&<NewClassModal onClose={()=>{setShowNew(false);setGridNewTime(null);setWeekOffset(0);}} onSave={onSaveClass} students={students} dateLabel={viewMode==="month"?selLabel:weekLabel()} onCreateStudent={onAddStudent} prefill={gridNewTime} courts={courts} packages={packages} onAddPackage={(pkg)=>{packages.push(pkg);}}/>}
+      {att&&<AttModal att={att} students={students} onAttendance={onAttendance} onClose={()=>setAtt(null)}/>}
+    </div>
+  );
+}
+
+function Chat({ students, initialTarget, onClearTarget, sendNotification }) {
+  const [view,setView]=useState(initialTarget?"chat":"list");
+  const [active,setActive]=useState(initialTarget?{id:"s"+initialTarget.id,name:initialTarget.name,avatar:initialTarget.avatar,isGroup:false}:null);
+  const [msg,setMsg]=useState("");
+  const [showCreate,setShowCreate]=useState(false);
+  const [groups,setGroups]=useState([
+    {id:"g1",name:"Grupo Mañana 🌅",avatar:"GM",lastMsg:"Canchas mojadas ⚠️",time:"08:02",isGroup:true,members:[1,5]},
+    {id:"g2",name:"Equipo Fútbol ⚽",avatar:"EF",lastMsg:"Entrenamiento 17hs",time:"Ayer",isGroup:true,members:[2]},
+  ]);
+  const [msgs,setMsgs]=useState([
+    {id:1,from:"coach",text:"Hola Martina, mañana entrenamos normal.",time:"09:15"},
+    {id:2,from:"student",text:"Perfecto, ahí estaré!",time:"09:20"},
+  ]);
+  const [isAlert,setIsAlert]=useState(false);
+  const send=()=>{
+    if(msg.trim()){
+      setMsgs(p=>[...p,{id:Date.now(),from:"coach",text:msg,time:"Ahora",type:isAlert?"alert":undefined}]);
+      if(isAlert&&sendNotification) sendNotification(msg,"alert");
+      setMsg("");setIsAlert(false);
+    }
+  };;
+
+  if(showCreate) {
+    const [step,setStep]=useState(1);
+    const [gName,setGName]=useState("");
+    const [selM,setSelM]=useState([]);
+    const toggleM=(id)=>setSelM(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
+    if(step===1) return (
+      <div style={{flex:1,display:"flex",flexDirection:"column",background:C.bg}}>
+        <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12}}>
+          <button onClick={()=>setShowCreate(false)} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
+          <span style={{flex:1,fontWeight:800,fontSize:16,color:C.white}}>Nuevo Grupo</span>
+          <span style={{fontSize:12,color:C.muted}}>1 / 3</span>
+        </div>
+        <div style={{flex:1,overflowY:"auto",padding:20}}>
+          <div style={{marginBottom:20}}><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Nombre del grupo</label><input value={gName} onChange={e=>setGName(e.target.value)} placeholder="Ej: Grupo Mañana 🌅" style={{width:"100%",padding:"14px 16px",borderRadius:12,border:"none",fontSize:14,boxSizing:"border-box",background:C.blueL,color:C.text,outline:"none"}}/></div>
+          <button onClick={()=>{if(gName.trim())setStep(2);}} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:gName.trim()?"linear-gradient(135deg,#0D1B4B,#1A3DB5)":"#ccc",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800}}>Siguiente →</button>
+        </div>
+      </div>
+    );
+    if(step===2) return (
+      <div style={{flex:1,display:"flex",flexDirection:"column",background:C.bg}}>
+        <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12}}>
+          <button onClick={()=>setStep(1)} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
+          <span style={{flex:1,fontWeight:800,fontSize:16,color:C.white}}>Agregar Miembros</span>
+          <span style={{fontSize:12,color:C.muted}}>2 / 3</span>
+        </div>
+        <div style={{flex:1,overflowY:"auto",padding:16}}>
+          {students.map(s=>{const sel=selM.includes(s.id);return(
+            <div key={s.id} onClick={()=>toggleM(s.id)} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",borderRadius:14,background:sel?C.blueL:C.white,border:"1.5px solid "+(sel?C.blue2:C.border),marginBottom:10,cursor:"pointer"}}>
+              <div style={{width:44,height:44,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white,flexShrink:0}}>{s.avatar}</div>
+              <div style={{flex:1}}><div style={{fontWeight:700,fontSize:14,color:C.text}}>{s.name}</div><div style={{fontSize:12,color:C.mutedDark}}>{s.sport}</div></div>
+              <div style={{width:24,height:24,borderRadius:"50%",border:"2px solid "+(sel?C.blue2:C.border),background:sel?C.blue2:"transparent",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                {sel&&<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>}
+              </div>
+            </div>
+          );})}
+        </div>
+        <div style={{padding:"12px 16px",background:C.white,borderTop:"1px solid "+C.border}}>
+          <button onClick={()=>{if(selM.length>0)setStep(3);}} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:selM.length>0?"linear-gradient(135deg,#0D1B4B,#1A3DB5)":"#ccc",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800}}>Siguiente →</button>
+        </div>
+      </div>
+    );
+    return (
+      <div style={{flex:1,display:"flex",flexDirection:"column",background:C.bg}}>
+        <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12}}>
+          <button onClick={()=>setStep(2)} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
+          <span style={{flex:1,fontWeight:800,fontSize:16,color:C.white}}>Confirmar Grupo</span>
+          <span style={{fontSize:12,color:C.muted}}>3 / 3</span>
+        </div>
+        <div style={{flex:1,overflowY:"auto",padding:20}}>
+          <WhiteCard style={{marginBottom:14}}>
+            <div style={{fontSize:13,fontWeight:700,color:C.mutedDark,marginBottom:10}}>{"MIEMBROS ("+selM.length+")"}</div>
+            {selM.map(sid=>{const st=students.find(s=>s.id===sid);return st?(<div key={sid} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid "+C.border}}><div style={{width:36,height:36,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:C.white}}>{st.avatar}</div><div style={{fontSize:14,fontWeight:600,color:C.text}}>{st.name}</div></div>):null;})}
+          </WhiteCard>
+          <button onClick={()=>{const gName2=gName;const init=gName2.trim().split(" ").slice(0,2).map(w=>w[0]).join("").toUpperCase();setGroups(p=>[{id:"g"+Date.now(),name:gName2,avatar:init,lastMsg:"Grupo creado",time:"Ahora",isGroup:true,members:selM},...p]);setShowCreate(false);}} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,"+C.green+",#66BB6A)",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:10}}>✓ Crear Grupo</button>
+          <button onClick={()=>setShowCreate(false)} style={{width:"100%",padding:"15px",borderRadius:14,border:"1.5px solid "+C.border,background:C.white,color:C.mutedDark,fontSize:15,cursor:"pointer",fontWeight:700}}>Cancelar</button>
+        </div>
+      </div>
+    );
+  }
+
+  if(view==="chat") return (
+    <div style={{flex:1,display:"flex",flexDirection:"column",background:C.bg}}>
+      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"12px 16px",display:"flex",alignItems:"center",gap:12}}>
+        <button onClick={()=>setView("list")} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:18}}>{"<"}</button>
+        <div style={{width:38,height:38,borderRadius:"50%",background:C.whiteA,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white,flexShrink:0}}>{active?active.avatar:"G"}</div>
+        <div style={{flex:1}}><span style={{fontWeight:700,fontSize:14,color:C.white}}>{active?active.name:""}</span><div style={{fontSize:11,color:C.muted}}>En línea</div></div>
+      </div>
+      <div style={{flex:1,overflowY:"auto",padding:"16px",display:"flex",flexDirection:"column",gap:10}}>
+        {msgs.map(m=>(
+          <div key={m.id} style={{display:"flex",justifyContent:m.from==="coach"?"flex-end":"flex-start"}}>
+            <div style={{maxWidth:"75%",padding:"10px 14px",fontSize:14,borderRadius:m.from==="coach"?"18px 18px 4px 18px":"18px 18px 18px 4px",background:m.from==="coach"?"linear-gradient(135deg,"+C.blue2+","+C.blue3+")":C.white,color:m.from==="coach"?C.white:C.text}}>
+              {m.text}<div style={{fontSize:10,opacity:.7,marginTop:4,textAlign:"right"}}>{m.time}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{padding:"8px 16px",background:C.white,borderTop:"1px solid "+C.border}}>
+        {isAlert&&<div style={{background:"#FFF3E0",borderRadius:8,padding:"6px 12px",marginBottom:6,fontSize:12,color:"#E65100",fontWeight:600}}>📢 Esto se enviará como alerta a todos los alumnos</div>}
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <button onClick={()=>setIsAlert(v=>!v)} style={{background:isAlert?"#FF8F00":C.blueL,border:"none",borderRadius:"50%",width:36,height:36,cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>📢</button>
+          <input value={msg} onChange={e=>setMsg(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} placeholder={isAlert?"Escribí la alerta...":"Escribe un mensaje..."} style={{flex:1,padding:"10px 16px",borderRadius:24,border:"1.5px solid "+(isAlert?"#FF8F00":C.border),fontSize:14,background:C.bg,color:C.text,outline:"none"}}/>
+          <button onClick={send} style={{background:isAlert?"linear-gradient(135deg,#FF8F00,#FFA726)":"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",border:"none",borderRadius:"50%",width:44,height:44,cursor:"pointer",color:C.white,fontSize:18,flexShrink:0}}>➤</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const chats=[...groups,...students.map(s=>({id:"s"+s.id,name:s.name,avatar:s.avatar,lastMsg:"...",time:"Ayer",isGroup:false}))];
+  return (
+    <div style={{flex:1,overflowY:"auto",background:C.bg}}>
+      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"16px 16px 24px",flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+          <div style={{fontSize:18,fontWeight:800,color:C.white}}>Mensajes</div>
+          <button onClick={()=>setShowCreate(true)} style={{padding:"7px 14px",borderRadius:20,border:"none",background:"linear-gradient(135deg,"+C.green+",#66BB6A)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>+ Crear grupo</button>
+        </div>
+      </div>
+      <div style={{padding:"16px",marginTop:-8}}>
+        {chats.map(c=>(
+          <WhiteCard key={c.id} style={{cursor:"pointer",marginBottom:8}} onClick={()=>{setActive(c);setView("chat");}}>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <div style={{width:46,height:46,borderRadius:"50%",background:"linear-gradient(135deg,"+(c.isGroup?C.green+",#66BB6A":C.blue2+","+C.blue3)+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white}}>{c.avatar}</div>
+              <div style={{flex:1,minWidth:0}}><div style={{fontWeight:700,fontSize:14,color:C.text}}>{c.name}</div><div style={{fontSize:12,color:C.mutedDark,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.lastMsg}</div></div>
+              <div style={{fontSize:11,color:C.mutedDark,flexShrink:0}}>{c.time}</div>
+            </div>
+          </WhiteCard>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
+function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount, newDate, setNewDate, onClose, onUpdate, classes=[], addIncome, packages=[]}) {
+  const [pagoTipo,setPagoTipo]=useState(combo?.total?"clases":"mensual");
+  const [payMethod,setPayMethod]=useState("efectivo");
+  const [step,setStep]=useState("form");
+  const TODAY=TODAY_DATE;
+  // Always start at 0 so coach explicitly enters the amount
+  const [localClasses,setLocalClasses]=useState(0);
+  const [localAmount,setLocalAmount]=useState(0);
+  const [localDate,setLocalDate]=useState(newDate||"");
+
+  const iSp={width:"100%",padding:"11px 14px",borderRadius:12,border:"none",fontSize:14,boxSizing:"border-box",background:C.blueL,color:"#1A237E",outline:"none"};
+  const payMethodLabel={"efectivo":"💵 Efectivo","transferencia":"🏦 Transferencia","tarjeta":"💳 Tarjeta"};
+
+  const myClasses=classes.filter(c=>c.students&&c.students.includes(s.id));
+  const classDays=myClasses.length>0?myClasses[0].days:[];
+  const classTime=myClasses.length>0?myClasses[0].time:"";
+  const classCourt=myClasses.length>0?myClasses[0].court:"";
+  const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+  const classDowSet=new Set(classDays.map(d=>DAY_MAP[d]));
+
+  const attendedDates=new Set();
+  classes.forEach(cls=>{
+    if(!cls.students||!cls.students.includes(s.id)) return;
+    (cls.attendanceLog||[]).forEach(e=>{if(e.present&&e.present.includes(s.id)) attendedDates.add(e.date);});
+  });
+
+  const allCombos=s.combos||[];
+  const paidCoveredDates=new Set();
+  allCombos.forEach(c=>{
+    if(!c.paid||!c.total) return;
+    const startD=new Date((c.date||"2026-01-01")+"T12:00:00");
+    let cur=new Date(startD); let count=0;
+    while(count<c.total){
+      if(classDowSet.size===0||classDowSet.has(cur.getDay())){
+        const ds=cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0");
+        paidCoveredDates.add(ds); count++;
+      }
+      cur.setDate(cur.getDate()+1);
+    }
+  });
+
+  const moraDates=[...attendedDates].filter(d=>!paidCoveredDates.has(d)).sort();
+  const lastCombo=allCombos.length>0?allCombos[allCombos.length-1]:null;
+  const totalPaid=lastCombo?.total||0;
+  const totalUsed=lastCombo?.used||0;
+  // moraCount only applies when the last combo was paid and exceeded
+  // If unpaid, there's no mora — just unpaid classes
+  const moraCount=lastCombo?.paid?Math.max(0,totalUsed-totalPaid):0;
+  const newTotal=pagoTipo==="clases"?(parseInt(localClasses)||0):0;
+  const newRealizadas=moraCount;
+  const newRestantes=newTotal-newRealizadas;
+  const newIsExceeded=newRestantes<0;
+  const newIsWarning=newRestantes>=0&&newRestantes<=2&&newTotal>0;
+
+  const mNShort=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+  const wDFull=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+
+  const formatDate=(ds)=>{
+    const d=new Date(ds+"T12:00:00");
+    return wDFull[d.getDay()]+" "+d.getDate()+" "+mNShort[d.getMonth()];
+  };
+
+
+  // Build dates from LAST combo only
+  const buildAllDates=()=>{
+    const result=[];
+    const c=allCombos.length>0?allCombos[allCombos.length-1]:null;
+    if(!c||!c.total) return result;
+    let dates=c.dates&&c.dates.length>0?c.dates:(()=>{
+      const ds=[];
+      let cur=new Date((c.date||TODAY)+"T12:00:00");
+      while(ds.length<c.total){
+        if(classDowSet.size===0||classDowSet.has(cur.getDay())){
+          ds.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+        }
+        cur.setDate(cur.getDate()+1);
+      }
+      return ds;
+    })();
+    dates.forEach((ds,i)=>{
+      const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
+      const isPaidDate=i<paidCount;
+      const isGiven=(i<(c.used||0))||ds<=TODAY;
+      let status;
+      if(isPaidDate){
+        status=isGiven?"dada":"adar";
+      } else {
+        status=isGiven?"dada_unpaid":"pendiente";
+      }
+      result.push({date:ds,status,comboId:c.id,isGiven});
+    });
+    return result.sort((a,b)=>a.date.localeCompare(b.date));
+  };
+
+  const allDates=buildAllDates();
+
+  // For new combo projection (mora + future)
+  const buildProjectedDates=(qty)=>{
+    const dates=[];
+    if(moraCount>0){
+      const allCovered=[...paidCoveredDates].sort();
+      const lastPaid=allCovered.length>0?allCovered[allCovered.length-1]:TODAY;
+      let cur=new Date(lastPaid+"T12:00:00");
+      cur.setDate(cur.getDate()+1);
+      let added=0;
+      while(added<moraCount){
+        const ds=cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0");
+        if(classDowSet.size===0||classDowSet.has(cur.getDay())){
+          dates.push({date:ds,mora:added>=qty,wasMora:added<qty});
+          added++;
+        }
+        cur.setDate(cur.getDate()+1);
+      }
+    }
+    const extraNeeded=Math.max(0,qty-moraCount);
+    if(extraNeeded>0){
+      const lastDone=dates.length>0?dates[dates.length-1].date:([...paidCoveredDates].sort().slice(-1)[0]||TODAY);
+      let cur=new Date(lastDone+"T12:00:00");
+      cur.setDate(cur.getDate()+1);
+      let added=0;
+      while(added<extraNeeded){
+        const ds=cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0");
+        if(classDowSet.size===0||classDowSet.has(cur.getDay())){
+          dates.push({date:ds,mora:false,wasMora:false});
+          added++;
+        }
+        cur.setDate(cur.getDate()+1);
+      }
+    }
+    return dates;
+  };
+
+  const projDates=buildProjectedDates(parseInt(localClasses)||0);
+
+  const handleGoToReview=()=>{
+    if(pagoTipo==="clases"&&(!localClasses||parseInt(localClasses)<=0)){
+      alert("Ingresá la cantidad de clases usando el stepper ◀ ▶");return;
+    }
+    if(!localAmount||parseInt(localAmount)<=0){
+      alert("Ingresá el monto del pago.");return;
+    }
+    setStep("review");
+  };
+
+  const handleConfirm=()=>{
+    if(pagoTipo==="clases"&&(!localClasses||parseInt(localClasses)<=0)){alert("Ingresá la cantidad de clases.");return;}
+    if(!localAmount||parseInt(localAmount)<=0){alert("Ingresá el monto.");return;}
+    const qty=parseInt(localClasses)||0;
+    let updatedCombos=[...s.combos];
+
+    // Generate projected dates for new combo based on class schedule
+    const generateNewDates=(qty, startAfterDate)=>{
+      if(!qty||classDowSet.size===0) return [];
+      const dates=[];
+      let cur=new Date((startAfterDate||TODAY)+"T12:00:00");
+      cur.setDate(cur.getDate()+1);
+      while(dates.length<qty){
+        if(classDowSet.has(cur.getDay())){
+          dates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+        }
+        cur.setDate(cur.getDate()+1);
+      }
+      return dates;
+    };
+
+    if(pagoTipo==="clases"&&lastCombo&&!lastCombo.paid&&qty>0){
+      const lastIdx=updatedCombos.length-1;
+      const existing=updatedCombos[lastIdx];
+      const comboTotal=existing.total||0;
+      const givenCount=(existing.dates||[]).filter(d=>d<=TODAY).length;
+      const prevPaid=existing.paidCount||0;
+      const newPaidCount=Math.min(comboTotal, prevPaid+qty);
+      const fullyPaid=newPaidCount>=comboTotal;
+      // Save this payment as a separate entry
+      const paymentDates=(existing.dates||[]).slice(prevPaid,newPaidCount);
+      const newPayment={
+        id:Date.now(),
+        qty,
+        amount:parseInt(localAmount)||0,
+        method:payMethod,
+        date:localDate||TODAY,
+        dates:paymentDates,
+      };
+      updatedCombos[lastIdx]={
+        ...existing,
+        paid:fullyPaid,
+        paidCount:newPaidCount,
+        used:givenCount,
+        amount:(existing.amount||0)+(parseInt(localAmount)||0),
+        method:payMethod,
+        date:localDate||TODAY,
+        payments:[...(existing.payments||[]),newPayment],
+      };
+    } else if(pagoTipo==="clases"&&qty>0){
+      const allExistingDates=updatedCombos.flatMap(c=>c.dates||[]).sort();
+      const lastDate=allExistingDates.length>0?allExistingDates[allExistingDates.length-1]:TODAY;
+      const newDates=generateNewDates(qty, lastDate);
+      const payment={id:Date.now(),qty,amount:parseInt(localAmount)||0,method:payMethod,date:localDate||TODAY,dates:newDates};
+      updatedCombos.push({id:s.combos.length+1,total:qty,used:0,paid:true,paidCount:qty,date:localDate||TODAY,amount:parseInt(localAmount)||0,method:payMethod,dates:newDates,payments:[payment]});
+    } else {
+      // Mensual
+      updatedCombos.push({id:s.combos.length+1,total:null,used:0,paid:true,date:localDate||TODAY,payDate:localDate||TODAY,amount:parseInt(localAmount)||0,method:payMethod});
+    }
+
+    onUpdate({...s,combos:updatedCombos});
+    if(addIncome&&parseInt(localAmount)>0){
+      addIncome(parseInt(localAmount), localDate||TODAY, s.name);
+    }
+    setStep("success");
+    // If all classes given (closed cycle), close faster
+    const allGiven=updatedCombos[updatedCombos.length-1]?.used>=updatedCombos[updatedCombos.length-1]?.total;
+    setTimeout(()=>onClose(), allGiven?1500:2200);
+  };
+
+  if(step==="success") return (
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{background:"#fff",borderRadius:24,padding:"40px 32px",textAlign:"center",width:"80%",maxWidth:300}}>
+        <div style={{width:72,height:72,borderRadius:"50%",background:"linear-gradient(135deg,#52C048,#65CE5A)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}>
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+        <div style={{fontSize:20,fontWeight:900,color:"#1A237E",marginBottom:6}}>¡Pago registrado!</div>
+        <div style={{fontSize:14,color:"#5C7A9F"}}>{s.name}</div>
+      </div>
+    </div>
+  );
+
+  if(step==="review"){
+    const qty=parseInt(localClasses)||0;
+    const startDateLabel=localDate?formatDate(localDate):(projDates.length>0?formatDate(projDates[0].date):"—");
+    return (
+      <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
+        <div style={{background:"#FFFFFF",borderRadius:"24px 24px 0 0",width:"100%",maxHeight:"92%",overflowY:"auto",boxSizing:"border-box",padding:"24px 20px 32px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20}}>
+            <button onClick={()=>setStep("form")} style={{background:C.blueL,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.blue2,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
+            <div style={{fontWeight:900,fontSize:18,color:"#1A237E"}}>Resumen del pago</div>
+          </div>
+          <div style={{background:C.blueL,borderRadius:16,padding:"16px",marginBottom:16}}>
+            <div style={{fontSize:16,fontWeight:800,color:"#1A237E",marginBottom:10}}>{s.name}</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              {[
+                {l:"Plan",v:pagoTipo==="clases"?"📦 "+qty+" clases":"📅 Mensual"},
+                {l:"Monto",v:fmtMoney(localAmount)},
+                {l:"Forma de pago",v:payMethodLabel[payMethod]},
+                {l:"Fecha de pago",v:startDateLabel},
+              ].map(f=>(
+                <div key={f.l}>
+                  <div style={{fontSize:10,fontWeight:700,color:"#5C7A9F",marginBottom:2}}>{f.l.toUpperCase()}</div>
+                  <div style={{fontSize:13,fontWeight:700,color:"#1A237E"}}>{f.v}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+          {pagoTipo==="clases"&&(()=>{
+            const activeDates=allDates.filter(d=>d.status!=="dada"); // hide only paid+past dates
+            const qty=parseInt(localClasses)||0;
+            const reviewDates=[
+              ...activeDates.map((item,i)=>({...item,isNew:false,idx:i})),
+              ...(lastCombo?.paid?projDates.map((item,i)=>({...item,isNew:true,idx:activeDates.length+i})):[]),
+            ];
+            if(reviewDates.length===0) return null;
+            return (
+            <div style={{marginBottom:20}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#5C7A9F",letterSpacing:0.5,marginBottom:8}}>FECHAS DE CLASE</div>
+              {reviewDates.map((item,i)=>{
+                const isPaidNow=lastCombo?.paid?true:i<qty;
+                const isPaid=item.status!=="pendiente"||isPaidNow||item.isNew;
+                let leftBg,leftColor,leftLabel,rightBg,rightColor,rightLabel;
+                if(item.isNew||isPaid){
+                  leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="Clase No Dada";
+                  rightBg="#E8F5E9";rightColor="#2E7D32";rightLabel="Pagada";
+                } else {
+                  leftBg="#FFF3E0";leftColor="#E65100";leftLabel="Clase No Dada";
+                  rightBg="#FFF3E0";rightColor="#E65100";rightLabel="No Pagada";
+                }
+                return (
+                  <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #E3F2FD"}}>
+                    <div style={{width:28,height:28,borderRadius:"50%",background:item.isNew?"#E8F5E9":C.blueL,border:"2px solid "+(item.isNew?"#43A047":C.blue2),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                      <span style={{fontSize:11,fontWeight:800,color:item.isNew?"#43A047":C.blue2}}>{i+1}</span>
+                    </div>
+                    <div style={{flex:1,fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(item.date)}</div>
+                    <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:leftBg,color:leftColor,fontWeight:700,flexShrink:0}}>{leftLabel}</span>
+                    <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700,flexShrink:0}}>{rightLabel}</span>
+                  </div>
+                );
+              })}
+            </div>
+          );})()}
+          <button onClick={handleConfirm} style={{width:"100%",padding:"16px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:"#fff",fontSize:15,cursor:"pointer",fontWeight:900}}>
+            ✓ Confirmar pago
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
+      <div style={{background:"#FFFFFF",borderRadius:"24px 24px 0 0",width:"100%",maxHeight:"94%",overflowY:"auto",boxSizing:"border-box"}}>
+        <div style={{padding:"24px 20px 16px"}}>
+          <div style={{fontWeight:900,fontSize:20,color:"#1A237E",marginBottom:4}}>Actualizar Pago</div>
+          <div style={{fontSize:13,color:"#5C7A9F",marginBottom:16}}>{s.name}</div>
+
+
+          {/* Due date banner for mensual */}
+          {pagoTipo==="mensual"&&lastCombo?.date&&(
+            <div style={{background:C.blueL,borderRadius:12,padding:"11px 16px",marginBottom:16,textAlign:"center"}}>
+              <span style={{fontSize:14,fontWeight:700,color:C.blue2}}>
+                {"📅 Fecha de pago es el "+new Date(lastCombo.date+"T12:00:00").getDate()+" de cada mes."}
+              </span>
+            </div>
+          )}
+
+          {/* Estado de cuenta + Detalles */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+            <div style={{background:C.blueL,borderRadius:12,padding:"12px",textAlign:"center"}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.blue2,marginBottom:4}}>Estado de Cuenta</div>
+              {pagoTipo==="mensual"?(()=>{
+                const lastDate=lastCombo?.payDate||lastCombo?.date||TODAY;
+                const lastPay=new Date(lastDate+"T12:00:00");
+                const today=new Date(TODAY+"T12:00:00");
+                const nextDue=new Date(lastPay.getFullYear(),lastPay.getMonth()+1,lastPay.getDate());
+                const diffDays=Math.floor((today-nextDue)/(1000*60*60*24));
+                const isOverdue=diffDays>0;
+                return (
+                  <>
+                    <div style={{fontSize:40,fontWeight:900,lineHeight:1,color:isOverdue?"#C62828":C.blue2}}>{isOverdue?diffDays:0}</div>
+                    <div style={{fontSize:10,color:isOverdue?"#C62828":"#5C7A9F",fontWeight:700,marginTop:4}}>{isOverdue?"días vencido":"Al día"}</div>
+                  </>
+                );
+              })():(()=>{
+                // Count unpaid across all combos using paidCount
+                const totalUnpaid=allCombos.filter(c=>c.total).reduce((a,c)=>{
+                  const paid=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
+                  return a+Math.max(0,c.total-paid);
+                },0);
+                const remainingUnpaid=Math.max(0,totalUnpaid-(parseInt(localClasses)||0));
+                const paidRemaining=allCombos.filter(c=>c.total).reduce((a,c)=>{
+                  const paid=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
+                  return a+Math.max(0,paid-(c.used||0));
+                },0);
+                const isRed=remainingUnpaid>0;
+                const displayNum=isRed?remainingUnpaid:paidRemaining;
+                return (
+                  <>
+                    <div style={{fontSize:40,fontWeight:900,lineHeight:1,color:isRed?"#C62828":displayNum===0?"#43A047":C.blue2}}>{displayNum}</div>
+                    <div style={{fontSize:11,fontWeight:700,color:isRed?"#C62828":displayNum===0?"#43A047":C.blue2,marginTop:4}}>{isRed?"A cobrar":displayNum===0?"Al día":"Por dar"}</div>
+                  </>
+                );
+              })()}
+            </div>
+            <div style={{background:C.blueL,borderRadius:12,padding:"12px"}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.blue2,marginBottom:6}}>Detalles de Clases</div>
+              {classDays.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:4}}>
+                {classDays.map(d=><span key={d} style={{fontSize:10,padding:"2px 6px",borderRadius:20,background:"rgba(25,118,210,0.15)",color:C.blue2,fontWeight:600}}>{d}</span>)}
+              </div>}
+              {classTime&&<div style={{fontSize:11,color:"#5C7A9F",marginBottom:8}}>{classTime}{classCourt?" · "+classCourt:""}</div>}
+              <button style={{width:"100%",padding:"8px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:"#fff",fontSize:11,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+                Enviar Recordatorio
+              </button>
+            </div>
+          </div>
+
+          {/* Fields */}
+          {pagoTipo==="clases"?(
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+              <div>
+                <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>¿Cuántas clases pagamos?</div>
+                <div style={{display:"flex",alignItems:"center",background:C.blueL,borderRadius:12,overflow:"hidden"}}>
+                  <button onClick={()=>setLocalClasses(Math.max(0,(parseInt(localClasses)||0)-1))} style={{width:44,height:46,border:"none",background:"#2C5EF7",color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>◀</button>
+                  <div style={{flex:1,textAlign:"center",fontSize:22,fontWeight:800,color:"#1A237E"}}>{parseInt(localClasses)||0}</div>
+                  <button onClick={()=>setLocalClasses((parseInt(localClasses)||0)+1)} style={{width:44,height:46,border:"none",background:"#2C5EF7",color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>▶</button>
+                </div>
+              </div>
+              <div>
+                <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>Monto (₲)</div>
+                <input type="number" value={localAmount||""} placeholder="0" onChange={e=>setLocalAmount(e.target.value)} style={iSp}/>
+              </div>
+            </div>
+          ):(
+            <div style={{marginBottom:10}}>
+              <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>Monto (₲)</div>
+              <input type="number" value={localAmount||""} placeholder="0" onChange={e=>setLocalAmount(e.target.value)} style={iSp}/>
+            </div>
+          )}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+            {pagoTipo==="mensual"&&(
+              <div style={{gridColumn:"1/-1"}}>
+                <div style={{fontSize:12,fontWeight:700,color:C.blue2,marginBottom:6}}>📅 Inicio de pago mensual</div>
+                <input type="date" value={localDate||TODAY_DATE} onChange={e=>setLocalDate(e.target.value)} style={{...iSp,cursor:"pointer",width:"100%",boxSizing:"border-box",borderColor:C.blue2}}/>
+                <div style={{fontSize:11,color:C.mutedDark,marginTop:4}}>Se usa para calcular días de atraso en Cobros</div>
+              </div>
+            )}
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>{pagoTipo==="mensual"?"Fecha de pago":"Fecha de pago"}</div>
+              <input type="date" value={localDate||TODAY_DATE} onChange={e=>setLocalDate(e.target.value)} style={{...iSp,cursor:"pointer"}}/>
+            </div>
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>Forma de pago</div>
+              <select value={payMethod} onChange={e=>setPayMethod(e.target.value)} style={{...iSp,cursor:"pointer"}}>
+                <option value="efectivo">💵 Efectivo</option>
+                <option value="transferencia">🏦 Transferencia</option>
+                <option value="tarjeta">💳 Tarjeta</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/* Fechas de clase list - only show if there are pending or future dates */}
+        {pagoTipo==="clases"&&(()=>{
+          const activeDates=allDates.filter(d=>d.status!=="dada"); // hide only paid+past dates
+          const hasNew=parseInt(localClasses)>0;
+          if(activeDates.length===0&&!hasNew) return null;
+          return (
+          <div style={{padding:"0 20px 16px"}}>
+            <div style={{fontSize:11,fontWeight:700,color:"#5C7A9F",letterSpacing:0.5,marginBottom:8}}>FECHAS DE CLASE</div>
+            {activeDates.map((item,i)=>{
+              const qty=parseInt(localClasses)||0;
+              // Count only unpaid dates before this index
+              const unpaidBefore=activeDates.slice(0,i).filter(d=>d.status==="pendiente"||d.status==="dada_unpaid").length;
+              const isUnpaid=item.status==="pendiente"||item.status==="dada_unpaid";
+              const alreadyPaid=item.status==="adar";
+              const isPaidNow=alreadyPaid||(isUnpaid&&unpaidBefore<qty);
+              const isPaid=alreadyPaid||isPaidNow;
+              const isGiven=item.isGiven||item.status==="dada_unpaid";
+              let leftBg,leftColor,leftLabel,rightBg,rightColor,rightLabel;
+              if(isPaid){
+                if(isGiven){leftBg=C.blueL;leftColor=C.blue2;leftLabel="Clase Dada";rightBg=C.blueL;rightColor=C.blue2;rightLabel="Pagada";}
+                else{leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="Clase No Dada";rightBg="#E8F5E9";rightColor="#2E7D32";rightLabel="Pagada";}
+              } else {
+                if(isGiven){leftBg="#FFEBEE";leftColor="#C62828";leftLabel="Clase Dada";rightBg="#FFEBEE";rightColor="#C62828";rightLabel="No Pagada";}
+                else{leftBg="#FFF3E0";leftColor="#E65100";leftLabel="Clase No Dada";rightBg="#FFF3E0";rightColor="#E65100";rightLabel="No Pagada";}
+              }
+              return (
+                <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #E3F2FD"}}>
+                  <div style={{width:28,height:28,borderRadius:"50%",background:C.blueL,border:"2px solid #1976D2",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <span style={{fontSize:11,fontWeight:800,color:C.blue2}}>{i+1}</span>
+                  </div>
+                  <div style={{flex:1,fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(item.date)}</div>
+                  <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:leftBg,color:leftColor,fontWeight:700,flexShrink:0}}>{leftLabel}</span>
+                  <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700,flexShrink:0}}>{rightLabel}</span>
+                </div>
+              );
+            })}
+            {/* New projected dates — only when existing combo is paid (cycle closed) */}
+            {parseInt(localClasses)>0&&lastCombo?.paid&&projDates.map((item,i)=>(
+              <div key={"p"+i} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #E3F2FD"}}>
+                <div style={{width:28,height:28,borderRadius:"50%",background:"#E8F5E9",border:"2px solid #43A047",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                  <span style={{fontSize:11,fontWeight:800,color:"#43A047"}}>{activeDates.length+i+1}</span>
+                </div>
+                <div style={{flex:1,fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(item.date)}</div>
+                <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:"#E8F5E9",color:"#2E7D32",fontWeight:700,flexShrink:0}}>Reservada</span>
+                <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:"#E8F5E9",color:"#2E7D32",fontWeight:700,flexShrink:0}}>Pagada</span>
+              </div>
+            ))}
+          </div>
+        );
+        })()}
+
+        <div style={{padding:"0 20px 32px",display:"flex",gap:10}}>
+          <button onClick={onClose} style={{flex:1,padding:"14px",borderRadius:14,border:"1.5px solid rgba(21,101,192,0.12)",background:"#FFFFFF",cursor:"pointer",fontSize:14,color:"#5C7A9F",fontWeight:700}}>Cancelar</button>
+          <button onClick={handleConfirm} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:(parseInt(localClasses)>0&&parseInt(localAmount)>0)||(pagoTipo==="mensual"&&parseInt(localAmount)>0)?"linear-gradient(135deg,#52C048,#65CE5A)":"#CBD5E0",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:800}}>✓ Confirmar pago</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[] }) {
+  const combo=getCombo(s);
+  const rem=getRem(s);
+  const isExpired=rem!==null&&rem<=0;
+  const isWarning=rem!==null&&rem>0&&rem<=2;
+  const [showPago,setShowPago]=useState(false);
+  const [showHistory,setShowHistory]=useState(false);
+  const [showAtt,setShowAtt]=useState(false);
+  const [suspended,setSuspended]=useState(false);
+  const [histTab,setHistTab]=useState(0);
+  const [showComprobante,setShowComprobante]=useState(null);
+  const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+  const myClassesH=classes.filter(c=>c.students&&c.students.includes(s.id));
+  const classDays=myClassesH.length>0?myClassesH[0].days:[];
+  const [newClasses,setNewClasses]=useState(combo?.total||8);
+  const [newAmount,setNewAmount]=useState(combo?.amount||400000);
+  const [newDate,setNewDate]=useState("");
+
+  const attLogs=[];
+  classes.forEach(cls=>{
+    if(!cls.students.includes(s.id)) return;
+    (cls.attendanceLog||[]).forEach(entry=>{
+      if(!entry.present.includes(s.id)) return;
+      const d=new Date(entry.date+"T12:00:00");
+      attLogs.push({date:entry.date,day:entry.day,month:MONTHS[d.getMonth()],year:d.getFullYear(),dayNum:d.getDate(),className:cls.title,time:cls.time});
+    });
+  });
+  attLogs.sort((a,b)=>b.date.localeCompare(a.date));
+  const byMonth={};
+  attLogs.forEach(l=>{const k=l.month+" "+l.year;if(!byMonth[k])byMonth[k]=[];byMonth[k].push(l);});
+
+  return (
+    <>
+      <WhiteCard style={{marginBottom:12,opacity:suspended?0.6:1}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
+          <div style={{width:44,height:44,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white,flexShrink:0}}>{s.avatar}</div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:800,fontSize:14,color:C.text}}>{s.name}</div>
+            <div style={{fontSize:12,color:C.mutedDark}}>{s.sport}</div>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:5}}>
+            <button onClick={()=>setShowHistory(true)} style={{background:C.blueL,border:"none",borderRadius:8,padding:"4px 10px",cursor:"pointer",fontSize:11,color:C.blue2,fontWeight:600}}>Historial</button>
+            <button onClick={()=>setShowAtt(true)} style={{background:C.blueL,border:"none",borderRadius:8,padding:"4px 10px",cursor:"pointer",fontSize:11,color:C.blue2,fontWeight:600}}>Asistencia</button>
+          </div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+          <span style={{fontSize:12,padding:"4px 12px",borderRadius:20,background:C.blueL,color:C.blue2,fontWeight:700}}>{"🗓 Último pago: "+(combo?.date||"—")}</span>
+          <span style={{fontSize:12,padding:"4px 12px",borderRadius:20,background:combo?.total?C.blueL:C.greenL,color:combo?.total?C.blue2:C.green,fontWeight:700}}>{combo?.total?"📦 "+combo.total+" clases":"📅 Mensual"}</span>
+        </div>
+        <div style={{display:"flex",gap:10,marginBottom:12}}>
+          {/* Single big number */}
+          <div style={{background:C.blueL,borderRadius:12,padding:"12px 16px",minWidth:90,textAlign:"center"}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.blue2,marginBottom:2}}>Estado de Cuentas</div>
+            {!combo?(
+              <>
+                <div style={{fontSize:22,fontWeight:900,color:C.mutedDark,lineHeight:1}}>—</div>
+                <div style={{fontSize:10,fontWeight:700,color:C.mutedDark,marginTop:2}}>Sin registro</div>
+              </>
+            ):rem===null?(()=>{
+              const lastDate=combo?.payDate||combo?.date||TODAY_DATE;
+              const lastPay=new Date(lastDate+"T12:00:00");
+              const today=new Date(TODAY_DATE+"T12:00:00");
+              const nextDue=new Date(lastPay.getFullYear(),lastPay.getMonth()+1,lastPay.getDate());
+              const diffDays=Math.floor((today-nextDue)/(1000*60*60*24));
+              const overdue=diffDays>0;
+              return overdue?(
+                <>
+                  <div style={{fontSize:40,fontWeight:900,color:"#C62828",lineHeight:1}}>{diffDays}</div>
+                  <div style={{fontSize:11,fontWeight:700,color:"#C62828",marginTop:2}}>días vencido</div>
+                </>
+              ):(
+                <>
+                  <div style={{fontSize:12,fontWeight:900,color:"#43A047",lineHeight:1.3,textAlign:"center"}}>Pago</div>
+                  <div style={{fontSize:12,fontWeight:900,color:"#43A047",lineHeight:1.3,textAlign:"center"}}>al Día ✓</div>
+                </>
+              );
+            })():(
+              <>
+                <div style={{fontSize:40,fontWeight:900,color:!combo?.paid?"#C62828":rem<=0?"#43A047":C.blue2,lineHeight:1}}>{Math.abs(rem)}</div>
+                <div style={{fontSize:11,fontWeight:700,color:!combo?.paid?"#C62828":rem<=0?"#43A047":C.blue2,marginTop:2}}>{!combo?.paid?"A cobrar":rem<=0?"Al día":"Por dar"}</div>
+              </>
+            )}
+          </div>
+          {/* Action buttons */}
+          <div style={{flex:1,display:"flex",flexDirection:"column",gap:6}}>
+            {!combo?(
+              <button onClick={()=>setShowPago(true)} style={{flex:1,padding:"10px",borderRadius:12,border:"2px dashed "+C.blue2,background:C.blueL,color:C.blue2,fontSize:13,cursor:"pointer",fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Asignar paquete
+              </button>
+            ):(
+              <button onClick={()=>setShowPago(true)} style={{flex:1,padding:"10px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:"#fff",fontSize:13,cursor:"pointer",fontWeight:800}}>Actualizar Pagos</button>
+            )}
+            <div style={{display:"flex",gap:6}}>
+              <button style={{flex:1,padding:"8px 6px",borderRadius:10,border:"none",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",color:"#fff",fontSize:11,cursor:"pointer",fontWeight:700,lineHeight:1.3,textAlign:"center"}}>{"Enviar\nRecordatorio"}</button>
+              <button onClick={()=>setSuspended(v=>!v)} style={{flex:1,padding:"8px 6px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:"#fff",fontSize:11,cursor:"pointer",fontWeight:700}}>{suspended?"Activar":"Suspender"}</button>
+            </div>
+          </div>
+        </div>
+      </WhiteCard>
+
+      {showPago&&<PagoModal s={s} combo={combo} newClasses={newClasses} setNewClasses={setNewClasses} newAmount={newAmount} setNewAmount={setNewAmount} newDate={newDate} setNewDate={setNewDate} onClose={()=>setShowPago(false)} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages}/>}
+
+      {showHistory&&(
+        <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:999,display:"flex",flexDirection:"column",background:C.bg}}>
+          {/* Header */}
+          <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
+            <button onClick={()=>setShowHistory(false)} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
+            <div style={{flex:1}}><div style={{fontWeight:800,fontSize:16,color:C.white}}>Historial de Pagos</div><div style={{fontSize:12,color:C.muted}}>{s.name}</div></div>
+          </div>
+          {/* Body: vertical tabs left + detail right */}
+          <div style={{flex:1,display:"flex",overflow:"hidden"}}>
+            {/* Left tabs - one per payment transaction */}
+            <div style={{width:110,borderRight:"1px solid "+C.border,overflowY:"auto",background:C.white,flexShrink:0}}>
+              {(()=>{
+                const allPayments=s.combos.flatMap(c=>(c.payments||[]).map(p=>({...p,comboTotal:c.total})));
+                if(allPayments.length===0) return <div style={{padding:12,fontSize:11,color:C.mutedDark,textAlign:"center"}}>Sin pagos</div>;
+                return [...allPayments].reverse().map((p,i)=>{
+                  const idx=allPayments.length-1-i;
+                  const isActive=histTab===idx;
+                  const d=new Date((p.date||"2026-01-01")+"T12:00:00");
+                  const mN=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+                  return (
+                    <div key={idx} onClick={()=>setHistTab(idx)} style={{padding:"12px 10px",borderBottom:"1px solid "+C.border,cursor:"pointer",background:isActive?"linear-gradient(135deg,#0D1B4B,#1A3DB5)":C.white,borderLeft:isActive?"3px solid "+C.blue2:"3px solid transparent"}}>
+                      <div style={{fontSize:11,fontWeight:800,color:isActive?C.white:C.text}}>{d.getDate()+" "+mN[d.getMonth()]}</div>
+                      <div style={{fontSize:10,color:isActive?"rgba(255,255,255,0.8)":C.mutedDark,marginTop:2}}>{p.qty+" clase"+(p.qty>1?"s":"")}</div>
+                      <div style={{marginTop:4,width:8,height:8,borderRadius:"50%",background:"#43A047"}}></div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+            {/* Right detail */}
+            <div style={{flex:1,overflowY:"auto",padding:16}}>
+              {(()=>{
+                const allPayments=s.combos.flatMap(c=>(c.payments||[]).map(p=>({...p,comboTotal:c.total})));
+                if(allPayments.length===0) return <div style={{textAlign:"center",padding:"40px 0",color:C.mutedDark}}>Sin historial de pagos</div>;
+                const p=allPayments[histTab]||allPayments[allPayments.length-1];
+                const wDFull=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+                const mNShort=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+                const fmtDate=(ds)=>{const d=new Date(ds+"T12:00:00");return wDFull[d.getDay()]+" "+d.getDate()+" "+mNShort[d.getMonth()];};
+                const methodLabel={"efectivo":"💵 Efectivo","transferencia":"🏦 Transferencia","tarjeta":"💳 Tarjeta"};
+                return (
+                  <>
+                    <WhiteCard style={{marginBottom:14}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                        <div style={{fontSize:15,fontWeight:800,color:C.text}}>{"📦 "+p.qty+" clase"+(p.qty>1?"s":"")+" pagadas"}</div>
+                        <button onClick={()=>setShowComprobante({...p,studentName:s.name})} style={{background:C.blueL,border:"1px solid "+C.border,borderRadius:10,padding:"6px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+                          <span style={{fontSize:11,fontWeight:700,color:C.blue2}}>Compartir</span>
+                        </button>
+                      </div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                        {[
+                          {l:"Fecha de pago",v:fmtDate(p.date||TODAY_DATE)},
+                          {l:"Monto",v:fmtMoneyShort(p.amount)},
+                          {l:"Forma de pago",v:methodLabel[p.method]||"💵 Efectivo"},
+                          {l:"Estado",v:"✓ Pagado"},
+                        ].map(f=>(
+                          <div key={f.l}>
+                            <div style={{fontSize:10,fontWeight:700,color:C.mutedDark,marginBottom:3}}>{f.l.toUpperCase()}</div>
+                            <div style={{fontSize:13,fontWeight:700,color:f.l==="Estado"?C.green:C.text}}>{f.v}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </WhiteCard>
+                    {p.dates&&p.dates.length>0&&p.qty>0?(
+                      <WhiteCard>
+                        <div style={{fontSize:12,fontWeight:700,color:C.mutedDark,marginBottom:10}}>FECHAS DE CLASE</div>
+                        {p.dates.map((ds,i)=>(
+                          <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderBottom:i<p.dates.length-1?"1px solid "+C.border:"none"}}>
+                            <div style={{width:26,height:26,borderRadius:"50%",background:C.greenL,border:"2px solid "+C.green,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:C.green,flexShrink:0}}>{i+1}</div>
+                            <div style={{flex:1,fontSize:12,fontWeight:600,color:C.text}}>{fmtDate(ds)}</div>
+                            <span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:C.greenL,color:C.green,fontWeight:700}}>Pagada</span>
+                          </div>
+                        ))}
+                      </WhiteCard>
+                    ):(!p.qty||p.qty===0)&&p.date?(
+                      <WhiteCard>
+                        <div style={{fontSize:12,fontWeight:700,color:C.mutedDark,marginBottom:10}}>FECHA DE PAGO</div>
+                        <div style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0"}}>
+                          <div style={{width:26,height:26,borderRadius:"50%",background:C.greenL,border:"2px solid "+C.green,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:C.green,flexShrink:0}}>✓</div>
+                          <div style={{flex:1,fontSize:13,fontWeight:700,color:C.text}}>{fmtDate(p.date)}</div>
+                          <span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:C.greenL,color:C.green,fontWeight:700}}>Mensual</span>
+                        </div>
+                      </WhiteCard>
+                    ):null}
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Comprobante de pago */}
+      {showComprobante&&(()=>{
+        const p=showComprobante;
+        const mLabel={"efectivo":"Efectivo","transferencia":"Transferencia","tarjeta":"Tarjeta"};
+        const mN=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+        const fmtLong=(ds)=>{const d=new Date(ds+"T12:00:00");return d.getDate()+" de "+mN[d.getMonth()]+" "+d.getFullYear();};
+        const handleShare=async()=>{
+          try{
+            const mN2=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+            const fmtShort=(ds)=>{const d=new Date(ds+"T12:00:00");return d.getDate()+" "+mN2[d.getMonth()];};
+            const dates=p.dates||[];
+            const canvasH=340+(dates.length>0?40+dates.length*28:0)+60;
+            const canvas=document.createElement("canvas");
+            canvas.width=600; canvas.height=canvasH;
+            const ctx=canvas.getContext("2d");
+            // Background
+            ctx.fillStyle="#ffffff"; ctx.fillRect(0,0,600,canvasH);
+            // Header gradient
+            const grad=ctx.createLinearGradient(0,0,600,160);
+            grad.addColorStop(0,"#0D1B4B"); grad.addColorStop(1,"#1A3DB5");
+            ctx.fillStyle=grad; ctx.fillRect(0,0,600,160);
+            // Header text
+            ctx.fillStyle="rgba(255,255,255,0.7)"; ctx.font="bold 14px Arial"; ctx.textAlign="center";
+            ctx.fillText("COMPROBANTE DE PAGO",300,40);
+            ctx.fillStyle="#ffffff"; ctx.font="bold 40px Arial";
+            ctx.fillText(fmtMoneyShort(p.amount),300,95);
+            ctx.fillStyle="rgba(255,255,255,0.8)"; ctx.font="16px Arial";
+            ctx.fillText(fmtLong(p.date||TODAY_DATE),300,130);
+            // Body rows
+            ctx.textAlign="left";
+            const rows=[
+              ["ALUMNO", p.studentName],
+              ["CLASES", p.qty>0?p.qty+" clase"+(p.qty>1?"s":""):"Plan Mensual"],
+              ["FORMA DE PAGO", mLabel[p.method]||"Efectivo"],
+              ["MONTO", fmtMoneyShort(p.amount)],
+            ];
+            rows.forEach((r,i)=>{
+              const y=190+i*40;
+              ctx.fillStyle="#6B7BAD"; ctx.font="bold 12px Arial"; ctx.fillText(r[0],40,y);
+              ctx.fillStyle="#0D1B4B"; ctx.font="bold 15px Arial"; ctx.fillText(r[1],200,y);
+              ctx.strokeStyle="#EEF2FF"; ctx.lineWidth=1;
+              ctx.beginPath(); ctx.moveTo(40,y+10); ctx.lineTo(560,y+10); ctx.stroke();
+            });
+            let yOff=350;
+            // Dates section
+            if(dates.length>0){
+              ctx.fillStyle="#6B7BAD"; ctx.font="bold 12px Arial"; ctx.fillText("FECHAS DE CLASE",40,yOff);
+              yOff+=20;
+              dates.forEach((ds,i)=>{
+                ctx.fillStyle="#0D1B4B"; ctx.font="13px Arial";
+                ctx.fillText((i+1)+".  "+fmtShort(ds),40,yOff);
+                ctx.fillStyle="#43A047"; ctx.font="bold 11px Arial";
+                ctx.fillText("Pagada",200,yOff);
+                yOff+=28;
+              });
+            }
+            // Confirmed badge
+            ctx.fillStyle="#EDFBEC";
+            ctx.beginPath(); ctx.roundRect(40,yOff+10,520,50,12); ctx.fill();
+            ctx.fillStyle="#2E7D32"; ctx.font="bold 16px Arial"; ctx.textAlign="center";
+            ctx.fillText("✓ Pago confirmado",300,yOff+42);
+            // Footer
+            ctx.fillStyle="#9BACCB"; ctx.font="bold 12px Arial";
+            ctx.fillText("izicoach",300,canvasH-20);
+            // Share/download
+            const url=canvas.toDataURL("image/png");
+            if(navigator.share&&navigator.canShare){
+              const blob=await(await fetch(url)).blob();
+              const file=new File([blob],"comprobante.png",{type:"image/png"});
+              if(navigator.canShare({files:[file]})){
+                await navigator.share({files:[file],title:"Comprobante de pago"});
+                return;
+              }
+            }
+            const a=document.createElement("a");
+            a.href=url; a.download="comprobante-"+p.studentName+".png"; a.click();
+          }catch(e){
+            alert("No se pudo compartir. Intentá de nuevo.");
+            console.log(e);
+          }
+        };
+        return (
+          <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.6)",zIndex:1099,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 20px"}} onClick={()=>setShowComprobante(null)}>
+            <div style={{width:"100%",maxWidth:380}} onClick={e=>e.stopPropagation()}>
+              <div id="comprobante-card" style={{background:"#fff",borderRadius:20,overflow:"hidden",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+                <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"20px 20px 24px",textAlign:"center"}}>
+                  <div style={{fontSize:11,color:"rgba(255,255,255,0.7)",letterSpacing:2,marginBottom:6}}>COMPROBANTE DE PAGO</div>
+                  <div style={{fontSize:28,fontWeight:900,color:"#fff",marginBottom:4}}>{fmtMoneyShort(p.amount)}</div>
+                  <div style={{fontSize:13,color:"rgba(255,255,255,0.8)"}}>{fmtLong(p.date||TODAY_DATE)}</div>
+                </div>
+                <div style={{padding:20}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:14,paddingBottom:14,borderBottom:"1px solid #EEF2FF"}}>
+                    <div style={{fontSize:12,color:"#6B7BAD",fontWeight:600}}>ALUMNO</div>
+                    <div style={{fontSize:14,fontWeight:800,color:"#0D1B4B"}}>{p.studentName}</div>
+                  </div>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:12}}>
+                    <div style={{fontSize:12,color:"#6B7BAD",fontWeight:600}}>CLASES</div>
+                    <div style={{fontSize:14,fontWeight:700,color:"#0D1B4B"}}>{p.qty>0?p.qty+" clase"+(p.qty>1?"s":""):"Plan Mensual"}</div>
+                  </div>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:12}}>
+                    <div style={{fontSize:12,color:"#6B7BAD",fontWeight:600}}>FORMA DE PAGO</div>
+                    <div style={{fontSize:14,fontWeight:700,color:"#0D1B4B"}}>{mLabel[p.method]||"Efectivo"}</div>
+                  </div>
+                  <div style={{background:"#EDFBEC",borderRadius:12,padding:"12px 16px",display:"flex",alignItems:"center",gap:10,marginTop:16}}>
+                    <div style={{width:28,height:28,borderRadius:"50%",background:"#65CE5A",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    </div>
+                    <div style={{fontSize:13,fontWeight:700,color:"#2E7D32"}}>Pago confirmado</div>
+                  </div>
+                  {p.dates&&p.dates.length>0&&(
+                    <div style={{marginTop:14}}>
+                      <div style={{fontSize:11,fontWeight:700,color:"#6B7BAD",marginBottom:8}}>FECHAS DE CLASE</div>
+                      {p.dates.map((ds,i)=>{
+                        const d=new Date(ds+"T12:00:00");
+                        const mN3=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+                        return (
+                          <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",borderBottom:"1px solid #EEF2FF"}}>
+                            <span style={{fontSize:12,color:"#0D1B4B",fontWeight:600}}>{(i+1)+". "+d.getDate()+" "+mN3[d.getMonth()]}</span>
+                            <span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:"#EDFBEC",color:"#43A047",fontWeight:700}}>Pagada</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div style={{textAlign:"center",marginTop:16,fontSize:11,color:"#9BACCB",fontWeight:700,letterSpacing:1}}>izicoach</div>
+                </div>
+              </div>
+              <div style={{display:"flex",gap:10,marginTop:12}}>
+                <button onClick={()=>setShowComprobante(null)} style={{flex:1,padding:"13px",borderRadius:12,border:"none",background:"rgba(255,255,255,0.2)",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:700}}>Cerrar</button>
+                <button onClick={handleShare} style={{flex:2,padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#2E7D32,#65CE5A)",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+                  Compartir
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {showAtt&&(
+        <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:999,display:"flex",flexDirection:"column",background:C.bg}}>
+          <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
+            <button onClick={()=>setShowAtt(false)} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
+            <div style={{flex:1}}><div style={{fontWeight:800,fontSize:16,color:C.white}}>Registro de Asistencia</div><div style={{fontSize:12,color:C.muted}}>{s.name}</div></div>
+          </div>
+          <div style={{flex:1,overflowY:"auto",padding:16}}>
+            {attLogs.length===0?(
+              <div style={{textAlign:"center",padding:"40px 0"}}><div style={{fontSize:36,marginBottom:8}}>📋</div><div style={{color:C.mutedDark,fontSize:14}}>Sin registros de asistencia aún</div></div>
+            ):(
+              <div>
+                <div style={{background:C.blueL,borderRadius:12,padding:"12px 16px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div style={{fontSize:13,color:C.blue2,fontWeight:700}}>Total clases asistidas</div>
+                  <div style={{fontSize:28,fontWeight:800,color:C.blue2}}>{attLogs.length}</div>
+                </div>
+                {Object.entries(byMonth).map(([month,entries])=>(
+                  <div key={month} style={{marginBottom:20}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                      <span style={{background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",color:C.white,padding:"4px 14px",borderRadius:20,fontSize:12,fontWeight:700}}>{month}</span>
+                      <span style={{fontSize:12,color:C.mutedDark}}>{entries.length+" clase"+(entries.length>1?"s":"")}</span>
+                    </div>
+                    {entries.map((e,i)=>(
+                      <WhiteCard key={i} style={{marginBottom:8,padding:"12px 14px"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:12}}>
+                          <div style={{width:44,height:44,borderRadius:12,background:C.blueL,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                            <div style={{fontSize:18,fontWeight:800,color:C.blue2,lineHeight:1}}>{e.dayNum}</div>
+                            <div style={{fontSize:9,color:C.mutedDark,fontWeight:600}}>{e.day.slice(0,3).toUpperCase()}</div>
+                          </div>
+                          <div style={{flex:1}}>
+                            <div style={{fontWeight:700,fontSize:14,color:C.text}}>{e.className}</div>
+                            <div style={{fontSize:12,color:C.mutedDark}}>{e.day+" "+e.dayNum+" de "+e.month}</div>
+                          </div>
+                          <div style={{textAlign:"right"}}>
+                            <div style={{fontSize:12,fontWeight:600,color:C.blue2}}>{e.time}</div>
+                            <div style={{width:8,height:8,borderRadius:"50%",background:C.green,margin:"4px auto 0"}}></div>
+                          </div>
+                        </div>
+                      </WhiteCard>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[] }) {
+  const [search,setSearch]=useState("");
+  const [filter,setFilter]=useState("none");
+  let list=students;
+  if(search.trim()) list=list.filter(s=>s.name.toLowerCase().includes(search.toLowerCase()));
+  if(filter==="mora") list=list.filter(s=>{const r=getRem(s);return r!==null&&r<=0;});
+  return (
+    <div>
+      <div style={{position:"relative",marginBottom:12}}>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar alumno..." style={{width:"100%",padding:"11px 14px 11px 14px",borderRadius:12,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",background:C.white,color:C.text,outline:"none"}}/>
+        {search&&<button onClick={()=>setSearch("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:C.mutedDark,fontSize:18}}>×</button>}
+      </div>
+      <div style={{display:"flex",gap:8,marginBottom:16}}>
+        {[["none","Todos"],["mora","⚠️ En mora"]].map(([k,l])=>(
+          <button key={k} onClick={()=>setFilter(k)} style={{padding:"7px 18px",borderRadius:20,border:"1.5px solid "+(filter===k?(k==="mora"?"#FFCDD2":C.blue2):C.border),cursor:"pointer",fontSize:13,fontWeight:600,background:filter===k?(k==="mora"?"#FFEBEE":C.blue2):C.white,color:filter===k?(k==="mora"?"#C62828":C.white):C.mutedDark}}>{l}</button>
+        ))}
+      </div>
+      {list.map(s=><PaymentCard key={s.id} student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages}/>)}
+    </div>
+  );
+}
+
+function Finances({ students, classes, initialTab="payments", onUpdate, expenses=[], setExpenses, addIncome, packages=[] }) {
+  const [tab,setTab]=useState(initialTab);
+  const [selMonth,setSelMonth]=useState((()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");})());
+  const [showMovModal,setShowMovModal]=useState(null);
+  const [movCat,setMovCat]=useState(""); const [movAmount,setMovAmount]=useState(""); const [movDate,setMovDate]=useState("");
+  const [editMovId,setEditMovId]=useState(null);
+  const [showCatModal,setShowCatModal]=useState(false);
+  const [customCats,setCustomCats]=useState([
+    {id:1,name:"Canchas",type:"gasto"},{id:2,name:"Equipamiento",type:"gasto"},
+    {id:3,name:"Transporte",type:"gasto"},{id:4,name:"Cobros clases",type:"ingreso"},
+  ]);
+  const [newCatName,setNewCatName]=useState(""); const [newCatType,setNewCatType]=useState("gasto");
+  const barC=[C.blue2,C.blue3,"#5C6BC0","#26C6DA"];
+  const monthFiltered=expenses.filter(e=>e.date.startsWith(selMonth));
+  const income=monthFiltered.filter(e=>e.type==="ingreso").reduce((a,b)=>a+b.amount,0);
+  const exp=monthFiltered.filter(e=>e.type==="gasto").reduce((a,b)=>a+b.amount,0);
+  const cats=[...new Set(monthFiltered.filter(e=>e.type==="gasto").map(e=>e.category))];
+  const [yr,mn]=selMonth.split("-").map(Number);
+  const monthLabel=MONTHS[mn-1]+" "+yr;
+  const prevMonth=()=>{const d=new Date(yr,mn-2,1);setSelMonth(d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"));};
+  const nextMonth=()=>{const d=new Date(yr,mn,1);setSelMonth(d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"));};
+  return (
+    <div style={{flex:1,overflowY:"auto",background:C.bg}}>
+      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"16px 16px 20px",flexShrink:0}}>
+        <div style={{fontSize:18,fontWeight:800,color:C.white}}>{initialTab==="payments"?"Cobros":"Finanzas"}</div>
+        <div style={{fontSize:13,color:C.muted,marginTop:4}}>{initialTab==="payments"?"Estado de cobros por alumno":"Resumen financiero del mes"}</div>
+      </div>
+      <div style={{padding:"16px",marginTop:-8}}>
+        {tab==="payments"&&<PaymentsTab students={students} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages}/>}
+        {tab==="expenses"&&(
+          <div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:C.white,borderRadius:14,padding:"12px 16px",marginBottom:14,border:"1px solid "+C.border}}>
+              <button onClick={prevMonth} style={{background:C.blueL,border:"none",borderRadius:10,width:34,height:34,cursor:"pointer",color:C.blue2,fontWeight:800,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
+              <div style={{textAlign:"center"}}>
+                <div style={{fontSize:16,fontWeight:800,color:C.text}}>{monthLabel}</div>
+                <div style={{fontSize:11,color:C.mutedDark}}>{monthFiltered.length+" movimiento"+(monthFiltered.length!==1?"s":"")}</div>
+              </div>
+              <button onClick={nextMonth} style={{background:C.blueL,border:"none",borderRadius:10,width:34,height:34,cursor:"pointer",color:C.blue2,fontWeight:800,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>{"›"}</button>
+            </div>
+            {/* Always show the 3 boxes */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+              <div style={{background:"linear-gradient(135deg,#52C048,#65CE5A)",borderRadius:14,padding:14}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+                  <div style={{fontSize:11,color:"rgba(255,255,255,0.8)"}}>INGRESOS</div>
+                  <button onClick={()=>{setShowMovModal("ingreso");setMovCat("");setMovAmount("");setMovDate("");}} style={{width:24,height:24,borderRadius:"50%",background:"rgba(255,255,255,0.25)",border:"none",cursor:"pointer",color:"#fff",fontSize:18,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1}}>+</button>
+                </div>
+                <div style={{fontSize:income>0?20:13,fontWeight:800,color:C.white}}>{income>0?fmtMoneyShort(income):"Sin ingresos aún"}</div>
+              </div>
+              <div style={{background:"linear-gradient(135deg,#E53935,#EF5350)",borderRadius:14,padding:14}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+                  <div style={{fontSize:11,color:"rgba(255,255,255,0.8)"}}>GASTOS</div>
+                  <button onClick={()=>{setShowMovModal("gasto");setMovCat("");setMovAmount("");setMovDate("");}} style={{width:24,height:24,borderRadius:"50%",background:"rgba(255,255,255,0.25)",border:"none",cursor:"pointer",color:"#fff",fontSize:18,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1}}>+</button>
+                </div>
+                <div style={{fontSize:exp>0?20:13,fontWeight:800,color:C.white}}>{exp>0?fmtMoneyShort(exp):"Sin gastos aún"}</div>
+              </div>
+            </div>
+            <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",borderRadius:14,padding:14,marginBottom:14}}>
+              <div style={{fontSize:12,color:C.muted}}>{"Balance neto — "+monthLabel}</div>
+              <div style={{fontSize:income>0||exp>0?26:14,fontWeight:800,color:C.white}}>{income>0||exp>0?fmtMoneyShort(income-exp):"Sin movimientos aún"}</div>
+            </div>
+            {monthFiltered.length===0?(
+              <div style={{textAlign:"center",padding:"24px 0",color:C.mutedDark,fontSize:13}}>
+                <div style={{fontSize:32,marginBottom:8}}>📊</div>
+                Sin movimientos en {monthLabel}. Usá los botones + para agregar.
+              </div>
+            ):cats.length>0&&(()=>{
+                  const COLORS=[C.blue2,"#26C6DA","#5C6BC0","#43A047","#FF7043","#AB47BC"];
+                  const catData=cats.map((cat,i)=>{
+                    const v=monthFiltered.filter(e=>e.category===cat&&e.type==="gasto").reduce((a,b)=>a+b.amount,0);
+                    const pct=exp>0?Math.round(v/exp*100):0;
+                    return {cat,v,pct,color:COLORS[i%COLORS.length]};
+                  });
+                  // Build SVG pie
+                  const cx=90,cy=90,r=75;
+                  let startAngle=-90;
+                  const slices=catData.map(d=>{
+                    const angle=(d.pct/100)*360;
+                    const endAngle=startAngle+angle;
+                    const large=angle>180?1:0;
+                    const s=startAngle*Math.PI/180;
+                    const e=endAngle*Math.PI/180;
+                    const x1=cx+r*Math.cos(s); const y1=cy+r*Math.sin(s);
+                    const x2=cx+r*Math.cos(e); const y2=cy+r*Math.sin(e);
+                    const path=`M${cx},${cy} L${x1},${y1} A${r},${r} 0 ${large},1 ${x2},${y2} Z`;
+                    const mid=(startAngle+angle/2)*Math.PI/180;
+                    startAngle=endAngle;
+                    return {...d,path,mid};
+                  });
+                  return (
+                    <WhiteCard style={{marginBottom:14}}>
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+                        <div style={{fontSize:13,fontWeight:700,color:C.text}}>Desglose de gastos</div>
+                        <button onClick={()=>setShowCatModal(true)} style={{padding:"5px 12px",borderRadius:20,border:"1.5px solid "+C.blue2,background:C.blueL,color:C.blue2,fontSize:11,cursor:"pointer",fontWeight:700}}>⚙ Categorías</button>
+                      </div>
+                      {exp>0?(
+                        <div style={{display:"flex",alignItems:"center",gap:16}}>
+                          {/* Pie chart */}
+                          <svg width="180" height="180" viewBox="0 0 180 180" style={{flexShrink:0}}>
+                            {catData.length===1?(
+                              <circle cx={cx} cy={cy} r={r} fill={catData[0].color}/>
+                            ):(
+                              slices.map((s,i)=>(
+                                <path key={i} d={s.path} fill={s.color} stroke="#fff" strokeWidth="2"/>
+                              ))
+                            )}
+                            <circle cx={cx} cy={cy} r={38} fill="#fff"/>
+                            <text x={cx} y={cy-6} textAnchor="middle" fontSize="11" fontWeight="700" fill={C.mutedDark}>GASTOS</text>
+                            <text x={cx} y={cy+10} textAnchor="middle" fontSize="13" fontWeight="800" fill={C.text}>{fmtMoneyShort(exp)}</text>
+                          </svg>
+                          {/* Legend */}
+                          <div style={{flex:1}}>
+                            {catData.map((d,i)=>(
+                              <div key={i} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                                <div style={{width:10,height:10,borderRadius:2,background:d.color,flexShrink:0}}></div>
+                                <div style={{flex:1}}>
+                                  <div style={{fontSize:12,fontWeight:600,color:C.text}}>{d.cat}</div>
+                                  <div style={{fontSize:11,color:C.mutedDark}}>{fmtMoneyShort(d.v)+" · "+d.pct+"%"}</div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ):(
+                        <div style={{textAlign:"center",padding:"20px 0",color:C.mutedDark,fontSize:13}}>Sin gastos este mes</div>
+                      )}
+                    </WhiteCard>
+                  );
+                })()}
+                <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:10,marginTop:6}}>Movimientos</div>
+                {[...monthFiltered].sort((a,b)=>b.date.localeCompare(a.date)).map(e=>(
+                  <WhiteCard key={e.id} style={{marginBottom:8}}>
+                    <div style={{display:"flex",alignItems:"center",gap:12}}>
+                      <div style={{width:40,height:40,borderRadius:12,background:e.type==="ingreso"?"linear-gradient(135deg,#52C048,#65CE5A)":"linear-gradient(135deg,#E53935,#EF5350)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:C.white,flexShrink:0}}>{e.type==="ingreso"?"↑":"↓"}</div>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:14,fontWeight:700,color:C.text}}>{e.category}</div>
+                        <div style={{fontSize:11,color:C.mutedDark}}>{e.date}{e.note?" · "+e.note:""}</div>
+                      </div>
+                      <div style={{fontWeight:800,color:e.type==="ingreso"?"#2E7D32":"#C62828",fontSize:14,marginRight:8}}>{(e.type==="ingreso"?"+":"-")+fmtMoneyShort(e.amount)}</div>
+                      <div style={{display:"flex",gap:4}}>
+                        <button onClick={()=>{
+                          setShowMovModal(e.type);
+                          setMovCat(e.category);
+                          setMovAmount(String(e.amount));
+                          setMovDate(e.date);
+                          setEditMovId(e.id);
+                        }} style={{width:30,height:30,borderRadius:8,border:"none",background:C.blueL,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                        </button>
+                        <button onClick={()=>setExpenses(p=>p.filter(x=>x.id!==e.id))} style={{width:30,height:30,borderRadius:8,border:"none",background:"#FFEBEE",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#C62828" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+                        </button>
+                      </div>
+                    </div>
+                  </WhiteCard>
+                ))}
+          </div>
+        )}
+      </div>
+      {showCatModal&&(
+        <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
+          <div style={{background:C.white,borderRadius:"24px 24px 0 0",padding:"24px 20px 32px",width:"100%",maxHeight:"85%",overflowY:"auto",boxSizing:"border-box"}}>
+            <div style={{fontWeight:900,fontSize:20,color:C.text,marginBottom:20}}>Gestionar Categorías</div>
+            <div style={{marginBottom:16}}>
+              <div style={{display:"flex",gap:8,marginBottom:10}}>
+                {[["gasto","💸 Gasto"],["ingreso","💰 Ingreso"]].map(([k,l])=>(
+                  <button key={k} onClick={()=>setNewCatType(k)} style={{flex:1,padding:"9px",borderRadius:12,border:"2px solid "+(newCatType===k?(k==="gasto"?"#E53935":C.green):C.border),background:newCatType===k?(k==="gasto"?"#FFEBEE":C.greenL):C.white,color:newCatType===k?(k==="gasto"?"#C62828":C.green):C.mutedDark,fontSize:13,cursor:"pointer",fontWeight:700}}>{l}</button>
+                ))}
+              </div>
+              <div style={{display:"flex",gap:8}}>
+                <input value={newCatName} onChange={e=>setNewCatName(e.target.value)} placeholder="Nueva categoría..." style={{flex:1,padding:"12px 14px",borderRadius:12,border:"1.5px solid "+C.border,fontSize:14,background:C.blueL,color:C.text,outline:"none"}}/>
+                <button onClick={()=>{if(!newCatName.trim())return;setCustomCats(p=>[...p,{id:Date.now(),name:newCatName.trim(),type:newCatType}]);setNewCatName("");}} style={{padding:"12px 18px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:16,cursor:"pointer",fontWeight:800}}>+</button>
+              </div>
+            </div>
+            <div style={{fontSize:12,fontWeight:700,color:C.mutedDark,marginBottom:8}}>💸 GASTOS</div>
+            {customCats.filter(c=>c.type==="gasto").map(c=>(
+              <div key={c.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:12,background:"#FFF5F5",border:"1px solid #FFCDD2",marginBottom:6}}>
+                <div style={{width:8,height:8,borderRadius:"50%",background:"#E53935",flexShrink:0}}></div>
+                <span style={{flex:1,fontSize:14,fontWeight:600,color:C.text}}>{c.name}</span>
+                <button onClick={()=>setCustomCats(p=>p.filter(x=>x.id!==c.id))} style={{background:"#FFEBEE",border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#C62828" strokeWidth="3" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+            ))}
+            <div style={{fontSize:12,fontWeight:700,color:C.mutedDark,margin:"14px 0 8px"}}>💰 INGRESOS</div>
+            {customCats.filter(c=>c.type==="ingreso").map(c=>(
+              <div key={c.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:12,background:C.greenL,border:"1px solid #C8E6C9",marginBottom:6}}>
+                <div style={{width:8,height:8,borderRadius:"50%",background:C.green,flexShrink:0}}></div>
+                <span style={{flex:1,fontSize:14,fontWeight:600,color:C.text}}>{c.name}</span>
+                <button onClick={()=>setCustomCats(p=>p.filter(x=>x.id!==c.id))} style={{background:"#FFEBEE",border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#C62828" strokeWidth="3" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+            ))}
+            <button onClick={()=>setShowCatModal(false)} style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:C.bg,color:C.mutedDark,fontSize:14,cursor:"pointer",fontWeight:700,marginTop:16}}>Cerrar</button>
+          </div>
+        </div>
+      )}
+      {showMovModal&&(
+        <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
+          <div style={{background:C.white,borderRadius:"24px 24px 0 0",padding:"24px 20px 32px",width:"100%",boxSizing:"border-box"}}>
+            <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20}}>
+              <div style={{width:40,height:40,borderRadius:12,background:showMovModal==="ingreso"?"linear-gradient(135deg,#52C048,#65CE5A)":"linear-gradient(135deg,#E53935,#EF5350)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,color:C.white}}>{showMovModal==="ingreso"?"↑":"↓"}</div>
+              <div style={{fontWeight:900,fontSize:20,color:C.text}}>{editMovId?(showMovModal==="ingreso"?"Editar Ingreso":"Editar Gasto"):(showMovModal==="ingreso"?"Nuevo Ingreso":"Nuevo Gasto")}</div>
+            </div>
+            <div style={{marginBottom:14}}>
+              <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Categoría</label>
+              <input value={movCat} onChange={e=>setMovCat(e.target.value)} placeholder={showMovModal==="ingreso"?"Ej: Cobros clases":"Ej: Canchas"} style={{width:"100%",padding:"13px 16px",borderRadius:12,border:"none",fontSize:14,boxSizing:"border-box",background:C.blueL,color:C.text,outline:"none"}}/>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:8}}>
+                {customCats.filter(c=>c.type===showMovModal).map(c=>(
+                  <button key={c.id} onClick={()=>setMovCat(c.name)} style={{padding:"4px 12px",borderRadius:20,border:"1.5px solid "+(movCat===c.name?C.blue2:C.border),background:movCat===c.name?C.blueL:C.white,color:movCat===c.name?C.blue2:C.mutedDark,fontSize:12,cursor:"pointer",fontWeight:600}}>{c.name}</button>
+                ))}
+              </div>
+            </div>
+            <div style={{marginBottom:14}}>
+              <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Monto (₲)</label>
+              <input type="number" value={movAmount} onChange={e=>setMovAmount(e.target.value)} placeholder="200000" style={{width:"100%",padding:"13px 16px",borderRadius:12,border:"none",fontSize:15,fontWeight:700,boxSizing:"border-box",background:C.blueL,color:C.text,outline:"none"}}/>
+            </div>
+            <div style={{marginBottom:24}}>
+              <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Fecha</label>
+              <input type="date" value={movDate} onChange={e=>setMovDate(e.target.value)} style={{width:"100%",padding:"13px 16px",borderRadius:12,border:"none",fontSize:14,boxSizing:"border-box",background:C.blueL,color:C.text,outline:"none",cursor:"pointer"}}/>
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={()=>{setShowMovModal(null);setEditMovId(null);setMovCat("");setMovAmount("");setMovDate("");}} style={{flex:1,padding:"14px",borderRadius:14,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:14,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
+              <button onClick={()=>{
+                if(!movCat.trim()||!movAmount){alert("Completá categoría y monto.");return;}
+                const date=movDate||(selMonth+"-01");
+                if(editMovId){
+                  setExpenses(prev=>prev.map(e=>e.id===editMovId?{...e,category:movCat,amount:parseInt(movAmount),date,type:showMovModal}:e));
+                  setEditMovId(null);
+                } else {
+                  setExpenses(prev=>[...prev,{id:Date.now(),category:movCat,amount:parseInt(movAmount),type:showMovModal,date}]);
+                }
+                setShowMovModal(null);setMovCat("");setMovAmount("");setMovDate("");
+              }} style={{flex:1,padding:"14px",borderRadius:14,border:"none",background:showMovModal==="ingreso"?"linear-gradient(135deg,#52C048,#65CE5A)":"linear-gradient(135deg,#E53935,#EF5350)",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:800}}>{editMovId?"Actualizar":"Guardar"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StudentApp({ student: initialStudent, onExit, classes=[], notifications=[], sendNotification }) {
+  const [tab,setTab]=useState("home");
+  const [student,setStudent]=useState(initialStudent);
+  const [msg,setMsg]=useState("");
+  const [msgs,setMsgs]=useState([
+    {id:1,from:"coach",text:"Hola! Mañana la clase empieza 15 min antes, a las 7:45. ⏰",time:"Ayer 18:30",type:"alert"},
+    {id:2,from:"me",text:"Perfecto, gracias por avisar!",time:"Ayer 18:45"},
+    {id:3,from:"coach",text:"El miércoles se suspende la clase por mantenimiento de la cancha.",time:"Hoy 09:00",type:"alert"},
+  ]);
+  const [oldPass,setOldPass]=useState(""); const [newPass,setNewPass]=useState(""); const [newPass2,setNewPass2]=useState("");
+  const combo=getCombo(student); const rem=getRem(student);
+  const send=()=>{if(msg.trim()){setMsgs(p=>[...p,{id:Date.now(),from:"me",text:msg,time:"Ahora"}]);setMsg("");}};
+
+  // Attendance log from classes
+  const attLogs=[];
+  classes.forEach(cls=>{
+    if(!cls.students||!cls.students.includes(student.id)) return;
+    (cls.attendanceLog||[]).forEach(entry=>{
+      if(!entry.present||!entry.present.includes(student.id)) return;
+      const d=new Date(entry.date+"T12:00:00");
+      attLogs.push({date:entry.date,day:entry.day,month:MONTHS[d.getMonth()],dayNum:d.getDate(),className:cls.title,time:cls.time});
+    });
+  });
+  attLogs.sort((a,b)=>b.date.localeCompare(a.date));
+
+  // Student's classes schedule
+  const myClasses=classes.filter(c=>c.students&&c.students.includes(student.id));
+
+  const tabs=[
+    {id:"home",label:"Inicio",icon:(col)=><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={col} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z"/><path d="M9 21V12h6v9"/></svg>},
+    {id:"clases",label:"Clases",icon:(col)=><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={col} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>},
+    {id:"chat",label:"Chat",icon:(col)=><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={col} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>},
+    {id:"pagos",label:"Pagos",icon:(col)=><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={col} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="6" width="20" height="14" rx="2"/><path d="M2 10h20"/><circle cx="12" cy="15" r="2"/></svg>},
+    {id:"config",label:"Config",icon:(col)=><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={col} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>},
+  ];
+
+  const alerts=notifications.filter(n=>n.type==="alert");
+  const unreadAlerts=alerts.filter(n=>!n.read).length;
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden",background:C.bg}}>
+      {/* Header */}
+      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"16px 16px 20px",flexShrink:0,boxShadow:"0 4px 20px rgba(26,61,181,0.3)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <div style={{position:"relative"}}>
+            {student.photo
+              ?<img src={student.photo} style={{width:52,height:52,borderRadius:"50%",objectFit:"cover",border:"3px solid rgba(255,255,255,0.4)"}}/>
+              :<div style={{width:52,height:52,borderRadius:"50%",background:"rgba(255,255,255,0.2)",border:"3px solid rgba(255,255,255,0.3)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,fontWeight:800,color:C.white}}>{student.avatar}</div>
+            }
+            <div style={{position:"absolute",bottom:0,right:0,width:14,height:14,borderRadius:"50%",background:"#65CE5A",border:"2px solid #fff"}}></div>
+          </div>
+          <div style={{flex:1}}>
+            <div style={{fontSize:12,color:"rgba(255,255,255,0.65)",fontWeight:600,letterSpacing:0.5}}>PORTAL ALUMNO</div>
+            <div style={{fontSize:18,fontWeight:900,color:C.white,letterSpacing:-0.3}}>{student.name}</div>
+            {student.sport&&<div style={{fontSize:12,color:"rgba(255,255,255,0.7)",fontWeight:500}}>{student.sport}</div>}
+          </div>
+          <button onClick={()=>setTab("chat")} style={{position:"relative",background:"rgba(255,255,255,0.18)",border:"1.5px solid rgba(255,255,255,0.30)",borderRadius:14,padding:"10px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:6,backdropFilter:"blur(8px)"}}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+            {unreadAlerts>0&&<span style={{position:"absolute",top:-6,right:-6,background:"#FF4757",color:"#fff",borderRadius:"50%",width:18,height:18,fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",border:"2px solid #fff"}}>{unreadAlerts}</span>}
+          </button>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div style={{flex:1,overflow:"hidden",display:"flex",flexDirection:"column"}}>
+
+        {/* HOME */}
+        {tab==="home"&&(
+          <div style={{flex:1,overflowY:"auto",paddingBottom:80,background:C.bg}}>
+
+            {/* Hero card */}
+            <div style={{background:C.white,margin:"12px 12px 0",borderRadius:20,padding:16,boxShadow:"0 2px 12px rgba(44,94,247,0.08)",display:"flex",gap:14,alignItems:"flex-start"}}>
+              <div style={{flexShrink:0}}>
+                {student.photo
+                  ?<img src={student.photo} style={{width:80,height:100,borderRadius:14,objectFit:"cover"}}/>
+                  :<div style={{width:80,height:100,borderRadius:14,background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,fontWeight:900,color:C.white}}>{student.avatar}</div>
+                }
+              </div>
+              <div style={{flex:1,paddingTop:4}}>
+                <div style={{fontSize:22,fontWeight:900,color:C.blue2,lineHeight:1.1,marginBottom:8}}><span>{"Buen Dia,"}</span><br/><span>{student.name.split(" ")[0]+"!"}</span></div>
+                {myClasses.length>0?(()=>{
+                  const next=[...new Map(myClasses.map(c=>[c.title,c])).values()][0];
+                  const nextDate=next.date;
+                  const d=new Date((nextDate||TODAY_DATE)+"T12:00:00");
+                  const wD=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+                  const mN=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+                  return (
+                    <div>
+                      <div style={{fontSize:14,color:C.mutedDark,marginBottom:4}}>Tu próxima clase es el</div>
+                      <div style={{fontSize:13,fontWeight:800,color:C.blue2,lineHeight:1.3}}><span>{wD[d.getDay()]+" "+d.getDate()+" de "+mN[d.getMonth()]+","}</span><br/><span>{next.time}</span></div>
+                    </div>
+                  );
+                })():(
+                  <div style={{fontSize:14,color:C.mutedDark}}>Sin clases programadas</div>
+                )}
+              </div>
+            </div>
+
+            {/* Estado de Cuenta + Mis Clases */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,margin:"10px 12px 0"}}>
+              <div style={{background:"linear-gradient(135deg,#2C5EF7,#4B7BF5)",borderRadius:20,padding:"16px 12px",textAlign:"center",boxShadow:"0 6px 20px rgba(44,94,247,0.3)"}}>
+                <div style={{fontSize:10,color:"rgba(255,255,255,0.7)",fontWeight:700,letterSpacing:0.8,marginBottom:8}}>ESTADO DE CUENTA</div>
+                {(()=>{
+                  const paidCount=combo?.paidCount||(combo?.paid?combo?.total:0)||0;
+                  const unpaid=(combo?.total||0)-paidCount;
+                  const isRed=unpaid>0;
+                  const displayNum=isRed?unpaid:paidCount;
+                  const label=!combo?"Sin combo":isRed?"A cobrar":"Pagadas";
+                  return (<>
+                    <div style={{fontSize:36,fontWeight:900,color:C.white,lineHeight:1}}>{displayNum}</div>
+                    <div style={{fontSize:13,color:"rgba(255,255,255,0.85)",fontWeight:600,marginTop:4}}>{label}</div>
+                  </>);
+                })()}
+              </div>
+              <div style={{background:C.blueL,borderRadius:20,padding:"16px 12px",textAlign:"center"}}>
+                <div style={{fontSize:10,color:C.blue2,fontWeight:700,letterSpacing:0.8,marginBottom:8}}>MIS CLASES</div>
+                {myClasses.length>0?(()=>{
+                  const cls=[...new Map(myClasses.map(c=>[c.title,c])).values()][0];
+                  const allDays=[...new Set(myClasses.flatMap(c=>c.days||[]))];
+                  return (<>
+                    <div style={{fontSize:12,fontWeight:800,color:C.blue2,marginBottom:4}}>{allDays.join(", ")}</div>
+                    <div style={{fontSize:12,fontWeight:700,color:C.blue2,marginBottom:2}}>{cls.time+(cls.timeEnd?" a "+cls.timeEnd:"")}</div>
+                    <div style={{fontSize:12,fontWeight:600,color:C.mutedDark}}>{cls.court}</div>
+                  </>);
+                })():(
+                  <div style={{fontSize:13,color:C.mutedDark,marginTop:8}}>Sin clases</div>
+                )}
+              </div>
+            </div>
+
+            <div style={{padding:"10px 12px 0"}}>
+              {/* Chat button */}
+              <button onClick={()=>setTab("chat")} style={{width:"100%",padding:"18px",borderRadius:16,border:"none",background:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:800,letterSpacing:0.3,marginBottom:12,boxShadow:"0 6px 20px rgba(101,206,90,0.35)",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                <span style={{fontSize:20}}>💬</span> Chatear con el Entrenador
+              </button>
+              {/* Alerts */}
+              {alerts.length>0&&alerts.map((a,i)=>(
+                <div key={i} style={{background:"linear-gradient(135deg,#FF6B35,#FFA726)",borderRadius:16,padding:"14px 16px",marginBottom:10,display:"flex",gap:12,alignItems:"flex-start",boxShadow:"0 4px 14px rgba(255,107,53,0.25)"}}>
+                  <div style={{width:38,height:38,borderRadius:10,background:"rgba(255,255,255,0.25)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:20}}>📢</div>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:800,color:"rgba(255,255,255,0.8)",letterSpacing:0.5,marginBottom:3}}>AVISO DEL ENTRENADOR</div>
+                    <div style={{fontSize:13,color:"#fff",fontWeight:600,lineHeight:1.4}}>{a.text}</div>
+                    <div style={{fontSize:10,color:"rgba(255,255,255,0.65)",marginTop:4}}>{a.time}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+                {/* CLASES */}
+        {tab==="clases"&&(
+          <div style={{flex:1,overflowY:"auto",padding:16,paddingBottom:80}}>
+            <div style={{fontSize:16,fontWeight:800,color:C.text,marginBottom:16}}>Mis Clases</div>
+            {myClasses.length===0&&<div style={{textAlign:"center",padding:"32px 0",color:C.mutedDark}}>No tenés clases asignadas aún</div>}
+            {myClasses.map(c=>(
+              <WhiteCard key={c.id} style={{marginBottom:12}}>
+                <div style={{fontWeight:800,fontSize:15,color:C.text,marginBottom:6}}>{c.title}</div>
+                <div style={{display:"flex",gap:16,marginBottom:8,flexWrap:"wrap"}}>
+                  <span style={{fontSize:13,color:C.mutedDark}}>🕐 {c.time}{c.timeEnd?" – "+c.timeEnd:""}</span>
+                  <span style={{fontSize:13,color:C.mutedDark}}>📍 {c.court}</span>
+                </div>
+                <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+                  {c.days.map(d=><span key={d} style={{fontSize:11,padding:"3px 10px",borderRadius:20,background:C.blueL,color:C.blue2,fontWeight:600}}>{d}</span>)}
+                </div>
+                <div style={{borderTop:"1px solid "+C.border,paddingTop:10}}>
+                  <div style={{fontSize:11,color:C.mutedDark,fontWeight:700,marginBottom:8}}>HISTORIAL DE ASISTENCIA</div>
+                  {(c.attendanceLog||[]).filter(e=>e.present&&e.present.includes(student.id)).length===0
+                    ?<div style={{fontSize:12,color:C.mutedDark}}>Sin registros aún</div>
+                    :(c.attendanceLog||[]).filter(e=>e.present&&e.present.includes(student.id)).slice(-5).reverse().map((e,i)=>(
+                      <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:"1px solid "+C.border}}>
+                        <div style={{width:8,height:8,borderRadius:"50%",background:C.green,flexShrink:0}}></div>
+                        <span style={{fontSize:12,color:C.text}}>{e.day} {e.date}</span>
+                        <span style={{marginLeft:"auto",fontSize:11,color:C.green,fontWeight:600}}>✓ Presente</span>
+                      </div>
+                    ))
+                  }
+                </div>
+              </WhiteCard>
+            ))}
+          </div>
+        )}
+
+        {/* CHAT */}
+        {tab==="chat"&&(
+          <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+            <div style={{padding:"10px 16px",background:C.white,borderBottom:"1px solid "+C.border,display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+              <div style={{width:38,height:38,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white}}>CC</div>
+              <div><div style={{fontWeight:700,fontSize:14,color:C.text}}>Coach Carlos</div><div style={{fontSize:11,color:C.green}}>● En línea</div></div>
+            </div>
+            <div style={{flex:1,overflowY:"auto",padding:"12px 16px",display:"flex",flexDirection:"column",gap:8}}>
+              {msgs.map(m=>(
+                <div key={m.id} style={{display:"flex",justifyContent:m.from==="me"?"flex-end":"flex-start",gap:8,alignItems:"flex-end"}}>
+                  {m.from==="coach"&&<div style={{width:28,height:28,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:C.white,flexShrink:0}}>CC</div>}
+                  <div style={{maxWidth:"72%"}}>
+                    {m.type==="alert"&&<div style={{fontSize:10,color:"#E65100",fontWeight:700,marginBottom:2}}>📢 AVISO</div>}
+                    <div style={{padding:"10px 14px",fontSize:13,borderRadius:m.from==="me"?"18px 18px 4px 18px":"18px 18px 18px 4px",background:m.from==="me"?"linear-gradient(135deg,"+C.blue2+","+C.blue3+")":m.type==="alert"?"#FFF3E0":C.white,color:m.from==="me"?C.white:C.text,border:m.type==="alert"?"1px solid #FFB74D":"none"}}>
+                      {m.text}
+                    </div>
+                    <div style={{fontSize:10,color:C.mutedDark,marginTop:2,textAlign:m.from==="me"?"right":"left"}}>{m.time}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{padding:"10px 16px 16px",background:C.white,borderTop:"1px solid "+C.border,display:"flex",gap:8,alignItems:"center",flexShrink:0}}>
+              <input value={msg} onChange={e=>setMsg(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} placeholder="Escribí un mensaje..." style={{flex:1,padding:"10px 16px",borderRadius:24,border:"1.5px solid "+C.border,fontSize:14,background:C.bg,color:C.text,outline:"none"}}/>
+              <button onClick={send} style={{background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",border:"none",borderRadius:"50%",width:44,height:44,cursor:"pointer",color:C.white,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* PAGOS */}
+        {tab==="pagos"&&(
+          <div style={{flex:1,overflowY:"auto",padding:16,paddingBottom:80}}>
+            <div style={{fontSize:16,fontWeight:800,color:C.text,marginBottom:16}}>Historial de Pagos</div>
+            {student.combos.slice().reverse().map((c,i)=>(
+              <WhiteCard key={i} style={{marginBottom:10}}>
+                <div style={{display:"flex",alignItems:"flex-start",gap:12}}>
+                  <div style={{width:40,height:40,borderRadius:10,background:c.paid?"linear-gradient(135deg,#52C048,#65CE5A)":"linear-gradient(135deg,#E53935,#EF5350)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{c.paid?"✓":"!"}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:700,fontSize:14,color:C.text}}>{c.total?"📦 Combo "+c.total+" clases":"📅 Plan Mensual"}</div>
+                    <div style={{fontSize:12,color:C.mutedDark,marginTop:2}}>Inicio: {c.date}</div>
+                    {c.total&&<div style={{fontSize:12,color:C.mutedDark}}>{c.used+" de "+c.total+" clases utilizadas"}</div>}
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontWeight:800,color:C.blue2,fontSize:15}}>{fmtMoneyShort(c.amount)}</div>
+                    <span style={{fontSize:11,padding:"3px 8px",borderRadius:20,background:c.paid?C.greenL:"#FFEBEE",color:c.paid?C.green:"#C62828",fontWeight:600,display:"inline-block",marginTop:4}}>{c.paid?"Pagado":"Pendiente"}</span>
+                  </div>
+                </div>
+              </WhiteCard>
+            ))}
+          </div>
+        )}
+
+        {/* CONFIG */}
+        {tab==="config"&&(
+          <div style={{flex:1,overflowY:"auto",padding:16,paddingBottom:80}}>
+            {/* Avatar */}
+            <div style={{textAlign:"center",marginBottom:24}}>
+              <div style={{position:"relative",width:88,height:88,margin:"0 auto 8px"}}>
+                {student.photo
+                  ?<img src={student.photo} style={{width:88,height:88,borderRadius:"50%",objectFit:"cover",border:"3px solid "+C.blue2}}/>
+                  :<div style={{width:88,height:88,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,fontWeight:800,color:C.white}}>{student.avatar}</div>
+                }
+                <label htmlFor="stuAvInput" style={{position:"absolute",bottom:0,right:0,width:28,height:28,borderRadius:"50%",background:C.blue2,border:"2px solid "+C.white,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.white} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                </label>
+                <input id="stuAvInput" type="file" accept="image/*" style={{display:"none"}} onChange={e=>{const file=e.target.files[0];if(file){const r=new FileReader();r.onload=ev=>setStudent({...student,photo:ev.target.result});r.readAsDataURL(file);}}}/>
+              </div>
+              <div style={{fontSize:14,fontWeight:700,color:C.text}}>{student.name}</div>
+              {student.photo&&<button onClick={()=>setStudent({...student,photo:null})} style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:C.mutedDark,textDecoration:"underline",marginTop:4}}>Eliminar foto</button>}
+            </div>
+
+            {/* Profile fields */}
+            <WhiteCard style={{marginBottom:14}}>
+              <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:12}}>Datos personales</div>
+              {[{l:"Nombre",v:student.name,k:"name"},{l:"Teléfono",v:student.phone||"",k:"phone"},{l:"Email",v:student.email||"",k:"email"}].map(f=>(
+                <div key={f.k} style={{marginBottom:12}}>
+                  <label style={{fontSize:12,color:C.blue2,fontWeight:700,display:"block",marginBottom:4}}>{f.l.toUpperCase()}</label>
+                  <input value={f.v} onChange={e=>setStudent({...student,[f.k]:e.target.value})} style={{width:"100%",padding:"11px 14px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",color:C.text,background:C.bg,outline:"none"}}/>
+                </div>
+              ))}
+              <button style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:700}}>Guardar cambios</button>
+            </WhiteCard>
+
+            {/* Password */}
+            <WhiteCard style={{marginBottom:14}}>
+              <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:12}}>🔒 Cambiar contraseña</div>
+              {[{l:"Contraseña actual",v:oldPass,s:setOldPass},{l:"Nueva contraseña",v:newPass,s:setNewPass},{l:"Confirmar nueva",v:newPass2,s:setNewPass2}].map(f=>(
+                <div key={f.l} style={{marginBottom:10}}>
+                  <label style={{fontSize:12,color:C.blue2,fontWeight:700,display:"block",marginBottom:4}}>{f.l.toUpperCase()}</label>
+                  <input type="password" value={f.v} onChange={e=>f.s(e.target.value)} placeholder="••••••••" style={{width:"100%",padding:"11px 14px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",color:C.text,background:C.bg,outline:"none"}}/>
+                </div>
+              ))}
+              <button style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:700,marginTop:4}}>Actualizar contraseña</button>
+            </WhiteCard>
+
+            <button onClick={onExit} style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:"#FFF0F0",color:"#D32F2F",fontSize:14,cursor:"pointer",fontWeight:700}}>Cerrar sesión</button>
+          </div>
+        )}
+      </div>
+
+      {/* Bottom nav */}
+      <div style={{display:"flex",borderTop:"1px solid rgba(44,94,247,0.07)",background:C.white,paddingBottom:"env(safe-area-inset-bottom,4px)",flexShrink:0,position:"relative",zIndex:100,boxShadow:"0 -2px 16px rgba(44,94,247,0.06)"}}>
+        {tabs.map(t=>{
+          const isActive=tab===t.id; const col=isActive?C.blue2:"#9BACCB";
+          return (
+            <button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,background:"none",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"8px 0 6px",position:"relative"}}>
+              {isActive&&<div style={{position:"absolute",top:0,left:"50%",transform:"translateX(-50%)",width:28,height:3,borderRadius:"0 0 4px 4px",background:C.blue2}}></div>}
+              {t.id==="chat"&&unreadAlerts>0&&<div style={{position:"absolute",top:6,right:"20%",width:8,height:8,borderRadius:"50%",background:"#FF4757",border:"1.5px solid #fff"}}></div>}
+              <div style={{width:38,height:38,borderRadius:12,background:isActive?"linear-gradient(135deg,"+C.blueL+",#D0E4FF)":"transparent",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.15s"}}>
+                {t.icon(col)}
+              </div>
+              <span style={{fontSize:10,color:col,fontWeight:isActive?700:500,letterSpacing:0.1}}>{t.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+function OnboardingFlow({ onComplete }) {
+  const [step,setStep]=useState(0);
+  const [profName,setProfName]=useState("");
+  const [profSport,setProfSport]=useState("");
+  const [profPhoto,setProfPhoto]=useState(null);
+  const [profCountry,setProfCountry]=useState("");
+  const [courts,setCourts]=useState([]);
+  const [cName,setCName]=useState(""); const [cCity,setCCity]=useState("");
+  const [packages,setPackages]=useState([]);
+  const [pType,setPType]=useState("combo"); const [pQty,setPQty]=useState("8"); const [pPrice,setPPrice]=useState("");
+
+  const COUNTRIES=[
+    {code:"PY",name:"Paraguay",currency:"₲",currencyName:"Guaraní"},
+    {code:"AR",name:"Argentina",currency:"$",currencyName:"Peso argentino"},
+    {code:"UY",name:"Uruguay",currency:"$U",currencyName:"Peso uruguayo"},
+    {code:"BR",name:"Brasil",currency:"R$",currencyName:"Real"},
+    {code:"CL",name:"Chile",currency:"$",currencyName:"Peso chileno"},
+    {code:"CO",name:"Colombia",currency:"$",currencyName:"Peso colombiano"},
+    {code:"MX",name:"México",currency:"$",currencyName:"Peso mexicano"},
+    {code:"PE",name:"Perú",currency:"S/",currencyName:"Sol"},
+    {code:"US",name:"Estados Unidos",currency:"$",currencyName:"Dólar"},
+    {code:"ES",name:"España",currency:"€",currencyName:"Euro"},
+    {code:"OTHER",name:"Otro país",currency:"$",currencyName:"Moneda local"},
+  ];
+  const selectedCountry=COUNTRIES.find(c=>c.code===profCountry)||null;
+
+  const iS={width:"100%",padding:"14px 16px",borderRadius:14,border:"none",fontSize:15,boxSizing:"border-box",background:"rgba(255,255,255,0.15)",color:"#fff",outline:"none"};
+  const lS={fontSize:12,color:"rgba(255,255,255,0.7)",fontWeight:700,display:"block",marginBottom:6,letterSpacing:0.5};
+
+  const steps=[
+    {title:"Tu perfil",subtitle:"Contanos sobre vos",icon:"👤"},
+    {title:"Tus canchas",subtitle:"¿Dónde dás clases?",icon:"🏟"},
+    {title:"Tus paquetes",subtitle:"¿Cómo cobrás?",icon:"💳"},
+    {title:"¡Todo listo!",subtitle:"Ya podés empezar",icon:"🎉"},
+  ];
+
+  const Progress=()=>(
+    <div style={{display:"flex",gap:6,justifyContent:"center",marginBottom:28}}>
+      {steps.slice(0,3).map((_,i)=>(
+        <div key={i} style={{height:4,borderRadius:2,background:i<=step?"rgba(255,255,255,0.9)":"rgba(255,255,255,0.25)",flex:1,maxWidth:60,transition:"background 0.3s"}}></div>
+      ))}
+    </div>
+  );
+
+  return (
+    <div style={{minHeight:"100%",background:"linear-gradient(160deg,#1565C0,#2196F3)",display:"flex",flexDirection:"column",padding:"32px 24px 24px"}}>
+      {/* Logo */}
+      <div style={{textAlign:"center",marginBottom:32}}>
+        <div style={{fontSize:22,fontWeight:900,color:"#fff",letterSpacing:-1}}>izi<span style={{color:"#90CAF9"}}>coach</span></div>
+      </div>
+
+      {step<3&&<Progress/>}
+
+      {/* Step 0 — Profile */}
+      {step===0&&(
+        <div style={{flex:1,display:"flex",flexDirection:"column"}}>
+          <div style={{textAlign:"center",marginBottom:28}}>
+            <div style={{fontSize:40,marginBottom:8}}>👤</div>
+            <div style={{fontSize:22,fontWeight:900,color:"#fff",marginBottom:6}}>Tu perfil</div>
+            <div style={{fontSize:14,color:"rgba(255,255,255,0.7)"}}>Contanos quién sos</div>
+          </div>
+          {/* Avatar upload */}
+          <div style={{textAlign:"center",marginBottom:24}}>
+            <div style={{position:"relative",width:88,height:88,margin:"0 auto"}}>
+              {profPhoto
+                ?<img src={profPhoto} style={{width:88,height:88,borderRadius:"50%",objectFit:"cover",border:"3px solid rgba(255,255,255,0.5)"}}/>
+                :<div style={{width:88,height:88,borderRadius:"50%",background:"rgba(255,255,255,0.2)",border:"3px dashed rgba(255,255,255,0.4)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:32}}>📷</div>
+              }
+              <label htmlFor="obAvInput" style={{position:"absolute",bottom:0,right:0,width:28,height:28,borderRadius:"50%",background:"#43A047",border:"2px solid #fff",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+              </label>
+              <input id="obAvInput" type="file" accept="image/*" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f){const r=new FileReader();r.onload=ev=>setProfPhoto(ev.target.result);r.readAsDataURL(f);}}}/>
+            </div>
+            <div style={{fontSize:12,color:"rgba(255,255,255,0.6)",marginTop:8}}>Subí tu foto (opcional)</div>
+          </div>
+          <div style={{marginBottom:14}}><label style={lS}>TU NOMBRE *</label><input value={profName} onChange={e=>setProfName(e.target.value)} placeholder="Ej: Carlos García" style={iS}/></div>
+          <div style={{marginBottom:14}}><label style={lS}>DEPORTE / ESPECIALIDAD</label><input value={profSport} onChange={e=>setProfSport(e.target.value)} placeholder="Ej: Tenis, Fútbol, Natación..." style={iS}/></div>
+          <div style={{marginBottom:28}}>
+            <label style={lS}>PAÍS *</label>
+            <select value={profCountry} onChange={e=>{setProfCountry(e.target.value);const c=COUNTRIES.find(x=>x.code===e.target.value);if(c){setCUR(c.currency);}}} style={{...iS,cursor:"pointer",appearance:"none"}}>
+              <option value="" disabled>Seleccioná tu país...</option>
+              {COUNTRIES.map(c=><option key={c.code} value={c.code}>{c.name+" — "+c.currency+" ("+c.currencyName+")"}</option>)}
+            </select>
+            {selectedCountry&&<div style={{marginTop:8,fontSize:12,color:"rgba(255,255,255,0.8)",textAlign:"center"}}>
+              {"💰 Moneda: "+selectedCountry.currency+" · "+selectedCountry.currencyName}
+            </div>}
+          </div>
+          <button onClick={()=>{if(!profName.trim()||!profCountry)return;setStep(1);}} style={{width:"100%",padding:"16px",borderRadius:14,border:"none",background:(profName.trim()&&profCountry)?"#fff":"rgba(255,255,255,0.3)",color:(profName.trim()&&profCountry)?"#1565C0":"rgba(255,255,255,0.5)",fontSize:15,cursor:"pointer",fontWeight:800}}>Siguiente →</button>
+        </div>
+      )}
+
+      {/* Step 1 — Courts */}
+      {step===1&&(
+        <div style={{flex:1,display:"flex",flexDirection:"column"}}>
+          <div style={{textAlign:"center",marginBottom:24}}>
+            <div style={{fontSize:40,marginBottom:8}}>🏟</div>
+            <div style={{fontSize:22,fontWeight:900,color:"#fff",marginBottom:6}}>Tus canchas</div>
+            <div style={{fontSize:14,color:"rgba(255,255,255,0.7)"}}>¿Dónde dás clases?</div>
+          </div>
+          {courts.length>0&&(
+            <div style={{marginBottom:16}}>
+              {courts.map(c=>(
+                <div key={c.id} style={{display:"flex",alignItems:"center",gap:10,background:"rgba(255,255,255,0.15)",borderRadius:12,padding:"10px 14px",marginBottom:8}}>
+                  <span style={{fontSize:18}}>🏟</span>
+                  <div style={{flex:1}}><div style={{fontWeight:700,color:"#fff",fontSize:14}}>{c.name}</div>{c.city&&<div style={{fontSize:12,color:"rgba(255,255,255,0.7)"}}>{c.city}</div>}</div>
+                  <button onClick={()=>setCourts(p=>p.filter(x=>x.id!==c.id))} style={{background:"rgba(255,255,255,0.2)",border:"none",borderRadius:"50%",width:26,height:26,cursor:"pointer",color:"#fff",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{display:"flex",gap:8,marginBottom:12}}>
+            <input value={cName} onChange={e=>setCName(e.target.value)} placeholder="Nombre de la cancha" style={{...iS,flex:1}}/>
+            <button onClick={()=>{if(!cName.trim())return;setCourts(p=>[...p,{id:Date.now(),name:cName.trim()}]);setCName("");}} style={{padding:"14px 18px",borderRadius:14,border:"none",background:"#fff",color:"#1565C0",fontSize:14,cursor:"pointer",fontWeight:800,flexShrink:0}}>+ Agregar</button>
+          </div>
+          <div style={{marginTop:"auto",display:"flex",gap:10}}>
+            <button onClick={()=>setStep(2)} style={{flex:1,padding:"14px",borderRadius:14,border:"2px solid rgba(255,255,255,0.3)",background:"transparent",color:"rgba(255,255,255,0.7)",fontSize:14,cursor:"pointer",fontWeight:700}}>Saltar</button>
+            <button onClick={()=>setStep(2)} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:"#fff",color:"#1565C0",fontSize:15,cursor:"pointer",fontWeight:800}}>Siguiente →</button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 2 — Packages */}
+      {step===2&&(
+        <div style={{flex:1,display:"flex",flexDirection:"column"}}>
+          <div style={{textAlign:"center",marginBottom:24}}>
+            <div style={{fontSize:40,marginBottom:8}}>💳</div>
+            <div style={{fontSize:22,fontWeight:900,color:"#fff",marginBottom:6}}>Tus paquetes</div>
+            <div style={{fontSize:14,color:"rgba(255,255,255,0.7)"}}>¿Cómo cobrás tus clases?</div>
+          </div>
+          {packages.length>0&&(
+            <div style={{marginBottom:16}}>
+              {packages.map(p=>(
+                <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,background:"rgba(255,255,255,0.15)",borderRadius:12,padding:"10px 14px",marginBottom:8}}>
+                  <span style={{fontSize:18}}>{p.type==="individual"?"🎯":p.type==="combo"?"📦":"📅"}</span>
+                  <div style={{flex:1}}><div style={{fontWeight:700,color:"#fff",fontSize:14}}>{p.type==="individual"?"Individual":p.type==="combo"?"Combo "+p.qty+" clases":"Mensual"}</div><div style={{fontSize:12,color:"rgba(255,255,255,0.7)"}}>{fmtMoneyShort(p.price)}</div></div>
+                  <button onClick={()=>setPackages(pr=>pr.filter(x=>x.id!==p.id))} style={{background:"rgba(255,255,255,0.2)",border:"none",borderRadius:"50%",width:26,height:26,cursor:"pointer",color:"#fff",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{display:"flex",gap:8,marginBottom:10}}>
+            {[["individual","🎯"],["combo","📦"],["mensual","📅"]].map(([k,ic])=>(
+              <button key={k} onClick={()=>setPType(k)} style={{flex:1,padding:"10px 4px",borderRadius:12,border:"2px solid "+(pType===k?"#fff":"rgba(255,255,255,0.3)"),background:pType===k?"rgba(255,255,255,0.25)":"transparent",color:"#fff",fontSize:12,cursor:"pointer",fontWeight:700}}>{ic+" "+k.charAt(0).toUpperCase()+k.slice(1)}</button>
+            ))}
+          </div>
+          {pType==="combo"&&(
+            <div style={{marginBottom:8}}>
+              <label style={lS}>CANTIDAD DE CLASES</label>
+              <input value={pQty} onChange={e=>setPQty(e.target.value)} placeholder="Ej: 8" type="number" style={iS}/>
+            </div>
+          )}
+          <div style={{display:"flex",gap:8,marginBottom:20,alignItems:"flex-end"}}>
+            <div style={{flex:1}}>
+              <label style={lS}>PRECIO ({selectedCountry?.currency||getCUR()})</label>
+              <input value={pPrice} onChange={e=>setPPrice(e.target.value)} placeholder={"Ej: 400000"} type="number" style={iS}/>
+            </div>
+            <button onClick={()=>{if(!pPrice)return;setPackages(p=>[...p,{id:Date.now(),type:pType,qty:pType==="combo"?parseInt(pQty):null,price:parseInt(pPrice)}]);setPPrice("");setPQty("8");}} style={{padding:"14px 18px",borderRadius:14,border:"none",background:"#fff",color:"#1565C0",fontSize:14,cursor:"pointer",fontWeight:800,flexShrink:0}}>+ Agregar</button>
+          </div>
+          <div style={{marginTop:"auto",display:"flex",gap:10}}>
+            <button onClick={()=>setStep(3)} style={{flex:1,padding:"14px",borderRadius:14,border:"2px solid rgba(255,255,255,0.3)",background:"transparent",color:"rgba(255,255,255,0.7)",fontSize:14,cursor:"pointer",fontWeight:700}}>Saltar</button>
+            <button onClick={()=>setStep(3)} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:"#fff",color:"#1565C0",fontSize:15,cursor:"pointer",fontWeight:800}}>Siguiente →</button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 3 — Done */}
+      {step===3&&(
+        <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textAlign:"center"}}>
+          <div style={{fontSize:72,marginBottom:16}}>🎉</div>
+          <div style={{fontSize:26,fontWeight:900,color:"#fff",marginBottom:8}}>{"¡Todo listo"+(profName?" "+profName.split(" ")[0]:"")+"!"}</div>
+          <div style={{fontSize:15,color:"rgba(255,255,255,0.8)",marginBottom:12,lineHeight:1.6}}>Tu cuenta está configurada.</div>
+          <div style={{background:"rgba(255,255,255,0.15)",borderRadius:16,padding:"16px 20px",marginBottom:32,width:"100%",boxSizing:"border-box"}}>
+            {[
+              profCountry?`🌍 ${COUNTRIES.find(c=>c.code===profCountry)?.name} · ${selectedCountry?.currency} (${selectedCountry?.currencyName})`:null,
+              courts.length>0?`🏟 ${courts.length} cancha${courts.length>1?"s":""} configurada${courts.length>1?"s":""}`:null,
+              packages.length>0?`💳 ${packages.length} paquete${packages.length>1?"s":""} creado${packages.length>1?"s":""}`:null,
+              "📲 Podés invitar alumnos con tu link",
+            ].filter(Boolean).map((item,i,arr)=>(
+              <div key={i} style={{fontSize:14,color:"rgba(255,255,255,0.9)",padding:"6px 0",borderBottom:i<arr.length-1?"1px solid rgba(255,255,255,0.15)":"none",textAlign:"left"}}>{item}</div>
+            ))}
+          </div>
+          <button onClick={()=>onComplete({name:profName,sport:profSport,photo:profPhoto,courts,packages,country:profCountry,currency:selectedCountry?.currency||"₲"})} style={{width:"100%",padding:"18px",borderRadius:16,border:"none",background:"#fff",color:"#1565C0",fontSize:16,cursor:"pointer",fontWeight:900,marginBottom:12}}>
+            🚀 Crear mi primera clase
+          </button>
+          <button onClick={()=>onComplete({name:profName,sport:profSport,photo:profPhoto,courts,packages,skipToHome:true,country:profCountry,currency:selectedCountry?.currency||"₲"})} style={{background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,0.6)",fontSize:13}}>
+            Ir al dashboard →
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EmptyDashboard({ onNewClass, onNewStudent, onInvite }) {
+  return (
+    <div style={{flex:1,overflowY:"auto",background:C.bg}}>
+      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"20px 16px 40px",flexShrink:0}}>
+        <div style={{fontSize:20,fontWeight:800,color:"#fff",marginBottom:4}}>¡Bienvenido a izicoach! 👋</div>
+        <div style={{fontSize:14,color:"rgba(255,255,255,0.75)"}}>Seguí estos pasos para empezar</div>
+      </div>
+      <div style={{padding:16,marginTop:-20}}>
+        {[
+          {icon:"📅",title:"Creá tu primera clase",desc:"Configurá horario, días y cancha",action:onNewClass,btn:"Crear clase",color:C.blue2,bg:C.blueL},
+          {icon:"👤",title:"Agregá un alumno",desc:"Invitá a tus alumnos a la plataforma",action:onNewStudent,btn:"Agregar alumno",color:"#43A047",bg:"#E8F5E9"},
+          {icon:"📲",title:"Invitá por link o QR",desc:"Compartí el link y que se registren solos",action:onInvite,btn:"Ver link",color:"#7B1FA2",bg:"#F3E5F5"},
+        ].map((s,i)=>(
+          <div key={i} style={{background:"#fff",borderRadius:16,padding:16,marginBottom:12,border:"1px solid "+C.border,display:"flex",gap:14,alignItems:"center"}}>
+            <div style={{width:52,height:52,borderRadius:14,background:s.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,flexShrink:0}}>{s.icon}</div>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:800,fontSize:15,color:C.text,marginBottom:2}}>{s.title}</div>
+              <div style={{fontSize:12,color:C.mutedDark}}>{s.desc}</div>
+            </div>
+            <button onClick={s.action} style={{padding:"8px 14px",borderRadius:10,border:"none",background:s.color,color:"#fff",fontSize:12,cursor:"pointer",fontWeight:700,flexShrink:0}}>{s.btn}</button>
+          </div>
+        ))}
+        <div style={{background:"linear-gradient(135deg,#1565C0,#1976D2)",borderRadius:16,padding:"16px 18px",marginTop:4,display:"flex",alignItems:"center",gap:14}}>
+          <div style={{fontSize:28}}>💡</div>
+          <div><div style={{fontSize:13,fontWeight:700,color:"#fff",marginBottom:2}}>Consejo rápido</div><div style={{fontSize:12,color:"rgba(255,255,255,0.8)"}}>Configurá tus canchas y paquetes en ⚙ Configuración para agilizar la creación de clases.</div></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+function StudentRegisterScreen({ coachName, onComplete }) {
+  const [name,setName]=useState("");
+  const [email,setEmail]=useState("");
+  const [phone,setPhone]=useState("");
+  const [sport,setSport]=useState("");
+  const [pass,setPass]=useState("");
+  const iS={width:"100%",padding:"14px 16px",borderRadius:14,border:"none",fontSize:14,boxSizing:"border-box",background:"rgba(255,255,255,0.18)",color:"#fff",outline:"none",marginBottom:12};
+  return (
+    <div style={{minHeight:"100%",background:"linear-gradient(160deg,#1565C0,#2196F3)",display:"flex",flexDirection:"column",padding:"32px 24px 32px"}}>
+      <div style={{textAlign:"center",marginBottom:28}}>
+        <div style={{fontSize:22,fontWeight:900,color:"#fff",letterSpacing:-1,marginBottom:8}}>izi<span style={{color:"#90CAF9"}}>coach</span></div>
+        <div style={{background:"rgba(255,255,255,0.15)",borderRadius:16,padding:"12px 20px",display:"inline-block"}}>
+          <div style={{fontSize:13,color:"rgba(255,255,255,0.8)"}}>Te invita</div>
+          <div style={{fontSize:18,fontWeight:800,color:"#fff"}}>🎓 {coachName}</div>
+        </div>
+      </div>
+
+      <div style={{fontSize:20,fontWeight:900,color:"#fff",marginBottom:4}}>Crear tu cuenta</div>
+      <div style={{fontSize:13,color:"rgba(255,255,255,0.7)",marginBottom:24}}>Registrate para ver tus clases, pagos y chatear con tu entrenador</div>
+
+      <input value={name} onChange={e=>setName(e.target.value)} placeholder="Tu nombre completo *" style={iS}/>
+      <input value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email *" type="email" style={iS}/>
+      <input value={phone} onChange={e=>setPhone(e.target.value)} placeholder="Teléfono" type="tel" style={iS}/>
+      <input value={sport} onChange={e=>setSport(e.target.value)} placeholder="Deporte (ej: Tenis, Fútbol...)" style={iS}/>
+      <input value={pass} onChange={e=>setPass(e.target.value)} placeholder="Contraseña *" type="password" style={iS}/>
+
+      <button onClick={()=>{
+        if(!name.trim()||!email.trim()||!pass.trim()) return;
+        onComplete({name:name.trim(),email:email.trim(),phone:phone.trim(),sport:sport.trim()});
+      }} style={{width:"100%",padding:"16px",borderRadius:14,border:"none",background:(name&&email&&pass)?"#fff":"rgba(255,255,255,0.3)",color:(name&&email&&pass)?"#1565C0":"rgba(255,255,255,0.5)",fontSize:15,cursor:"pointer",fontWeight:900,marginTop:8}}>
+        🚀 Unirme a las clases
+      </button>
+
+      <div style={{marginTop:20,background:"rgba(255,255,255,0.1)",borderRadius:12,padding:"12px 14px"}}>
+        <div style={{fontSize:12,color:"rgba(255,255,255,0.8)",lineHeight:1.6}}>
+          ✓ Vas a poder ver tus clases y horarios{"\n"}
+          ✓ Chatear con tu entrenador{"\n"}
+          ✓ Ver tu estado de pagos y asistencia
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function App() {
+  // Helper to read/write localStorage safely
+  const ls=(key,def)=>{try{const v=localStorage.getItem(key);return v?JSON.parse(v):def;}catch{return def;}};
+  const lsSet=(key,val)=>{try{localStorage.setItem(key,JSON.stringify(val));}catch{}};
+
+  const [mode,setMode]=useState(()=>ls("izi_mode",null));
+  const [onboarded,setOnboarded]=useState(()=>ls("izi_onboarded",false));
+  const [showInvite,setShowInvite]=useState(false);
+  const [tab,setTab]=useState("dashboard");
+  const [financeTab,setFinanceTab]=useState("payments");
+  const [students,setStudentsRaw]=useState(()=>ls("izi_students",[]));
+  const [classes,setClassesRaw]=useState(()=>ls("izi_classes",[]));
+  const [showNewClass,setShowNewClass]=useState(false);
+  const [showNewStudent,setShowNewStudent]=useState(false);
+  const [chatTarget,setChatTarget]=useState(null);
+  const [showConfig,setShowConfig]=useState(false);
+  const [courts,setCourtsRaw]=useState(()=>ls("izi_courts",[]));
+  const [packages,setPackagesRaw]=useState(()=>ls("izi_packages",[]));
+  const [coachProfile,setCoachProfileRaw]=useState(()=>ls("izi_profile",{name:"Coach",sport:"",photo:null}));
+  const [expenses,setExpensesRaw]=useState(()=>ls("izi_expenses",EXPENSES));
+
+  // Wrapped setters that also persist to localStorage
+  const setStudents=(v)=>{const next=typeof v==="function"?v(students):v;setStudentsRaw(next);lsSet("izi_students",next);};
+  const setClasses=(v)=>{const next=typeof v==="function"?v(classes):v;setClassesRaw(next);lsSet("izi_classes",next);};
+  const setCourts=(v)=>{const next=typeof v==="function"?v(courts):v;setCourtsRaw(next);lsSet("izi_courts",next);};
+  const setPackages=(v)=>{const next=typeof v==="function"?v(packages):v;setPackagesRaw(next);lsSet("izi_packages",next);};
+  const setCoachProfile=(v)=>{const next=typeof v==="function"?v(coachProfile):v;setCoachProfileRaw(next);lsSet("izi_profile",next);};
+  const setExpenses=(v)=>{const next=typeof v==="function"?v(expenses):v;setExpensesRaw(next);lsSet("izi_expenses",next);};
+
+  // Also persist mode and onboarded
+  const setModeP=(v)=>{setMode(v);lsSet("izi_mode",v);};
+  const setOnboardedP=(v)=>{setOnboarded(v);lsSet("izi_onboarded",v);};
+
+  const handleOnboardingComplete=(data)=>{
+    if(data.courts?.length) setCourts(data.courts);
+    if(data.packages?.length) setPackages(data.packages);
+    setCUR(data.currency||"₲"); setCurrency(data.currency||"₲");
+    setCoachProfile({name:data.name||"Coach",sport:data.sport||"",photo:data.photo||null,currency:data.currency||"₲",country:data.country||""});
+    setOnboardedP(true);
+    if(!data.skipToHome) setShowNewClass(true);
+  };
+
+  // Set currency from saved profile on load
+  useState(()=>{
+    try{const p=JSON.parse(localStorage.getItem("izi_profile")||"{}");if(p.currency) setCUR(p.currency);}catch{}
+  });
+
+  const handleLogout=()=>{
+    ["izi_mode","izi_onboarded","izi_students","izi_classes","izi_courts","izi_packages","izi_profile","izi_expenses"].forEach(k=>localStorage.removeItem(k));
+    setModeP(null);setOnboardedP(false);setStudentsRaw([]);setClassesRaw([]);setCourtsRaw([]);setPackagesRaw([]);setCoachProfileRaw({name:"Coach",sport:"",photo:null});setExpensesRaw(EXPENSES);
+  };
+
+  const isFirstTime=students.length===0&&classes.length===0;
+
+  const [notifications,setNotifications]=useState([
+    {id:1,from:"coach",to:"all",text:"Mañana la clase empieza 15 min antes, a las 7:45. ⏰",time:"Ayer 18:30",type:"alert",read:false},
+    {id:2,from:"coach",to:"all",text:"El miércoles se suspende la clase por mantenimiento de la cancha.",time:"Hoy 09:00",type:"alert",read:false},
+  ]);
+
+  const updateStudent=(u)=>setStudents(p=>p.map(s=>s.id===u.id?u:s));
+
+  const sendNotification=(text,type="alert")=>{
+    setNotifications(p=>[...p,{id:Date.now(),from:"coach",to:"all",text,time:"Ahora",type,read:false}]);
+  };
+
+  const handleLogin=(role)=>{
+    setOnboardedP(false);
+    setTab("dashboard");
+    setShowNewClass(false);
+    setShowNewStudent(false);
+    setShowConfig(false);
+    setShowInvite(false);
+    setChatTarget(null);
+    if(role==="coach_full"){
+      setStudents(INIT_STUDENTS);
+      setClasses(INIT_CLASSES);
+      setCourts([
+        {id:1,name:"Cancha A",address:"Av. España 1234",city:"Asunción"},
+        {id:2,name:"Cancha B",address:"Calle Palma 567",city:"Asunción"},
+        {id:3,name:"Cancha C",address:"Ruta 2 km 12",city:"San Lorenzo"},
+      ]);
+      setPackages([
+        {id:1,name:"Clase individual",type:"individual",qty:null,price:80000},
+        {id:2,name:"Combo 8 clases",type:"combo",qty:8,price:400000},
+        {id:3,name:"Combo 12 clases",type:"combo",qty:12,price:550000},
+        {id:4,name:"Plan Mensual",type:"mensual",qty:null,price:300000},
+      ]);
+      setExpenses(EXPENSES);
+      setCUR("₲"); setCurrency("₲");
+      setCoachProfile({name:"Coach Carlos",sport:"Tenis",photo:null,currency:"₲"});
+      setOnboardedP(true);
+    } else {
+      setStudents([]);
+      setClasses([]);
+      setCourts([]);
+      setPackages([]);
+      setExpenses([]);
+      setCoachProfile({name:"Coach",sport:"",photo:null});
+    }
+    setModeP(role);
+  };
+
+
+
+  const [currency,setCurrency]=useState(()=>{
+    try{const p=JSON.parse(localStorage.getItem("izi_profile")||"{}");return p.currency||"₲";}catch{return "₲";}
+  });
+
+  const updateCurrency=(cur)=>{
+    setCurrency(cur);
+  };
+
+  const addIncome=(amount,date,studentName)=>{
+    setExpenses(p=>[...p,{id:Date.now(),category:"Cobros clases",amount,type:"ingreso",date:date||TODAY_DATE,note:studentName}]);
+  };
+
+  const handleDeleteClass=(id)=>{
+    const cls=classes.find(c=>c.id===id);
+    if(!cls) return;
+    // Delete all instances of the same class (same title + time + days = same series)
+    setClasses(p=>p.filter(c=>!(c.title===cls.title&&c.time===cls.time&&JSON.stringify(c.days)===JSON.stringify(cls.days))));
+  };
+
+  const handleSaveClass=(cd,isEdit=false)=>{
+    if(isEdit){
+      setClasses(p=>p.map(c=>c.id===cd.id?{...c,...cd}:c));
+      // If studentPacks changed, update student combos
+      if(cd.studentPacks){
+        setStudents(p=>p.map(s=>{
+          const sp=cd.studentPacks[s.id];
+          if(!sp||!sp.pack) return s;
+          const pn=sp.pack==="mensual"?null:sp.pack==="otro"?(parseInt(sp.customQty)||null):parseInt(sp.pack)||null;
+          const combos=[...s.combos];
+          const lastIdx=combos.length-1;
+          if(lastIdx>=0){
+            // Update last combo with new pack/amount
+            combos[lastIdx]={...combos[lastIdx],total:pn,amount:parseInt(sp.amount)||combos[lastIdx].amount};
+          }
+          return {...s,combos};
+        }));
+      }
+      return;
+    }
+    // If occurrences exist, create one class entry per occurrence date
+    const dates=cd.occurrences&&cd.occurrences.length>0?cd.occurrences:[cd.date||TODAY_DATE];
+    const newClasses=dates.map((date,i)=>({
+      ...cd,
+      id:Date.now()+i,
+      date,
+      attendanceLog:[],
+    }));
+    setClasses(p=>[...p,...newClasses]);
+    if(cd.studentData&&cd.studentData.length>0){
+      setStudents(p=>p.map(s=>{
+        const sd=cd.studentData.find(x=>x.id===s.id);
+        if(!sd) return s;
+        const pn=sd.pack==="mensual"?null:parseInt(sd.pack)||null;
+        const projectedClassDates=[];
+        if(pn&&cd.days&&cd.days.length>0){
+          const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+          const dowSet=new Set(cd.days.map(d=>DAY_MAP[d]));
+          let cur=new Date((cd.date||TODAY_DATE)+"T12:00:00");
+          while(projectedClassDates.length<pn){
+            if(dowSet.has(cur.getDay())){
+              projectedClassDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+            }
+            cur.setDate(cur.getDate()+1);
+          }
+        }
+        const amount=parseInt(sd.amount)||0;
+        // Create payment entry if paid
+        const paymentEntry=sd.paid&&amount>0?[{id:Date.now(),qty:pn||0,amount,method:"efectivo",date:cd.date||TODAY_DATE,dates:projectedClassDates}]:[];
+        return {...s,combos:[...s.combos,{
+          id:s.combos.length+1,
+          total:pn,
+          used:0,
+          paid:sd.paid,
+          paidCount:sd.paid?pn||0:0,
+          date:sd.pack==="mensual"?(sd.payDate||cd.date||TODAY_DATE):(cd.date||TODAY_DATE),
+          amount,
+          dates:projectedClassDates,
+          payments:paymentEntry,
+        }]};
+      }));
+      // Register income in Finanzas for paid students who chose to save payment
+      cd.studentData.forEach(sd=>{
+        const shouldSave=sd.savePay===undefined?true:sd.savePay;
+        if(shouldSave&&sd.paid&&parseInt(sd.amount)>0){
+          addIncome(parseInt(sd.amount), cd.date||TODAY_DATE, sd.name||"Alumno");
+        }
+      });
+    }
+  };
+
+  const handleAttendance=(cls)=>{
+    const today=new Date().toISOString().split("T")[0];
+    const wD=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+    const day=wD[new Date().getDay()];
+    setClasses(p=>p.map(c=>{
+      if(c.id!==cls.id) return c;
+      const log=[...(c.attendanceLog||[]),{date:today,day,present:[...cls.students]}];
+      return {...c,attendanceLog:log};
+    }));
+    setStudents(p=>p.map(s=>{
+      if(!cls.students.includes(s.id)) return s;
+      const combos=[...s.combos];
+      const last=combos[combos.length-1];
+      combos[combos.length-1]={...last,used:last.used+1};
+      return {...s,combos};
+    }));
+  };
+
+  const handleNavigate=(section,subTab)=>{setTab(section);if(subTab&&section==="cobros")setFinanceTab(subTab);};
+
+  const coachTabs=[
+    {id:"dashboard",label:"Inicio"},{id:"students",label:"Alumnos"},
+    {id:"agenda",label:"Agenda"},{id:"chat",label:"Chat"},
+    {id:"cobros",label:"Cobros"},{id:"finanzas",label:"Finanzas"},
+  ];
+
+  if(!mode) return (
+    <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column"}}>
+      <AuthFlow onLogin={handleLogin} onStudentRegister={(data)=>{
+        const newStudent={id:Date.now(),name:data.name,sport:data.sport||"",status:"active",avatar:data.name.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase(),phone:data.phone||"",email:data.email||"",createdAt:TODAY_DATE,combos:[]};
+        setStudents(p=>[...p,newStudent]);
+        setMode("student_new");
+      }}/>
+    </div>
+  );
+
+  if(mode==="student_new") return (
+    <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden"}}>
+      <StudentApp student={students[students.length-1]||{id:99,name:"Alumno",avatar:"AL",sport:"",combos:[]}} onExit={()=>setMode(null)} classes={classes} notifications={notifications} sendNotification={sendNotification}/>
+    </div>
+  );
+
+  if(mode==="student") return (
+    <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden"}}>
+      <StudentApp student={{id:99,name:"Martina López",avatar:"ML",sport:"Tenis",phone:"0981 123 456",email:"alumno@test.com",combos:[{id:1,total:8,used:6,paid:true,date:"2026-06-01",amount:400000}]}} onExit={()=>setMode(null)} classes={INIT_CLASSES} notifications={notifications} sendNotification={sendNotification}/>
+    </div>
+  );
+
+  if((mode==="coach_new"||mode==="coach")&&!onboarded) return (
+    <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column"}}>
+      <OnboardingFlow onComplete={handleOnboardingComplete}/>
+    </div>
+  );
+
+  return (
+    <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden",position:"relative"}}>
+      <TopBar onExit={handleLogout} onConfig={()=>setShowConfig(true)}/>
+      <div key={"cur-"+currency} style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",position:"relative",overflow:"hidden"}}>
+        {tab==="dashboard"&&isFirstTime&&<EmptyDashboard onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)}/>}
+        {tab==="dashboard"&&!isFirstTime&&<Dashboard students={students} classes={classes} onNavigate={handleNavigate} onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)} expenses={expenses} coachProfile={coachProfile}/>}
+        {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={classes} onInvite={()=>setShowInvite(true)}/>}
+        {tab==="agenda"&&<Agenda students={students} classes={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onDeleteClass={handleDeleteClass}/>}
+        {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification}/>}
+        {tab==="cobros"&&<Finances students={students} classes={classes} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages}/>}
+        {tab==="finanzas"&&<Finances students={students} classes={classes} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages}/>}
+        {showNewClass&&<NewClassModal onClose={()=>{setShowNewClass(false);if(classes.length===0)setTab("agenda");}} onSave={handleSaveClass} students={students} dateLabel="Nueva clase" onCreateStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])}/>}
+        {showNewStudent&&<NewStudentModal onClose={()=>setShowNewStudent(false)} onSave={(d)=>setStudents(p=>[...p,{id:Date.now(),...d}])}/>}
+        {showConfig&&<ConfigScreen onClose={()=>setShowConfig(false)} courts={courts} setCourts={setCourts} packages={packages} setPackages={setPackages} coachProfile={coachProfile} setCoachProfile={setCoachProfile}/>}
+        {showInvite&&(
+          <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
+            <div style={{background:C.white,borderRadius:"24px 24px 0 0",width:"100%",maxHeight:"90%",overflowY:"auto",boxSizing:"border-box",padding:"28px 20px 36px"}}>
+              <div style={{fontWeight:900,fontSize:20,color:C.text,marginBottom:4}}>Invitá a tus alumnos</div>
+              <div style={{fontSize:13,color:C.mutedDark,marginBottom:20}}>El alumno escanea el QR o usa el link para registrarse y conectarse con vos automáticamente.</div>
+
+              {/* QR Code SVG */}
+              <div style={{background:C.bg,borderRadius:16,padding:"20px",textAlign:"center",marginBottom:16}}>
+                <div style={{fontSize:12,color:C.mutedDark,marginBottom:12,fontWeight:600}}>ESCANEÁ PARA UNIRTE</div>
+                <div style={{display:"inline-block",background:"#fff",padding:12,borderRadius:12,border:"2px solid "+C.border}}>
+                  <svg width="160" height="160" viewBox="0 0 160 160">
+                    {/* QR pattern - simplified visual */}
+                    {[...Array(16)].map((_,row)=>[...Array(16)].map((_,col)=>{
+                      // Create a deterministic pattern based on coach name
+                      const hash=(row*16+col+row*col)%7;
+                      const isFinder=(row<3&&col<3)||(row<3&&col>12)||(row>12&&col<3);
+                      const isData=hash<3;
+                      return (isFinder||isData)?(
+                        <rect key={`${row}-${col}`} x={col*10} y={row*10} width={9} height={9} fill="#1A237E" rx={1}/>
+                      ):null;
+                    }))}
+                    {/* Finder patterns */}
+                    <rect x={0} y={0} width={30} height={30} fill="none" stroke="#1A237E" strokeWidth={3} rx={3}/>
+                    <rect x={130} y={0} width={30} height={30} fill="none" stroke="#1A237E" strokeWidth={3} rx={3}/>
+                    <rect x={0} y={130} width={30} height={30} fill="none" stroke="#1A237E" strokeWidth={3} rx={3}/>
+                    <rect x={10} y={10} width={10} height={10} fill="#1A237E"/>
+                    <rect x={140} y={10} width={10} height={10} fill="#1A237E"/>
+                    <rect x={10} y={140} width={10} height={10} fill="#1A237E"/>
+                    {/* Logo in center */}
+                    <rect x={65} y={65} width={30} height={30} fill="#fff" rx={4}/>
+                    <text x={80} y={85} textAnchor="middle" fontSize={10} fontWeight="900" fill={C.blue2}>izi</text>
+                  </svg>
+                </div>
+                <div style={{fontSize:11,color:C.mutedDark,marginTop:10}}>Coach: {coachProfile.name}</div>
+              </div>
+
+              {/* Link */}
+              <div style={{fontSize:12,fontWeight:700,color:C.mutedDark,marginBottom:8}}>O COMPARTÍ EL LINK</div>
+              <div style={{background:C.blueL,borderRadius:12,padding:"12px 14px",display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                <div style={{flex:1,fontSize:12,color:C.blue2,fontWeight:600,wordBreak:"break-all"}}>
+                  {"https://izicoach.app/join/"+coachProfile.name.toLowerCase().replace(/\s+/g,"-")}
+                </div>
+                <button onClick={()=>{
+                  const link="https://izicoach.app/join/"+coachProfile.name.toLowerCase().replace(/\s+/g,"-");
+                  navigator.clipboard?.writeText(link).catch(()=>{});
+                }} style={{background:C.blue2,border:"none",borderRadius:8,padding:"8px 12px",color:"#fff",fontSize:12,cursor:"pointer",fontWeight:700,flexShrink:0}}>Copiar</button>
+              </div>
+
+              {/* Share buttons */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
+                {[
+                  {label:"📱 WhatsApp",bg:"#25D366",msg:"Únete a mis clases en izicoach: https://izicoach.app/join/"+coachProfile.name.toLowerCase().replace(/\s+/g,"-")},
+                  {label:"✉️ Email",bg:C.blue2,msg:""},
+                ].map(s=>(
+                  <button key={s.label} onClick={()=>{
+                    if(s.label.includes("WhatsApp")){
+                      window.open("https://wa.me/?text="+encodeURIComponent(s.msg),"_blank");
+                    }
+                  }} style={{padding:"11px",borderRadius:12,border:"none",background:s.bg,color:"#fff",fontSize:13,cursor:"pointer",fontWeight:700}}>{s.label}</button>
+                ))}
+              </div>
+
+              {/* Info */}
+              <div style={{background:"#E8F5E9",borderRadius:12,padding:"12px 14px",marginBottom:16,display:"flex",gap:10}}>
+                <span style={{fontSize:18}}>ℹ️</span>
+                <div style={{fontSize:12,color:"#2E7D32",lineHeight:1.5}}>
+                  Cuando el alumno escanea el QR o abre el link, se registra automáticamente y queda conectado con vos. Podés ver sus clases, cobros y chatear desde la app.
+                </div>
+              </div>
+
+              <button onClick={()=>setShowInvite(false)} style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:C.bg,color:C.mutedDark,fontSize:14,cursor:"pointer",fontWeight:700}}>Cerrar</button>
+            </div>
+          </div>
+        )}
+      </div>
+      <NavBar tabs={coachTabs} active={tab} onSelect={setTab} zIdx={100}/>
+    </div>
+  );
+}
