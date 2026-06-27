@@ -20,7 +20,7 @@ const C = {
   text:"#0D1B4B",      // deep navy text
   muted:"rgba(255,255,255,0.70)",
   mutedDark:"#6B7BAD", // muted blue-grey
-  bg:"#e0e6f5",        // soft blue-white background
+  bg:"#F0F4FF",        // soft blue-white background
   card:"#FFFFFF",
   border:"rgba(13,27,75,0.10)",
   green:"#65CE5A",     // brand green accent
@@ -148,7 +148,7 @@ function NavBar({ tabs, active, onSelect, zIdx=0 }) {
 function TopBar({ onExit, onConfig }) {
   return (
     <div style={{background:"#000000",padding:"12px 16px",display:"flex",alignItems:"center",flexShrink:0}}>
-      <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"flex-start"}}><IziLogoBlack height={44}/></div>
+      <div style={{flex:1}}><IziLogoBlack height={44}/></div>
       <button onClick={onConfig} style={{background:"none",border:"none",cursor:"pointer",padding:"6px",display:"flex"}}>
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
       </button>
@@ -679,9 +679,18 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
                         }
                       }} style={{width:"100%",padding:"10px 8px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:13,boxSizing:"border-box",background:C.bg,color:C.text,outline:"none",cursor:"pointer"}}>
                         <option value="">Elegir paquete</option>
-                        {packages.map(p=>(
-                          <option key={p.id} value={String(p.id)}>{p.name}</option>
-                        ))}
+                        {packages.length>0?(
+                          packages.map(p=>(
+                            <option key={p.id} value={String(p.id)}>
+                              {p.name}
+                            </option>
+                          ))
+                        ):(
+                          <>
+                            <option value="mensual">📅 Mensual</option>
+                            {Array.from({length:20},(_,i)=>i+1).map(n=><option key={n} value={n}>{n} clase{n>1?"s":""}</option>)}
+                          </>
+                        )}
                         <option value="otro">✏️ Crear nuevo pago...</option>
                       </select>
                       {sd.pack==="otro"&&<div style={{fontSize:11,color:C.mutedDark,marginTop:4}}>Creá el paquete en Settings y volvé a elegirlo</div>}
@@ -2225,10 +2234,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
                 const lastDate=lastCombo?.payDate||lastCombo?.date||TODAY;
                 const lastPay=new Date(lastDate+"T12:00:00");
                 const today=new Date(TODAY+"T12:00:00");
-                const isPaidM=lastCombo?.paid===true;
-                const nextDue=isPaidM
-                  ?new Date(lastPay.getFullYear(),lastPay.getMonth()+1,lastPay.getDate())
-                  :lastPay;
+                const nextDue=new Date(lastPay.getFullYear(),lastPay.getMonth()+1,lastPay.getDate());
                 const diffDays=Math.floor((today-nextDue)/(1000*60*60*24));
                 const isOverdue=diffDays>0;
                 return (
@@ -2510,13 +2516,9 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
               const lastDate=combo?.payDate||combo?.date||TODAY_DATE;
               const lastPay=new Date(lastDate+"T12:00:00");
               const today=new Date(TODAY_DATE+"T12:00:00");
-              // If paid: next due = payDate + 1 month. If not paid: due = payDate itself
-              const isPaid=combo?.paid===true;
-              const nextDue=isPaid
-                ?new Date(lastPay.getFullYear(),lastPay.getMonth()+1,lastPay.getDate())
-                :lastPay; // if unpaid, due from payDate itself
-              const diffDays=Math.floor((today-nextDue)/(1000*60*60*24))+1; // +1 so day 0 = 1 day overdue
-              const overdue=!isPaid||diffDays>0;
+              const nextDue=new Date(lastPay.getFullYear(),lastPay.getMonth()+1,lastPay.getDate());
+              const diffDays=Math.floor((today-nextDue)/(1000*60*60*24));
+              const overdue=diffDays>0;
               return overdue?(
                 <>
                   <div style={{fontSize:40,fontWeight:900,color:"#C62828",lineHeight:1}}>{diffDays}</div>
@@ -3881,7 +3883,6 @@ export default function App() {
           paid:sd.paid,
           paidCount:sd.paid?pn||0:0,
           date:sd.pack==="mensual"?(sd.payDate||cd.date||TODAY_DATE):(cd.date||TODAY_DATE),
-          payDate:sd.pack==="mensual"?(sd.payDate||cd.date||TODAY_DATE):undefined,
           amount,
           dates:projectedClassDates,
           payments:paymentEntry,
