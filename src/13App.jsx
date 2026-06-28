@@ -798,21 +798,6 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
   const exp=monthExpenses.filter(e=>e.type==="gasto").reduce((a,b)=>a+b.amount,0);
   // Cobros alerts - students with unpaid combos
   const cobrosAlerts=students.filter(s=>{const r=getRem(s,classes);return r!==null&&r<0||(!getCombo(s)?.paid&&getCombo(s)?.total);});
-  // Classes that need rescheduling: ausente_reprog OR cancelled (but not already rescheduled)
-  const reprogAlerts=[
-    // Ausente-reprog: student marked as needing reschedule
-    ...classes.filter(c=>{
-      if(c.rescheduled) return false;
-      return (c.attendanceLog||[]).some(e=>(e.ausente_reprog||[]).length>0);
-    }).map(c=>{
-      const log=(c.attendanceLog||[]).find(e=>(e.ausente_reprog||[]).length>0);
-      return {cls:c,reason:"reprog",students:(log?.ausente_reprog||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean)};
-    }).filter(x=>x.students.length>0),
-    // Cancelled: class was suspended
-    ...classes.filter(c=>c.cancelled&&!c.rescheduled).map(c=>({
-      cls:c,reason:"cancelled",students:(c.students||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean)
-    })).filter(x=>x.students.length>0),
-  ];
   const todayC=classes.filter(c=>c.date===TODAY_DATE&&!c.cancelled);
   const mN=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
   const todayLabel=new Date(TODAY_DATE+"T12:00:00").getDate()+" de "+mN[new Date(TODAY_DATE+"T12:00:00").getMonth()];
@@ -875,28 +860,6 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
           </WhiteCard>
         ))}
         {todayC.length>4&&<button onClick={()=>onNavigate("agenda")} style={{width:"100%",padding:"10px",borderRadius:12,border:"1.5px solid "+C.blue2,background:C.blueL,color:C.blue2,fontSize:13,cursor:"pointer",fontWeight:700,marginBottom:8}}>Ver {todayC.length-4} clases más →</button>}
-
-        {/* Clases a reprogramar */}
-        {reprogAlerts.length>0&&(
-          <div style={{marginTop:8,marginBottom:8}}>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
-              <div style={{fontSize:13,fontWeight:800,color:C.text}}>⛔↩ Clases a reprogramar</div>
-              <button onClick={()=>onNavigate("agenda")} style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:C.blue2,fontWeight:700}}>Ver agenda →</button>
-            </div>
-            {reprogAlerts.slice(0,4).map(({cls,reason,students:sts},i)=>(
-              <div key={i} onClick={()=>onNavigate("agenda",{reprog:cls})} style={{background:reason==="cancelled"?"#FFF3E0":"#E8EAF6",border:"1.5px solid "+(reason==="cancelled"?"#FFB74D":"#9FA8DA"),borderRadius:12,padding:"10px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
-                <div style={{width:36,height:36,borderRadius:12,background:reason==="cancelled"?"linear-gradient(135deg,#E65100,#FF7043)":"linear-gradient(135deg,#3949AB,#5C6BC0)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,color:"#fff",flexShrink:0}}>{reason==="cancelled"?"⛔":"↩"}</div>
-                <div style={{flex:1}}>
-                  <div style={{fontSize:13,fontWeight:700,color:C.text}}>{cls.title}</div>
-                  <div style={{fontSize:11,color:reason==="cancelled"?"#E65100":"#3949AB",fontWeight:600}}>
-                    {reason==="cancelled"?"Clase suspendida":"A reprogramar"} · {sts.map(s=>s.name.split(" ")[0]).join(", ")} · {cls.date}
-                  </div>
-                </div>
-              </div>
-            ))}
-            {reprogAlerts.length>4&&<div style={{fontSize:12,color:C.mutedDark,textAlign:"center",marginBottom:4}}>+{reprogAlerts.length-4} más</div>}
-          </div>
-        )}
 
         {/* Alertas cobros */}
         {cobrosAlerts.length>0&&(
@@ -1278,12 +1241,8 @@ function ReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent }) {
   const handleConfirm=()=>{
     if(!targetDate) return;
     const oldDate=cls.date;
-    // Clear ausente_reprog from attendanceLog so it disappears from dashboard
-    const updatedLog=(cls.attendanceLog||[]).map(e=>
-      e.date===oldDate?{...e,ausente_reprog:[],rescheduled_to:targetDate}:e
-    );
-    // Update class with new date and cleared reprog flags
-    onSave({...cls, date:targetDate, time:newTime, rescheduled:true, attendanceLog:updatedLog});
+    // Update class
+    onSave({...cls, date:targetDate, time:newTime, rescheduled:true});
     // Update student combo dates that contain the old date
     if(onUpdateStudent){
       clsStudents.forEach(s=>{
@@ -1456,7 +1415,7 @@ function AttModal({ att, students, onAttendance, onClose }) {
   );
 }
 
-function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, courts=[], packages=[], onUpdateStudent, onDeleteClass, pendingReprog, onClearPendingReprog }) {
+function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, courts=[], packages=[], onUpdateStudent, onDeleteClass }) {
   const [selDay,setSelDay]=useState(TODAY_DATE);
   const [viewYear,setViewYear]=useState(new Date().getFullYear());
   const [viewMonth,setViewMonth]=useState(new Date().getMonth());
@@ -1502,9 +1461,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
   const sd=new Date(selDay+"T12:00:00");
   const selLabel=wD[sd.getDay()]+" "+sd.getDate()+" de "+mN[sd.getMonth()];
 
-  const [reprog,setReprog]=useState(pendingReprog||null);
-  // Auto-open reprog modal if navigated from dashboard
-  useState(()=>{if(pendingReprog){setReprog(pendingReprog);onClearPendingReprog&&onClearPendingReprog();}}); // class to reschedule
+  const [reprog,setReprog]=useState(null); // class to reschedule
 
   const ClassCard=({c})=>{
     const log=(c.attendanceLog||[]).find(e=>e.date===c.date);
@@ -4203,13 +4160,7 @@ export default function App() {
     // (coach will reschedule from Agenda)
   };
 
-  const [pendingReprog,setPendingReprog]=useState(null);
-  const handleNavigate=(section,params)=>{
-    setTab(section);
-    if(params?.subTab&&section==="cobros") setFinanceTab(params.subTab);
-    if(params?.subTab&&typeof params.subTab==="string") setFinanceTab(params.subTab);
-    if(params?.reprog) setPendingReprog(params.reprog);
-  };
+  const handleNavigate=(section,subTab)=>{setTab(section);if(subTab&&section==="cobros")setFinanceTab(subTab);};
 
   const coachTabs=[
     {id:"dashboard",label:"Inicio"},{id:"students",label:"Alumnos"},
@@ -4252,7 +4203,7 @@ export default function App() {
         {tab==="dashboard"&&isFirstTime&&<EmptyDashboard onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)}/>}
         {tab==="dashboard"&&!isFirstTime&&<Dashboard students={students} classes={classes} onNavigate={handleNavigate} onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)} expenses={expenses} coachProfile={coachProfile}/>}
         {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={classes} onInvite={()=>setShowInvite(true)}/>}
-        {tab==="agenda"&&<Agenda students={students} classes={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)}/>}
+        {tab==="agenda"&&<Agenda students={students} classes={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onDeleteClass={handleDeleteClass}/>}
         {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification}/>}
         {tab==="cobros"&&<Finances students={students} classes={classes} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification}/>}
         {tab==="finanzas"&&<Finances students={students} classes={classes} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages}/>}
