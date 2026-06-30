@@ -1095,8 +1095,7 @@ function MiniCalendar({ year, month, selDay, onSelect, classes=[] }) {
           const mm=String(month+1).padStart(2,"0"); const dd=String(d).padStart(2,"0");
           const ds=year+"-"+mm+"-"+dd; const isA=selDay===ds; const isTodayCell=ds===TODAY_DATE;
           const dayClasses=classes.filter(c=>c.date===ds&&!c.cancelled);
-          const cancelledClasses=classes.filter(c=>c.date===ds&&c.cancelled&&!c.rescheduled);
-          const hasClasses=dayClasses.length>0||cancelledClasses.length>0;
+          const hasClasses=dayClasses.length>0;
           return (
             <button key={i} onClick={()=>onSelect(ds)} style={{background:isA?"linear-gradient(135deg,"+C.blue2+","+C.blue3+")":isTodayCell?C.blueL:"transparent",border:isTodayCell&&!isA?"2px solid "+C.blue2:"none",borderRadius:"50%",width:34,height:34,margin:"auto",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:1,position:"relative"}}>
               <span style={{fontSize:13,fontWeight:isA||hasClasses?700:400,color:isA?C.white:isTodayCell?C.blue2:C.text,lineHeight:1}}>{d}</span>
@@ -1104,9 +1103,6 @@ function MiniCalendar({ year, month, selDay, onSelect, classes=[] }) {
                 <div style={{display:"flex",gap:2,position:"absolute",bottom:4}}>
                   {dayClasses.slice(0,3).map((_,ci)=>(
                     <div key={ci} style={{width:4,height:4,borderRadius:"50%",background:isA?"rgba(255,255,255,0.8)":C.blue2}}></div>
-                  ))}
-                  {cancelledClasses.slice(0,2).map((_,ci)=>(
-                    <div key={"c"+ci} style={{width:4,height:4,borderRadius:"50%",background:isA?"rgba(255,255,255,0.8)":"#E53935"}}></div>
                   ))}
                 </div>
               )}
@@ -1282,18 +1278,13 @@ function ReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent }) {
   const handleConfirm=()=>{
     if(!targetDate) return;
     const oldDate=cls.date;
+    // Clear ausente_reprog from attendanceLog so it disappears from dashboard
     const updatedLog=(cls.attendanceLog||[]).map(e=>
       e.date===oldDate?{...e,ausente_reprog:[],rescheduled_to:targetDate}:e
     );
-    if(cls.cancelled){
-      // Move the cancelled class to the new date (don't keep it in old date)
-      const updatedClass={...cls, date:targetDate, time:newTime, cancelled:false, rescheduled:true, attendanceLog:updatedLog};
-      onSave(updatedClass, false, null);
-    } else {
-      // ausente_reprog: move the class to new date
-      onSave({...cls, date:targetDate, time:newTime, rescheduled:true, attendanceLog:updatedLog});
-    }
-    // Update student combo dates
+    // Update class with new date and cleared reprog flags
+    onSave({...cls, date:targetDate, time:newTime, rescheduled:true, attendanceLog:updatedLog});
+    // Update student combo dates that contain the old date
     if(onUpdateStudent){
       clsStudents.forEach(s=>{
         const updatedCombos=s.combos.map(c=>{
@@ -1595,22 +1586,17 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
                     const ds=viewYear+"-"+mm+"-"+dd;
                     const isA=selDay===ds; const isToday=ds===TODAY_DATE;
                     const dayCls=classes.filter(c=>c.date===ds&&!c.cancelled);
-                    const cancelledCls=classes.filter(c=>c.date===ds&&c.cancelled&&!c.rescheduled);
                     const count=dayCls.length;
-                    const cancelledCount=cancelledCls.length;
                     return (
                       <button key={i} onClick={()=>handleCalNav(ds)} style={{background:isA?"linear-gradient(135deg,"+C.blue2+","+C.blue3+")":isToday?C.blueL:"transparent",border:isToday&&!isA?"2px solid "+C.blue2:"2px solid transparent",borderRadius:12,padding:"6px 2px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2,minHeight:48}}>
-                        <span style={{fontSize:14,fontWeight:isA||isToday||count>0||cancelledCount>0?800:400,color:isA?C.white:isToday?C.blue2:C.text,lineHeight:1}}>{d}</span>
-                        {(count>0||cancelledCount>0)&&(
+                        <span style={{fontSize:14,fontWeight:isA||isToday?800:400,color:isA?C.white:isToday?C.blue2:C.text,lineHeight:1}}>{d}</span>
+                        {count>0&&(
                           <div style={{display:"flex",gap:2,justifyContent:"center",flexWrap:"wrap"}}>
                             {count<=3?dayCls.map((_,ci)=>(
                               <div key={ci} style={{width:5,height:5,borderRadius:"50%",background:isA?"rgba(255,255,255,0.8)":C.blue2}}/>
                             )):(
                               <span style={{fontSize:9,fontWeight:700,color:isA?C.white:C.blue2}}>{count}</span>
                             )}
-                            {cancelledCls.map((_,ci)=>(
-                              <div key={"c"+ci} style={{width:5,height:5,borderRadius:"50%",background:isA?"rgba(255,255,255,0.8)":"#E53935"}}/>
-                            ))}
                           </div>
                         )}
                       </button>
@@ -1875,7 +1861,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
           </div>
         </div>
       )}
-      {reprog&&<ReprogModal cls={reprog} onClose={()=>setReprog(null)} onSave={(updated,_,addNew)=>{onSaveClass(updated,true);if(addNew)onSaveClass(addNew,false);setReprog(null);}} students={students} onUpdateStudent={onUpdateStudent}/>}
+      {reprog&&<ReprogModal cls={reprog} onClose={()=>setReprog(null)} onSave={(updated)=>{onSaveClass(updated,true);setReprog(null);}} students={students} onUpdateStudent={onUpdateStudent}/>}
       {showNew&&<NewClassModal onClose={()=>{setShowNew(false);setGridNewTime(null);setWeekOffset(0);}} onSave={onSaveClass} students={students} dateLabel={viewMode==="month"?selLabel:weekLabel()} onCreateStudent={onAddStudent} prefill={gridNewTime} courts={courts} packages={packages} onAddPackage={(pkg)=>{packages.push(pkg);}}/>}
       {att&&<AttModal att={att} students={students} onAttendance={onAttendance} onClose={()=>setAtt(null)}/>}
     </div>
@@ -2094,7 +2080,6 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
     const result=[];
     const c=allCombos.length>0?allCombos[allCombos.length-1]:null;
     if(!c||!c.total) return result;
-    const effectiveTotal=getEffectiveTotal(s,c,classes);
     let dates=c.dates&&c.dates.length>0?c.dates:(()=>{
       const ds=[];
       const startDate=c.date||TODAY;
@@ -2117,23 +2102,14 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
       }
       return ds;
     })();
-    // Show effectiveTotal dates + any cancelled ones (cancelled visible but not counted)
-    const cancelledDates=dates.filter(ds=>{const cls=myClasses.find(cl=>cl.date===ds);return cls?.cancelled&&!cls?.rescheduled;});
-    const nonCancelledDates=dates.filter(ds=>{const cls=myClasses.find(cl=>cl.date===ds);return !(cls?.cancelled&&!cls?.rescheduled);}).slice(0,effectiveTotal);
-    const filteredDates=[...nonCancelledDates,...cancelledDates].sort((a,b)=>a.localeCompare(b));
-    filteredDates.forEach((ds,i)=>{
+    dates.forEach((ds,i)=>{
       const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
-      const classOnDate=myClasses.find(cl=>cl.date===ds);
-      const isCancelled=classOnDate?.cancelled&&!classOnDate?.rescheduled;
-      const isRescheduled=classOnDate?.rescheduled||false;
-      // For paid index, skip cancelled dates (they don't count)
-      const nonCancelledBefore=filteredDates.slice(0,i).filter(d=>{
-        const cls=myClasses.find(cl=>cl.date===d);
-        return !(cls?.cancelled&&!cls?.rescheduled);
-      }).length;
-      const isPaidDate=nonCancelledBefore<paidCount&&!isCancelled;
+      const isPaidDate=i<paidCount;
       // Check attendance for this specific date
       const attEntry=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===ds);
+      const classOnDate=myClasses.find(cls=>cls.date===ds);
+      const isCancelled=classOnDate?.cancelled&&!classOnDate?.rescheduled;
+      const isRescheduled=classOnDate?.rescheduled||false;
       const wasAbsent=attEntry?(
         [...(attEntry.ausente_dada||[]),...(attEntry.ausente_reprog||[])].includes(s.id)||
         (!attEntry.present.includes(s.id)&&!(attEntry.ausente_dada||[]).includes(s.id))
@@ -2425,9 +2401,8 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               })():(()=>{
                 // Only use last combo for display
                 const lastC=allCombos.filter(c=>c.total).slice(-1)[0];
-                const effectiveTot=lastC?getEffectiveTotal(s,lastC,classes):0;
                 const paid=lastC?(lastC.paidCount!==undefined?lastC.paidCount:(lastC.paid?lastC.total:0)):0;
-                const unpaid=lastC?Math.max(0,effectiveTot-paid):0;
+                const unpaid=lastC?Math.max(0,lastC.total-paid):0;
                 const given=lastC?Math.max(0,(lastC.used||0)):0;
                 const remainingUnpaid=Math.max(0,unpaid-(parseInt(localClasses)||0));
                 const paidRemaining=Math.max(0,paid-given);
@@ -2459,18 +2434,11 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
               <div>
                 <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>¿Cuántas clases pagamos?</div>
-                {(()=>{
-                  const lastC=allCombos.filter(c=>c.total).slice(-1)[0];
-                  const effectiveTotal=lastC?getEffectiveTotal(s,lastC,classes):0;
-                  const paidCount=lastC?(lastC.paidCount!==undefined?lastC.paidCount:(lastC.paid?lastC.total:0)):0;
-                  const maxUnpaid=Math.max(0,effectiveTotal-paidCount);                  return (
-                    <div style={{display:"flex",alignItems:"center",background:C.blueL,borderRadius:12,overflow:"hidden"}}>
-                      <button onClick={()=>setLocalClasses(Math.max(0,(parseInt(localClasses)||0)-1))} style={{width:44,height:46,border:"none",background:"#2C5EF7",color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>◀</button>
-                      <div style={{flex:1,textAlign:"center",fontSize:22,fontWeight:800,color:"#1A237E"}}>{parseInt(localClasses)||0}</div>
-                      <button onClick={()=>setLocalClasses(Math.min(maxUnpaid,(parseInt(localClasses)||0)+1))} style={{width:44,height:46,border:"none",background:"#2C5EF7",color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>▶</button>
-                    </div>
-                  );
-                })()}
+                <div style={{display:"flex",alignItems:"center",background:C.blueL,borderRadius:12,overflow:"hidden"}}>
+                  <button onClick={()=>setLocalClasses(Math.max(0,(parseInt(localClasses)||0)-1))} style={{width:44,height:46,border:"none",background:"#2C5EF7",color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>◀</button>
+                  <div style={{flex:1,textAlign:"center",fontSize:22,fontWeight:800,color:"#1A237E"}}>{parseInt(localClasses)||0}</div>
+                  <button onClick={()=>setLocalClasses((parseInt(localClasses)||0)+1)} style={{width:44,height:46,border:"none",background:"#2C5EF7",color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>▶</button>
+                </div>
               </div>
               <div>
                 <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>Monto (₲)</div>
@@ -2506,13 +2474,12 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
           </div>
         </div>
 
-        {/* Fechas de clase list - show all until full cycle closes */}
+        {/* Fechas de clase list - only show if there are pending or future dates */}
         {pagoTipo==="clases"&&(()=>{
           const lastComboDate=allDates.length>0?allDates[allDates.length-1].date:"";
-          const allPaid=allDates.every(d=>d.status==="dada"||d.status==="adar");
-          const lastDatePassed=lastComboDate&&lastComboDate<TODAY_DATE;
-          // Show ALL dates (including paid+past "dada") until the full cycle closes
-          const activeDates=allPaid&&lastDatePassed?[]:allDates;
+              const allPaid=allDates.every(d=>d.status==="dada"||d.status==="adar");
+              const lastDatePassed=lastComboDate&&lastComboDate<TODAY_DATE;
+              const activeDates=allPaid&&lastDatePassed?[]:allDates.filter(d=>d.status!=="dada");
           const hasNew=parseInt(localClasses)>0;
           // Fallback for individual/unpaid with no generated dates
           if(activeDates.length===0&&!hasNew){
@@ -2536,41 +2503,38 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             <div style={{fontSize:11,fontWeight:700,color:"#5C7A9F",letterSpacing:0.5,marginBottom:8}}>FECHAS DE CLASE</div>
             {activeDates.map((item,i)=>{
               const qty=parseInt(localClasses)||0;
-              const isCancelled=item.isCancelled||false;
-              const isRescheduled=item.isRescheduled||false;
+              const unpaidBefore=activeDates.slice(0,i).filter(d=>d.status==="pendiente"||d.status==="dada_unpaid").length;
+              const isUnpaid=item.status==="pendiente"||item.status==="dada_unpaid";
+              const alreadyPaid=item.status==="adar";
+              const isPaidNow=alreadyPaid||(isUnpaid&&unpaidBefore<qty);
+              const isPaid=alreadyPaid||isPaidNow;
+              const isGiven=item.isGiven||item.status==="dada_unpaid";
               const wasAbsent=item.wasAbsent||false;
               const wasAusenteDada=item.wasAusenteDada||false;
               const wasAusenteReprog=item.wasAusenteReprog||false;
-              // Cancelled dates are never counted as payable
-              const unpaidBefore=activeDates.slice(0,i).filter(d=>
-                (d.status==="pendiente"||d.status==="dada_unpaid")&&!d.isCancelled
-              ).length;
-              const isUnpaid=item.status==="pendiente"||item.status==="dada_unpaid";
-              const alreadyPaid=item.status==="adar"||item.status==="dada";
-              const isPaidNow=!isCancelled&&(alreadyPaid||(isUnpaid&&unpaidBefore<qty));
-              const isPaid=!isCancelled&&(alreadyPaid||isPaidNow);
-              const isGiven=item.isGiven||item.status==="dada_unpaid"||item.status==="dada";
+              const isCancelled=item.isCancelled||false;
+              const isRescheduled=item.isRescheduled||false;
               // Class status label (left badge)
               let leftBg,leftColor,leftLabel;
               if(isRescheduled){leftBg="#E3F2FD";leftColor="#1565C0";leftLabel="🔄 Reprogramada";}
-              else if(isCancelled){leftBg="#F3E5F5";leftColor="#7B1FA2";leftLabel="❌ Cancelada — Pendiente";}
+              else if(isCancelled){leftBg="#F3E5F5";leftColor="#7B1FA2";leftLabel="❌ Cancelada";}
               else if(wasAusenteReprog){leftBg="#E8EAF6";leftColor="#3949AB";leftLabel="↩ A Reprogramar";}
               else if(wasAusenteDada){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="🚫 Ausente (Dada)";}
               else if(wasAbsent){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="🚫 Ausente";}
               else if(isGiven){leftBg=C.blueL;leftColor=C.blue2;leftLabel="Clase Dada";}
               else{leftBg="#FFF3E0";leftColor="#E65100";leftLabel="Clase No Dada";}
-              // Payment badge — hide for cancelled (no payment until rescheduled)
+              // Payment status label (right badge) — always independent
               const rightBg=isPaid?"#E8F5E9":"#FFEBEE";
               const rightColor=isPaid?"#2E7D32":"#C62828";
               const rightLabel=isPaid?"✓ Pagada":"No Pagada";
               return (
                 <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid #E3F2FD"}}>
-                  <div style={{width:28,height:28,borderRadius:"50%",background:isCancelled?"#F3E5F5":C.blueL,border:"2px solid "+(isCancelled?"#7B1FA2":"#1976D2"),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                    <span style={{fontSize:11,fontWeight:800,color:isCancelled?"#7B1FA2":C.blue2}}>{i+1}</span>
+                  <div style={{width:28,height:28,borderRadius:"50%",background:C.blueL,border:"2px solid #1976D2",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <span style={{fontSize:11,fontWeight:800,color:C.blue2}}>{i+1}</span>
                   </div>
                   <div style={{flex:1,fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(item.date)}</div>
                   <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:leftBg,color:leftColor,fontWeight:700,flexShrink:0}}>{leftLabel}</span>
-                  {!isCancelled&&<span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700,flexShrink:0}}>{rightLabel}</span>}
+                  <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700,flexShrink:0}}>{rightLabel}</span>
                 </div>
               );
             })}
