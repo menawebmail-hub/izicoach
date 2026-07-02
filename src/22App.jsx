@@ -96,15 +96,52 @@ const EXPENSES = [
   {id:5,category:"Cobros clases",amount:600000,type:"ingreso",date:_nowM+"-15"},
 ];
 
-function getCombo(s) { return s.combos[s.combos.length-1]; }
-function getRem(s) {
-  const c=getCombo(s);
-  if(!c||!c.total) return null;
-  const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
-  if(paidCount===0) return -(c.total); // nothing paid → A cobrar
-  const remaining=paidCount-(c.used||0);
-  if(paidCount<c.total) return -(c.total-paidCount); // partial payment → show unpaid as negative
-  return Math.max(0,remaining); // fully paid → Por dar
+function getCombo(s) {
+  const combos=s.combos||[];
+  // Prefer last combo with total>0 (individual or combo clases)
+  const withTotal=combos.filter(x=>x.total>0);
+  if(withTotal.length>0) return withTotal[withTotal.length-1];
+  // Then mensual (total=null but has payment info)
+  const mensual=combos.filter(x=>x.total===null&&(x.paid||x.payDate||x.date)&&x.packType!=="individual");
+  if(mensual.length>0) return mensual[mensual.length-1];
+  return combos[combos.length-1]||null;
+}
+function getEffectiveTotal(s, c, classes=[]) {
+  if(!c||!c.total) return c?.total||0;
+  const myClasses=classes.filter(cls=>cls.students&&cls.students.includes(s.id));
+  const comboDates=c.dates||[];
+  // Only subtract cancelled dates that are NOT rescheduled
+  const cancelledCount=comboDates.filter(ds=>myClasses.some(cls=>cls.date===ds&&cls.cancelled&&!cls.rescheduled)).length;
+  return Math.max(1, c.total - cancelledCount);
+}
+function getRem(s, classes=[]) {
+  const combos=s.combos||[];
+  // All combos that are "clases" type (total>0 OR packType individual/combo)
+  const classCombos=combos.filter(x=>{
+    if(x.total>0) return true;
+    if(x.packType==="individual"||x.packType==="combo") return true;
+    // Legacy individual: null total but has a specific class date (not mensual)
+    if(x.total===null&&x.date&&x.packType!=="mensual"&&!x.payDate) return true;
+    return false;
+  });
+  if(classCombos.length===0) return null;
+  let totalUnpaid=0;
+  let totalPorDar=0;
+  let anyActive=false;
+  classCombos.forEach(c=>{
+    const effectiveTotal=c.total>0?getEffectiveTotal(s,c,classes):(c.total||1);
+    const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?effectiveTotal:0);
+    const unpaid=Math.max(0,effectiveTotal-paidCount);
+    const porDar=Math.max(0,paidCount-(c.used||0));
+    const lastDate=c.dates&&c.dates.length>0?c.dates[c.dates.length-1]:"";
+    const cycleOpen=!(porDar===0&&unpaid===0&&lastDate&&lastDate<TODAY_DATE);
+    if(cycleOpen) anyActive=true;
+    totalUnpaid+=unpaid;
+    totalPorDar+=porDar;
+  });
+  if(!anyActive) return null;
+  if(totalUnpaid>0) return -totalUnpaid;
+  return totalPorDar;
 }
 
 function IziLogoBlack({ height=34 }) {
@@ -577,14 +614,6 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
   const handleSave=()=>{
     if(!title||sel.length===0){alert("Agregá título y al menos un alumno.");return;}
     if(!startDate){alert("Agregá una fecha de inicio.");return;}
-    // Validate all students have a package OR have chosen to skip
-    const missing=sel.filter(sd=>!sd.pack||sd.pack==="");
-    if(missing.length>0){
-      const names=missing.map(sd=>sd.name||"alumno").join(", ");
-      if(!window.confirm("Algunos alumnos no tienen paquete asignado ("+names+"). Continuar y asignarlo desde Cobros?")){
-        return;
-      }
-    }
     const firstDate=occurrences.length>0?occurrences[0]:startDate||TODAY_DATE;
     onSave({title,court,studentData:sel,students:sel.map(x=>x.id),date:firstDate,time:t1,timeEnd:t2,days,startDate,endDate,occurrences});
     onClose();
@@ -600,7 +629,7 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
   };
 
   return (
-    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:199,display:"flex",alignItems:"flex-end"}}>
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:500,display:"flex",alignItems:"flex-end"}}>
       <div style={{background:C.white,borderRadius:"24px 24px 0 0",padding:"24px 20px 32px",width:"100%",maxHeight:"92%",overflowY:"auto",boxSizing:"border-box"}}>
         <div style={{fontWeight:900,fontSize:22,color:C.text,marginBottom:4}}>Nueva clase</div>
         <div style={{fontSize:14,color:C.mutedDark,marginBottom:20}}>{dateLabel}</div>
@@ -674,7 +703,7 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
                         const pkg=packages.find(p=>String(p.id)===val);
                         if(pkg){
                           upd(s.id,"packId",val);
-                          upd(s.id,"pack",pkg.type==="mensual"?"mensual":String(pkg.qty||""));
+                          upd(s.id,"pack",pkg.type==="mensual"?"mensual":pkg.type==="individual"?"individual":String(pkg.qty||""));
                           upd(s.id,"amount",pkg.price||0);
                         }
                       }} style={{width:"100%",padding:"10px 8px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:13,boxSizing:"border-box",background:C.bg,color:C.text,outline:"none",cursor:"pointer"}}>
@@ -726,7 +755,7 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
         // Auto-select for the student who triggered it
         if(pendingPackStudent){
           upd(pendingPackStudent,"packId",String(pkg.id));
-          upd(pendingPackStudent,"pack",pkg.type==="mensual"?"mensual":String(pkg.qty||""));
+          upd(pendingPackStudent,"pack",pkg.type==="mensual"?"mensual":pkg.type==="individual"?"individual":String(pkg.qty||""));
           upd(pendingPackStudent,"amount",pkg.price||0);
         }
         setShowNewPackModal(false);
@@ -744,8 +773,8 @@ function NewStudentModal({ onClose, onSave }) {
   const initials=name.trim().split(" ").filter(Boolean).slice(0,2).map(w=>w[0]).join("").toUpperCase()||"?";
   const handlePhoto=(e)=>{const file=e.target.files[0];if(file){const r=new FileReader();r.onload=ev=>setPhoto(ev.target.result);r.readAsDataURL(file);}};
   return (
-    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:199,display:"flex",alignItems:"flex-end"}}>
-      <div style={{background:C.white,borderRadius:"24px 24px 0 0",padding:"24px 20px 32px",width:"100%",maxHeight:"90%",overflowY:"auto",boxSizing:"border-box"}}>
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:500,display:"flex",alignItems:"flex-end"}}>
+      <div style={{background:C.white,borderRadius:"24px 24px 0 0",padding:"24px 20px",paddingBottom:"calc(140px + env(safe-area-inset-bottom, 34px))",width:"100%",maxHeight:"90vh",overflowY:"auto",boxSizing:"border-box"}}>
         <div style={{fontWeight:900,fontSize:22,color:C.text,marginBottom:20}}>Nuevo Alumno</div>
         <div style={{textAlign:"center",marginBottom:24}}>
           <div style={{position:"relative",width:88,height:88,margin:"0 auto"}}>
@@ -765,7 +794,7 @@ function NewStudentModal({ onClose, onSave }) {
         ))}
         <div style={{display:"flex",gap:12,marginTop:8}}>
           <button onClick={onClose} style={{flex:1,padding:"15px",borderRadius:14,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:15,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
-          <button onClick={()=>{if(!name.trim()){alert("El nombre es obligatorio.");return;}const init=name.split(" ").slice(0,2).map(w=>w[0]).join("").toUpperCase();onSave({name,phone,email,photo,avatar:init,status:"active",combos:[{id:1,total:null,used:0,paid:false,date:new Date().toISOString().split("T")[0],amount:0}]});onClose();}} style={{flex:1,padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:15,fontWeight:800}}>Crear Alumno</button>
+          <button onClick={()=>{if(!name.trim()){alert("El nombre es obligatorio.");return;}const init=name.split(" ").slice(0,2).map(w=>w[0]).join("").toUpperCase();onSave({name,phone,email,photo,avatar:init,status:"active",combos:[]});onClose();}} style={{flex:1,padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:15,fontWeight:800}}>Crear Alumno</button>
         </div>
       </div>
     </div>
@@ -784,7 +813,22 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
   const income=monthExpenses.filter(e=>e.type==="ingreso").reduce((a,b)=>a+b.amount,0);
   const exp=monthExpenses.filter(e=>e.type==="gasto").reduce((a,b)=>a+b.amount,0);
   // Cobros alerts - students with unpaid combos
-  const cobrosAlerts=students.filter(s=>{const r=getRem(s);return r!==null&&r<0||(!getCombo(s)?.paid&&getCombo(s)?.total);});
+  const cobrosAlerts=students.filter(s=>{const r=getRem(s,classes);return r!==null&&r<0||(!getCombo(s)?.paid&&getCombo(s)?.total);});
+  // Classes that need rescheduling: ausente_reprog OR cancelled (but not already rescheduled)
+  const reprogAlerts=[
+    // Ausente-reprog: student marked as needing reschedule
+    ...classes.filter(c=>{
+      if(c.rescheduled) return false;
+      return (c.attendanceLog||[]).some(e=>(e.ausente_reprog||[]).length>0);
+    }).map(c=>{
+      const log=(c.attendanceLog||[]).find(e=>(e.ausente_reprog||[]).length>0);
+      return {cls:c,reason:"reprog",students:(log?.ausente_reprog||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean)};
+    }).filter(x=>x.students.length>0),
+    // Cancelled: class was suspended
+    ...classes.filter(c=>c.cancelled&&!c.rescheduled).map(c=>({
+      cls:c,reason:"cancelled",students:(c.students||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean)
+    })).filter(x=>x.students.length>0),
+  ];
   const todayC=classes.filter(c=>c.date===TODAY_DATE&&!c.cancelled);
   const mN=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
   const todayLabel=new Date(TODAY_DATE+"T12:00:00").getDate()+" de "+mN[new Date(TODAY_DATE+"T12:00:00").getMonth()];
@@ -848,6 +892,28 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
         ))}
         {todayC.length>4&&<button onClick={()=>onNavigate("agenda")} style={{width:"100%",padding:"10px",borderRadius:12,border:"1.5px solid "+C.blue2,background:C.blueL,color:C.blue2,fontSize:13,cursor:"pointer",fontWeight:700,marginBottom:8}}>Ver {todayC.length-4} clases más →</button>}
 
+        {/* Clases a reprogramar */}
+        {reprogAlerts.length>0&&(
+          <div style={{marginTop:8,marginBottom:8}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+              <div style={{fontSize:13,fontWeight:800,color:C.text}}>⛔↩ Clases a reprogramar</div>
+              <button onClick={()=>onNavigate("agenda")} style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:C.blue2,fontWeight:700}}>Ver agenda →</button>
+            </div>
+            {reprogAlerts.slice(0,4).map(({cls,reason,students:sts},i)=>(
+              <div key={i} onClick={()=>onNavigate("agenda",{reprog:cls})} style={{background:reason==="cancelled"?"#FFF3E0":"#E8EAF6",border:"1.5px solid "+(reason==="cancelled"?"#FFB74D":"#9FA8DA"),borderRadius:12,padding:"10px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
+                <div style={{width:36,height:36,borderRadius:12,background:reason==="cancelled"?"linear-gradient(135deg,#E65100,#FF7043)":"linear-gradient(135deg,#3949AB,#5C6BC0)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,color:"#fff",flexShrink:0}}>{reason==="cancelled"?"⛔":"↩"}</div>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:13,fontWeight:700,color:C.text}}>{cls.title}</div>
+                  <div style={{fontSize:11,color:reason==="cancelled"?"#E65100":"#3949AB",fontWeight:600}}>
+                    {reason==="cancelled"?"Clase suspendida":"A reprogramar"} · {sts.map(s=>s.name.split(" ")[0]).join(", ")} · {cls.date}
+                  </div>
+                </div>
+              </div>
+            ))}
+            {reprogAlerts.length>4&&<div style={{fontSize:12,color:C.mutedDark,textAlign:"center",marginBottom:4}}>+{reprogAlerts.length-4} más</div>}
+          </div>
+        )}
+
         {/* Alertas cobros */}
         {cobrosAlerts.length>0&&(
           <div style={{marginTop:8}}>
@@ -856,7 +922,7 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
               <button onClick={()=>onNavigate("cobros")} style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:C.blue2,fontWeight:700}}>Ver cobros →</button>
             </div>
             {cobrosAlerts.slice(0,4).map(s=>{
-              const r=getRem(s);
+              const r=getRem(s,classes);
               const combo=getCombo(s);
               const count=r<0?Math.abs(r):combo?.total||0;
               return (
@@ -911,7 +977,7 @@ function Students({ students, onAdd, onUpdate, onChat, classes=[], onInvite }) {
       <div style={{flex:1,overflowY:"auto",padding:16,paddingBottom:"calc(120px + env(safe-area-inset-bottom, 34px))"}}>
         {list.length===0&&<div style={{textAlign:"center",padding:"32px 0",color:C.mutedDark,fontSize:14}}>No se encontraron alumnos</div>}
         {list.map(s=>{
-          const combo=getCombo(s); const rem=getRem(s);
+          const combo=getCombo(s); const rem=getRem(s,classes);
           return (
             <WhiteCard key={s.id} style={{marginBottom:10}}>
               <div style={{display:"flex",alignItems:"center",gap:12}}>
@@ -939,7 +1005,7 @@ function Students({ students, onAdd, onUpdate, onChat, classes=[], onInvite }) {
               {/* Info panel */}
               {infoS?.id===s.id&&(()=>{
                 const myClasses=classes.filter(c=>c.students&&c.students.includes(s.id));
-                const rem=getRem(s); const combo=getCombo(s);
+                const rem=getRem(s,classes); const combo=getCombo(s);
                 const isRed=rem!==null&&rem<0||(!combo?.paid);
                 const noData=!combo||(!combo.total&&!combo.paidCount&&!combo.paid);
                 const statusColor=noData?"#9BACCB":rem===null?C.blue2:isRed?"#C62828":rem===0?"#43A047":C.blue2;
@@ -1045,7 +1111,8 @@ function MiniCalendar({ year, month, selDay, onSelect, classes=[] }) {
           const mm=String(month+1).padStart(2,"0"); const dd=String(d).padStart(2,"0");
           const ds=year+"-"+mm+"-"+dd; const isA=selDay===ds; const isTodayCell=ds===TODAY_DATE;
           const dayClasses=classes.filter(c=>c.date===ds&&!c.cancelled);
-          const hasClasses=dayClasses.length>0;
+          const cancelledClasses=classes.filter(c=>c.date===ds&&c.cancelled&&!c.rescheduled);
+          const hasClasses=dayClasses.length>0||cancelledClasses.length>0;
           return (
             <button key={i} onClick={()=>onSelect(ds)} style={{background:isA?"linear-gradient(135deg,"+C.blue2+","+C.blue3+")":isTodayCell?C.blueL:"transparent",border:isTodayCell&&!isA?"2px solid "+C.blue2:"none",borderRadius:"50%",width:34,height:34,margin:"auto",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:1,position:"relative"}}>
               <span style={{fontSize:13,fontWeight:isA||hasClasses?700:400,color:isA?C.white:isTodayCell?C.blue2:C.text,lineHeight:1}}>{d}</span>
@@ -1053,6 +1120,9 @@ function MiniCalendar({ year, month, selDay, onSelect, classes=[] }) {
                 <div style={{display:"flex",gap:2,position:"absolute",bottom:4}}>
                   {dayClasses.slice(0,3).map((_,ci)=>(
                     <div key={ci} style={{width:4,height:4,borderRadius:"50%",background:isA?"rgba(255,255,255,0.8)":C.blue2}}></div>
+                  ))}
+                  {cancelledClasses.slice(0,2).map((_,ci)=>(
+                    <div key={"c"+ci} style={{width:4,height:4,borderRadius:"50%",background:isA?"rgba(255,255,255,0.8)":"#E53935"}}></div>
                   ))}
                 </div>
               )}
@@ -1080,7 +1150,7 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
       const combo=st?.combos?.[st.combos.length-1];
       // Pack value should match select options: "mensual", "8", "12", etc.
       const packVal=!combo?"":combo.total===null?"mensual":String(combo.total);
-      init[sid]={pack:packVal,amount:combo?.amount||0};
+      init[sid]={pack:packVal,amount:combo?.amount||0,paid:combo?.paid||false};
     });
     return init;
   });
@@ -1101,7 +1171,7 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
         <button onClick={onClose} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
         <span style={{flex:1,fontWeight:800,fontSize:16,color:C.white}}>Modificar Clase</span>
       </div>
-      <div style={{flex:1,overflowY:"auto",padding:16}}>
+      <div style={{flex:1,overflowY:"auto",padding:16,paddingBottom:"calc(120px + env(safe-area-inset-bottom, 34px))"}}>
         <div style={{marginBottom:14}}><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Título</label><input value={title} onChange={e=>setTitle(e.target.value)} style={iS}/></div>
         <div style={{marginBottom:14}}><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Local / Cancha</label><input value={court} onChange={e=>setCourt(e.target.value)} style={iS}/></div>
         <div style={{marginBottom:14}}><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:8}}>Días</label><DayPicker value={days} onChange={setDays}/></div>
@@ -1134,7 +1204,7 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
                   }} style={{...iS,padding:"8px 10px",fontSize:12}}>
                     <option value="">Elegir...</option>
                     {packages.length>0?packages.map(p=>(
-                      <option key={p.id} value={p.type==="mensual"?"mensual":String(p.qty)}>{p.name}</option>
+                      <option key={p.id} value={p.type==="mensual"?"mensual":p.type==="individual"?"individual":String(p.qty)}>{p.name}</option>
                     )):<><option value="mensual">📅 Mensual</option><option value="8">📦 8 clases</option></>}
                     <option value="otro">✏️ Otro</option>
                   </select>
@@ -1145,6 +1215,17 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
                 <div>
                   <div style={{fontSize:10,fontWeight:700,color:C.mutedDark,marginBottom:4}}>MONTO ({getCUR()})</div>
                   <input type="text" inputMode="numeric" pattern="[0-9]*" value={studentPacks[sid]?.amount||""} placeholder="0" onChange={e=>setStudentPacks(p=>({...p,[sid]:{...p[sid],amount:parseInt(e.target.value)||0}}))} style={{...iS,padding:"8px 10px",fontSize:12}}/>
+                </div>
+                <div style={{gridColumn:"1/-1"}}>
+                  <label style={{fontSize:11,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>PAGO EFECTUADO</label>
+                  <div style={{display:"flex",gap:12}}>
+                    {[true,false].map(v=>(
+                      <div key={String(v)} onClick={()=>setStudentPacks(p=>({...p,[sid]:{...p[sid],paid:v}}))} style={{display:"flex",alignItems:"center",gap:5,cursor:"pointer"}}>
+                        <div style={{width:20,height:20,borderRadius:"50%",background:studentPacks[sid]?.paid===v?"linear-gradient(135deg,#0D1B4B,#1A3DB5)":C.blueL,border:"2px solid "+(studentPacks[sid]?.paid===v?C.blue2:C.border),display:"flex",alignItems:"center",justifyContent:"center"}}>{studentPacks[sid]?.paid===v&&<div style={{width:7,height:7,borderRadius:"50%",background:C.white}}></div>}</div>
+                        <span style={{fontSize:12,fontWeight:studentPacks[sid]?.paid===v?700:500,color:studentPacks[sid]?.paid===v?C.blue2:C.mutedDark}}>{v?"✓ Sí":"✗ No"}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1217,9 +1298,18 @@ function ReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent }) {
   const handleConfirm=()=>{
     if(!targetDate) return;
     const oldDate=cls.date;
-    // Update class
-    onSave({...cls, date:targetDate, time:newTime});
-    // Update student combo dates that contain the old date
+    const updatedLog=(cls.attendanceLog||[]).map(e=>
+      e.date===oldDate?{...e,ausente_reprog:[],rescheduled_to:targetDate}:e
+    );
+    if(cls.cancelled){
+      // Move the cancelled class to the new date (don't keep it in old date)
+      const updatedClass={...cls, date:targetDate, time:newTime, cancelled:false, rescheduled:true, attendanceLog:updatedLog};
+      onSave(updatedClass, false, null);
+    } else {
+      // ausente_reprog: move the class to new date
+      onSave({...cls, date:targetDate, time:newTime, rescheduled:true, attendanceLog:updatedLog});
+    }
+    // Update student combo dates
     if(onUpdateStudent){
       clsStudents.forEach(s=>{
         const updatedCombos=s.combos.map(c=>{
@@ -1239,8 +1329,8 @@ function ReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent }) {
   };
 
   return (
-    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:199,display:"flex",alignItems:"flex-end"}}>
-      <div style={{background:C.white,borderRadius:"24px 24px 0 0",padding:"24px 20px 32px",width:"100%",maxHeight:"90%",overflowY:"auto",boxSizing:"border-box"}}>
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:500,display:"flex",alignItems:"flex-end"}}>
+      <div style={{background:C.white,borderRadius:"24px 24px 0 0",padding:"24px 20px",paddingBottom:"calc(140px + env(safe-area-inset-bottom, 34px))",width:"100%",maxHeight:"90vh",overflowY:"auto",boxSizing:"border-box"}}>
         <div style={{fontWeight:900,fontSize:20,color:C.text,marginBottom:4}}>Reprogramar clase</div>
         <div style={{fontSize:13,color:C.mutedDark,marginBottom:20}}>{cls.title} · actualmente {currentLabel} {cls.time}</div>
 
@@ -1307,21 +1397,46 @@ function ReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent }) {
 function AttModal({ att, students, onAttendance, onClose }) {
   const [attStatus,setAttStatus]=useState(()=>{
     const init={};
-    att.students.forEach(sid=>{ init[sid]="presente"; });
+    // Restore previous attendance state if it exists
+    const existingLog=(att.attendanceLog||[]).find(e=>e.date===att.date);
+    att.students.forEach(sid=>{
+      if(existingLog){
+        if((existingLog.ausente_dada||[]).includes(sid)) init[sid]="ausente_dada";
+        else if((existingLog.ausente_reprog||[]).includes(sid)) init[sid]="ausente_reprog";
+        else if((existingLog.present||[]).includes(sid)) init[sid]="presente";
+        else init[sid]="presente";
+      } else {
+        init[sid]="presente";
+      }
+    });
     return init;
   });
 
   const handleSave=()=>{
     const presentStudents=att.students.filter(sid=>attStatus[sid]==="presente");
-    onAttendance({...att,students:presentStudents});
+    const ausente_dada=att.students.filter(sid=>attStatus[sid]==="ausente_dada");
+    const ausente_reprog=att.students.filter(sid=>attStatus[sid]==="ausente_reprog");
+    onAttendance({...att, students:presentStudents, ausente_dada, ausente_reprog});
     onClose();
   };
 
   const presentCount=Object.values(attStatus).filter(v=>v==="presente").length;
-  const ausentCount=Object.values(attStatus).filter(v=>v==="ausente").length;
+  const ausentCount=Object.values(attStatus).filter(v=>v!=="presente").length;
+
+  const STATUS_CYCLE=["presente","ausente_reprog","ausente_dada"];
+  const STATUS_LABEL={
+    "presente":     {label:"✓ Presente",    bg:"#43A047",color:"#fff"},
+    "ausente_reprog":{label:"↩ Ausente — No Dada", bg:"#3949AB",color:"#fff"},
+    "ausente_dada": {label:"✗ Ausente — Dada",  bg:"#E65100",color:"#fff"},
+  };
+  const cycleStatus=(sid)=>setAttStatus(p=>{
+    const cur=p[sid]||"presente";
+    const next=STATUS_CYCLE[(STATUS_CYCLE.indexOf(cur)+1)%STATUS_CYCLE.length];
+    return {...p,[sid]:next};
+  });
 
   return (
-    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:99,display:"flex",alignItems:"flex-end"}}>
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:500,display:"flex",alignItems:"flex-end"}}>
       <div style={{background:C.white,borderRadius:"20px 20px 0 0",width:"100%",boxSizing:"border-box",maxHeight:"85%",display:"flex",flexDirection:"column"}}>
         {/* Header */}
         <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",borderRadius:"20px 20px 0 0",padding:"16px 20px"}}>
@@ -1337,28 +1452,19 @@ function AttModal({ att, students, onAttendance, onClose }) {
           {att.students.map(sid=>{
             const st=students.find(s=>s.id===sid);
             if(!st) return null;
-            const isPresente=attStatus[sid]==="presente";
+            const cur=attStatus[sid]||"presente";
             return (
-              <div key={sid} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0",borderBottom:"1px solid "+C.border}}>
-                {st.photo
-                  ?<img src={st.photo} style={{width:40,height:40,borderRadius:"50%",objectFit:"cover",flexShrink:0}}/>
-                  :<div style={{width:40,height:40,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white,flexShrink:0}}>{st.avatar}</div>
-                }
-                <div style={{flex:1}}>
-                  <div style={{fontWeight:700,fontSize:14,color:C.text}}>{st.name}</div>
-                  <div style={{fontSize:11,color:C.mutedDark}}>{st.sport}</div>
-                </div>
-                {/* Toggle Presente/Ausente */}
-                <div style={{display:"flex",borderRadius:20,overflow:"hidden",border:"1.5px solid "+(isPresente?"#43A047":"#E65100")}}>
-                  <button onClick={()=>setAttStatus(p=>({...p,[sid]:"presente"}))}
-                    style={{padding:"6px 14px",border:"none",cursor:"pointer",fontSize:12,fontWeight:700,
-                      background:isPresente?"#43A047":"#fff",color:isPresente?"#fff":"#9E9E9E"}}>
-                    ✓ Presente
-                  </button>
-                  <button onClick={()=>setAttStatus(p=>({...p,[sid]:"ausente"}))}
-                    style={{padding:"6px 14px",border:"none",cursor:"pointer",fontSize:12,fontWeight:700,
-                      background:!isPresente?"#E65100":"#fff",color:!isPresente?"#fff":"#9E9E9E"}}>
-                    ✗ Ausente
+              <div key={sid} style={{padding:"10px 0",borderBottom:"1px solid "+C.border}}>
+                <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:0}}>
+                  {st.photo
+                    ?<img src={st.photo} style={{width:36,height:36,borderRadius:"50%",objectFit:"cover",flexShrink:0}}/>
+                    :<div style={{width:36,height:36,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:C.white,flexShrink:0}}>{st.avatar}</div>
+                  }
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:700,fontSize:14,color:C.text}}>{st.name}</div>
+                  </div>
+                  <button onClick={()=>cycleStatus(sid)} style={{padding:"8px 16px",borderRadius:20,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:STATUS_LABEL[cur].bg,color:STATUS_LABEL[cur].color,minWidth:160,textAlign:"center"}}>
+                    {STATUS_LABEL[cur].label}
                   </button>
                 </div>
               </div>
@@ -1366,7 +1472,7 @@ function AttModal({ att, students, onAttendance, onClose }) {
           })}
         </div>
         {/* Footer */}
-        <div style={{padding:"12px 16px 28px",borderTop:"1px solid "+C.border,display:"flex",gap:10}}>
+        <div style={{padding:"12px 16px",paddingBottom:"calc(28px + env(safe-area-inset-bottom, 34px))",borderTop:"1px solid "+C.border,display:"flex",gap:10}}>
           <button onClick={onClose} style={{flex:1,padding:"12px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:14,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
           <button onClick={handleSave} style={{flex:2,padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:14,fontWeight:800}}>Guardar asistencia</button>
         </div>
@@ -1375,7 +1481,7 @@ function AttModal({ att, students, onAttendance, onClose }) {
   );
 }
 
-function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, courts=[], packages=[], onUpdateStudent, onDeleteClass }) {
+function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, courts=[], packages=[], onUpdateStudent, onDeleteClass, pendingReprog, onClearPendingReprog }) {
   const [selDay,setSelDay]=useState(TODAY_DATE);
   const [viewYear,setViewYear]=useState(new Date().getFullYear());
   const [viewMonth,setViewMonth]=useState(new Date().getMonth());
@@ -1384,6 +1490,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
   const [showNew,setShowNew]=useState(false);
   const [att,setAtt]=useState(null);
   const [editCls,setEditCls]=useState(null);
+  const [editScopeData,setEditScopeData]=useState(null);
   const [gridNewTime,setGridNewTime]=useState(null);
   const [highlightCls,setHighlightCls]=useState(null);
   const [confirmDelete,setConfirmDelete]=useState(null); // class to delete
@@ -1421,20 +1528,32 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
   const sd=new Date(selDay+"T12:00:00");
   const selLabel=wD[sd.getDay()]+" "+sd.getDate()+" de "+mN[sd.getMonth()];
 
-  const [reprog,setReprog]=useState(null); // class to reschedule
+  const [reprog,setReprog]=useState(pendingReprog||null);
+  // Auto-open reprog modal if navigated from dashboard
+  useState(()=>{if(pendingReprog){setReprog(pendingReprog);onClearPendingReprog&&onClearPendingReprog();}}); // class to reschedule
 
-  const ClassCard=({c})=>(
+  const ClassCard=({c})=>{
+    const log=(c.attendanceLog||[]).find(e=>e.date===c.date);
+    const dadaCount=(log?.ausente_dada||[]).length;
+    const reprogCount=(log?.ausente_reprog||[]).length;
+    return (
     <WhiteCard style={{marginBottom:12}}>
       <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
         <div><div style={{fontWeight:800,fontSize:15,color:C.text}}>{c.title}{c.cancelled?" (Cancelada)":""}</div><div style={{fontSize:12,color:C.mutedDark}}>{c.time+" · "+c.court}</div></div>
         <span style={{background:C.blueL,color:C.blue2,fontSize:11,padding:"4px 10px",borderRadius:20,fontWeight:600,height:"fit-content"}}>{c.days.join(" · ")}</span>
       </div>
-      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:(dadaCount||reprogCount)?6:12}}>
         {c.students.map(sid=>{const st=students.find(s=>s.id===sid);return st?(<div key={sid} style={{display:"flex",alignItems:"center",gap:6,background:C.blueL,borderRadius:20,padding:"4px 10px 4px 6px",fontSize:12,color:C.blue2,fontWeight:600}}><div style={{width:20,height:20,borderRadius:"50%",background:C.blue2,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,color:C.white,fontWeight:700}}>{st.avatar[0]}</div>{st.name.split(" ")[0]}</div>):null;})}
       </div>
+      {(dadaCount>0||reprogCount>0)&&(
+        <div style={{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap"}}>
+          {dadaCount>0&&<span style={{fontSize:11,padding:"3px 10px",borderRadius:20,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ {dadaCount} Ausente-Dada</span>}
+          {reprogCount>0&&<span style={{fontSize:11,padding:"3px 10px",borderRadius:20,background:"#FFF8E1",color:"#F57F17",fontWeight:700}}>↩ {reprogCount} A Reprogramar</span>}
+        </div>
+      )}
       <div style={{display:"flex",gap:8,marginBottom:8}}>
         <button onClick={()=>setEditCls(c)} style={{flex:1,padding:"9px",borderRadius:10,border:"none",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>Modificar</button>
-        <button onClick={()=>setAtt(c)} style={{flex:1,padding:"9px",borderRadius:10,border:"none",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>Asistencia</button>
+        <button onClick={()=>setAtt({...c,attendanceLog:c.attendanceLog||[]})} style={{flex:1,padding:"9px",borderRadius:10,border:"none",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>Asistencia</button>
         <button onClick={()=>{setConfirmDelete(c);}} style={{width:38,padding:"9px",borderRadius:10,border:"none",background:"#FFEBEE",color:"#C62828",fontSize:14,cursor:"pointer",flexShrink:0}}>🗑</button>
       </div>
       <div style={{display:"flex",gap:8}}>
@@ -1442,7 +1561,8 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
         <button onClick={()=>onSaveClass({...c,cancelled:!c.cancelled},true)} style={{flex:1,padding:"9px",borderRadius:10,border:"1.5px solid "+(c.cancelled?"#C62828":"#FFB74D"),background:c.cancelled?"#FFEBEE":"#FFF3E0",color:c.cancelled?"#C62828":"#E65100",fontSize:12,cursor:"pointer",fontWeight:700}}>{c.cancelled?"❌ Clase Cancelada":"⛔ Cancelar clase"}</button>
       </div>
     </WhiteCard>
-  );
+    );
+  };
 
   return (
     <div style={{flex:1,display:"flex",flexDirection:"column",background:C.bg,position:"relative",overflow:"hidden"}}>
@@ -1492,17 +1612,22 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
                     const ds=viewYear+"-"+mm+"-"+dd;
                     const isA=selDay===ds; const isToday=ds===TODAY_DATE;
                     const dayCls=classes.filter(c=>c.date===ds&&!c.cancelled);
+                    const cancelledCls=classes.filter(c=>c.date===ds&&c.cancelled&&!c.rescheduled);
                     const count=dayCls.length;
+                    const cancelledCount=cancelledCls.length;
                     return (
                       <button key={i} onClick={()=>handleCalNav(ds)} style={{background:isA?"linear-gradient(135deg,"+C.blue2+","+C.blue3+")":isToday?C.blueL:"transparent",border:isToday&&!isA?"2px solid "+C.blue2:"2px solid transparent",borderRadius:12,padding:"6px 2px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2,minHeight:48}}>
-                        <span style={{fontSize:14,fontWeight:isA||isToday?800:400,color:isA?C.white:isToday?C.blue2:C.text,lineHeight:1}}>{d}</span>
-                        {count>0&&(
+                        <span style={{fontSize:14,fontWeight:isA||isToday||count>0||cancelledCount>0?800:400,color:isA?C.white:isToday?C.blue2:C.text,lineHeight:1}}>{d}</span>
+                        {(count>0||cancelledCount>0)&&(
                           <div style={{display:"flex",gap:2,justifyContent:"center",flexWrap:"wrap"}}>
                             {count<=3?dayCls.map((_,ci)=>(
                               <div key={ci} style={{width:5,height:5,borderRadius:"50%",background:isA?"rgba(255,255,255,0.8)":C.blue2}}/>
                             )):(
                               <span style={{fontSize:9,fontWeight:700,color:isA?C.white:C.blue2}}>{count}</span>
                             )}
+                            {cancelledCls.map((_,ci)=>(
+                              <div key={"c"+ci} style={{width:5,height:5,borderRadius:"50%",background:isA?"rgba(255,255,255,0.8)":"#E53935"}}/>
+                            ))}
                           </div>
                         )}
                       </button>
@@ -1523,17 +1648,17 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
                 <div style={{fontSize:12,marginTop:4}}>Tocá + para agregar</div>
               </div>
             ):dayC.map(c=>(
-              <div key={c.id} style={{background:c.cancelled?"#FFF3E0":C.white,borderRadius:16,padding:"12px 14px",marginBottom:10,boxShadow:"0 2px 10px rgba(44,94,247,0.07)",border:"1px solid "+C.border}}>
+              <div key={c.id} onClick={()=>setHighlightCls(c.id===highlightCls?null:c.id)} style={{background:c.cancelled?"#FFF3E0":C.white,borderRadius:16,padding:"12px 14px",marginBottom:10,boxShadow:"0 2px 10px rgba(44,94,247,0.07)",border:"1.5px solid "+(highlightCls===c.id?C.blue2:C.border),cursor:"pointer"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
                   <div style={{flex:1}}>
-                    <div style={{fontWeight:800,fontSize:15,color:c.cancelled?"#C62828":C.text}}>{c.title}{c.cancelled?" (Cancelada)":""}</div>
+                    <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                      <div style={{fontWeight:800,fontSize:15,color:c.cancelled?"#C62828":C.text}}>{c.title}{c.cancelled?" (Cancelada)":""}</div>
+                      {(()=>{const log=(c.attendanceLog||[]).find(e=>e.date===c.date);if(!log)return null;const dC=(log.ausente_dada||[]).length;const nC=(log.ausente_reprog||[]).length;if(!dC&&!nC)return null;return(<>{dC>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700,flexShrink:0}}>✗ Ausente-Dada</span>}{nC>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF8E1",color:"#F57F17",fontWeight:700,flexShrink:0}}>↩ A Reprogramar</span>}</>);})()}
+                    </div>
                     <div style={{fontSize:12,color:C.mutedDark,marginTop:2}}>{c.time+(c.timeEnd?" - "+c.timeEnd:"")} · {c.court}</div>
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
                     <span style={{fontSize:11,padding:"3px 8px",borderRadius:20,background:C.blueL,color:C.blue2,fontWeight:600}}>{(c.days||[]).join(" · ")}</span>
-                    <button onClick={()=>setHighlightCls(c.id===highlightCls?null:c.id)} style={{width:32,height:32,borderRadius:"50%",background:C.bg,border:"1px solid "+C.border,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                      <span style={{fontSize:14,color:C.mutedDark,fontWeight:800,letterSpacing:1}}>···</span>
-                    </button>
                   </div>
                 </div>
                 <div style={{display:"flex",gap:4,marginTop:8,flexWrap:"wrap"}}>
@@ -1580,7 +1705,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                     {[
                       {label:"Editar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,action:()=>{setEditCls(c);setHighlightCls(null);}},
-                      {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt(c);setHighlightCls(null);}},
+                      {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt({...c,attendanceLog:c.attendanceLog||[]});setHighlightCls(null);}},
                       {label:"Reprogramar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14l2 2 4-4"/></svg>,action:()=>{setReprog(c);setHighlightCls(null);}},
                       {label:c.cancelled?"Reactivar":"Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>,action:()=>{onSaveClass({...c,cancelled:!c.cancelled},true);setHighlightCls(null);}},
                     ].map(btn=>(
@@ -1598,7 +1723,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
 
       {viewMode==="week"&&(()=>{
         const HOURS=Array.from({length:17},(_,i)=>i+6); // 6-22
-        const HOUR_HEIGHT=80;
+        const HOUR_HEIGHT=90;
         const fmtHourLabel=(h)=>h<12?h+" AM":(h===12?"12 PM":(h-12)+" PM");
         const timeToMins=(t)=>{if(!t)return null;const[h,m]=(t).split(":").map(Number);return h*60+(m||0);};
         return (
@@ -1674,7 +1799,8 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
                         style={{position:"absolute",top:topPx,left:colL,width:colW,height:heightPx,background:c.cancelled?"#FFF3E0":C.white,borderRadius:12,padding:"6px 10px",border:"1.5px solid "+(highlightCls===c.id?C.blue2:C.border),cursor:"pointer",boxShadow:"0 2px 8px rgba(44,94,247,0.10)",overflow:"hidden",borderLeft:"4px solid "+(c.cancelled?"#E65100":C.blue2),zIndex:2}}>
                         <div style={{fontSize:13,fontWeight:800,color:c.cancelled?"#C62828":C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.title}{c.cancelled?" (Cancelada)":""}</div>
                         <div style={{fontSize:11,color:C.mutedDark,marginTop:1}}>{c.time+(c.timeEnd?" – "+c.timeEnd:"")} · {c.court}</div>
-                        {heightPx>44&&<div style={{display:"flex",gap:3,marginTop:4,flexWrap:"wrap"}}>
+                        {(()=>{const log=(c.attendanceLog||[]).find(e=>e.date===c.date);if(!log)return null;const dC=(log.ausente_dada||[]).length;const nC=(log.ausente_reprog||[]).length;if(!dC&&!nC)return null;return(<div style={{display:"flex",gap:4,marginTop:4}}>{dC>0&&<span style={{fontSize:11,padding:"3px 8px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ Ausente-Dada</span>}{nC>0&&<span style={{fontSize:11,padding:"3px 8px",borderRadius:10,background:"#FFF8E1",color:"#F57F17",fontWeight:700}}>↩ A Reprogramar</span>}</div>);})()}
+                        {heightPx>52&&<div style={{display:"flex",gap:3,marginTop:4,flexWrap:"wrap"}}>
                           {(c.students||[]).map(sid=>{const st=students.find(s=>s.id===sid);return st?(
                             <div key={sid} style={{display:"flex",alignItems:"center",gap:3,background:C.blueL,borderRadius:20,padding:"2px 6px 2px 3px"}}>
                               <div style={{width:14,height:14,borderRadius:"50%",background:C.blue2,display:"flex",alignItems:"center",justifyContent:"center",fontSize:7,fontWeight:800,color:C.white}}>{st.avatar[0]}</div>
@@ -1721,7 +1847,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
                       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                         {[
                           {label:"Editar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,action:()=>{setEditCls(c);setHighlightCls(null);}},
-                          {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt(c);setHighlightCls(null);}},
+                          {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt({...c,attendanceLog:c.attendanceLog||[]});setHighlightCls(null);}},
                           {label:"Reprogramar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14l2 2 4-4"/></svg>,action:()=>{setReprog(c);setHighlightCls(null);}},
                           {label:c.cancelled?"Reactivar":"Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>,action:()=>{onSaveClass({...c,cancelled:!c.cancelled},true);setHighlightCls(null);}},
                         ].map(btn=>(
@@ -1745,7 +1871,35 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
       })()}
 
       <button onClick={()=>setShowNew(true)} style={{position:"fixed",bottom:72,right:20,width:56,height:56,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:28,cursor:"pointer",zIndex:50,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
-      {editCls&&<EditClassScreen cls={editCls} students={students} onClose={()=>setEditCls(null)} onSave={(u)=>{onSaveClass(u,true);setEditCls(null);}} onCreateStudent={onAddStudent} packages={packages} onDelete={(id)=>{onDeleteClass&&onDeleteClass(id);setEditCls(null);}}/>}
+      {/* Edit scope modal */}
+      {editScopeData&&(
+        <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:600,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 20px"}}>
+          <div style={{background:"#fff",borderRadius:20,padding:24,width:"100%",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+            <div style={{fontSize:17,fontWeight:800,color:C.text,marginBottom:6}}>¿Aplicar cambios a?</div>
+            <div style={{fontSize:13,color:C.mutedDark,marginBottom:20}}>Esta es una clase recurrente. ¿El cambio aplica solo a esta fecha o a toda la serie?</div>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              <button onClick={()=>{onSaveClass(editScopeData,true);setEditScopeData(null);setEditCls(null);}} style={{padding:"14px",borderRadius:12,border:"1.5px solid "+C.border,background:C.blueL,color:C.blue2,cursor:"pointer",fontSize:14,fontWeight:700,textAlign:"left"}}>
+                📅 Solo esta clase ({editScopeData.date})
+              </button>
+              <button onClick={()=>{onSaveClass({...editScopeData,applyToAll:true},true);setEditScopeData(null);setEditCls(null);}} style={{padding:"14px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:700,textAlign:"left"}}>
+                🔄 A Todas las Clases
+              </button>
+              <button onClick={()=>setEditScopeData(null)} style={{padding:"12px",borderRadius:12,border:"1.5px solid "+C.border,background:"#fff",color:C.mutedDark,cursor:"pointer",fontSize:13,fontWeight:600}}>Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editCls&&<EditClassScreen cls={editCls} students={students} onClose={()=>setEditCls(null)} onSave={(u)=>{
+        // Check if this is a recurring class (has days array with values)
+        const isRecurring=editCls.days&&editCls.days.length>0;
+        if(isRecurring){
+          setEditScopeData(u);
+        } else {
+          onSaveClass(u,true);
+          setEditCls(null);
+        }
+      }} onCreateStudent={onAddStudent} packages={packages} onDelete={(id)=>{onDeleteClass&&onDeleteClass(id);setEditCls(null);}}/>}
 
       {/* Custom delete confirmation modal */}
       {confirmDelete&&(
@@ -1763,9 +1917,69 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
           </div>
         </div>
       )}
-      {reprog&&<ReprogModal cls={reprog} onClose={()=>setReprog(null)} onSave={(updated)=>{onSaveClass(updated,true);setReprog(null);}} students={students} onUpdateStudent={onUpdateStudent}/>}
+      {reprog&&<ReprogModal cls={reprog} onClose={()=>setReprog(null)} onSave={(updated,_,addNew)=>{onSaveClass(updated,true);if(addNew)onSaveClass(addNew,false);setReprog(null);}} students={students} onUpdateStudent={onUpdateStudent}/>}
       {showNew&&<NewClassModal onClose={()=>{setShowNew(false);setGridNewTime(null);setWeekOffset(0);}} onSave={onSaveClass} students={students} dateLabel={viewMode==="month"?selLabel:weekLabel()} onCreateStudent={onAddStudent} prefill={gridNewTime} courts={courts} packages={packages} onAddPackage={(pkg)=>{packages.push(pkg);}}/>}
       {att&&<AttModal att={att} students={students} onAttendance={onAttendance} onClose={()=>setAtt(null)}/>}
+    </div>
+  );
+}
+
+function CreateGroupScreen({ students, onClose, onCreate }) {
+  const [step,setStep]=useState(1);
+  const [gName,setGName]=useState("");
+  const [selM,setSelM]=useState([]);
+  const toggleM=(id)=>setSelM(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
+  if(step===1) return (
+    <div style={{flex:1,display:"flex",flexDirection:"column",background:C.bg}}>
+      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12}}>
+        <button onClick={onClose} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
+        <span style={{flex:1,fontWeight:800,fontSize:16,color:C.white}}>Nuevo Grupo</span>
+        <span style={{fontSize:12,color:C.muted}}>1 / 3</span>
+      </div>
+      <div style={{flex:1,overflowY:"auto",padding:20}}>
+        <div style={{marginBottom:20}}><label style={{fontSize:13,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>Nombre del grupo</label><input value={gName} onChange={e=>setGName(e.target.value)} placeholder="Ej: Grupo Mañana 🌅" style={{width:"100%",padding:"14px 16px",borderRadius:12,border:"none",fontSize:14,boxSizing:"border-box",background:C.blueL,color:C.text,outline:"none"}}/></div>
+        <button onClick={()=>{if(gName.trim())setStep(2);}} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:gName.trim()?"linear-gradient(135deg,#0D1B4B,#1A3DB5)":"#ccc",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800}}>Siguiente →</button>
+      </div>
+    </div>
+  );
+  if(step===2) return (
+    <div style={{flex:1,display:"flex",flexDirection:"column",background:C.bg}}>
+      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12}}>
+        <button onClick={()=>setStep(1)} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
+        <span style={{flex:1,fontWeight:800,fontSize:16,color:C.white}}>Agregar Miembros</span>
+        <span style={{fontSize:12,color:C.muted}}>2 / 3</span>
+      </div>
+      <div style={{flex:1,overflowY:"auto",padding:16}}>
+        {students.map(s=>{const sel=selM.includes(s.id);return(
+          <div key={s.id} onClick={()=>toggleM(s.id)} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",borderRadius:14,background:sel?C.blueL:C.white,border:"1.5px solid "+(sel?C.blue2:C.border),marginBottom:10,cursor:"pointer"}}>
+            <div style={{width:44,height:44,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white,flexShrink:0}}>{s.avatar}</div>
+            <div style={{flex:1}}><div style={{fontWeight:700,fontSize:14,color:C.text}}>{s.name}</div><div style={{fontSize:12,color:C.mutedDark}}>{s.sport}</div></div>
+            <div style={{width:24,height:24,borderRadius:"50%",border:"2px solid "+(sel?C.blue2:C.border),background:sel?C.blue2:"transparent",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              {sel&&<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>}
+            </div>
+          </div>
+        );})}
+      </div>
+      <div style={{padding:"12px 16px",background:C.white,borderTop:"1px solid "+C.border}}>
+        <button onClick={()=>{if(selM.length>0)setStep(3);}} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:selM.length>0?"linear-gradient(135deg,#0D1B4B,#1A3DB5)":"#ccc",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800}}>Siguiente →</button>
+      </div>
+    </div>
+  );
+  return (
+    <div style={{flex:1,display:"flex",flexDirection:"column",background:C.bg}}>
+      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12}}>
+        <button onClick={()=>setStep(2)} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
+        <span style={{flex:1,fontWeight:800,fontSize:16,color:C.white}}>Confirmar Grupo</span>
+        <span style={{fontSize:12,color:C.muted}}>3 / 3</span>
+      </div>
+      <div style={{flex:1,overflowY:"auto",padding:20}}>
+        <WhiteCard style={{marginBottom:14}}>
+          <div style={{fontSize:13,fontWeight:700,color:C.mutedDark,marginBottom:10}}>{"MIEMBROS ("+selM.length+")"}</div>
+          {selM.map(sid=>{const st=students.find(s=>s.id===sid);return st?(<div key={sid} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid "+C.border}}><div style={{width:36,height:36,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:C.white}}>{st.avatar}</div><div style={{fontSize:14,fontWeight:600,color:C.text}}>{st.name}</div></div>):null;})}
+        </WhiteCard>
+        <button onClick={()=>{const init=gName.trim().split(" ").slice(0,2).map(w=>w[0]).join("").toUpperCase();onCreate({id:"g"+Date.now(),name:gName,avatar:init,lastMsg:"Grupo creado",time:"Ahora",isGroup:true,members:selM});onClose();}} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,"+C.green+",#66BB6A)",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:10}}>✓ Crear Grupo</button>
+        <button onClick={onClose} style={{width:"100%",padding:"15px",borderRadius:14,border:"1.5px solid "+C.border,background:C.white,color:C.mutedDark,fontSize:15,cursor:"pointer",fontWeight:700}}>Cancelar</button>
+      </div>
     </div>
   );
 }
@@ -1790,74 +2004,23 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification }) {
       if(isAlert&&sendNotification) sendNotification(msg,"alert");
       setMsg("");setIsAlert(false);
     }
-  };;
+  };
 
-  if(showCreate) {
-    const [step,setStep]=useState(1);
-    const [gName,setGName]=useState("");
-    const [selM,setSelM]=useState([]);
-    const toggleM=(id)=>setSelM(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
-    if(step===1) return (
-      <div style={{flex:1,display:"flex",flexDirection:"column",background:C.bg}}>
-        <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12}}>
-          <button onClick={()=>setShowCreate(false)} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
-          <span style={{flex:1,fontWeight:800,fontSize:16,color:C.white}}>Nuevo Grupo</span>
-          <span style={{fontSize:12,color:C.muted}}>1 / 3</span>
-        </div>
-        <div style={{flex:1,overflowY:"auto",padding:20}}>
-          <div style={{marginBottom:20}}><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Nombre del grupo</label><input value={gName} onChange={e=>setGName(e.target.value)} placeholder="Ej: Grupo Mañana 🌅" style={{width:"100%",padding:"14px 16px",borderRadius:12,border:"none",fontSize:14,boxSizing:"border-box",background:C.blueL,color:C.text,outline:"none"}}/></div>
-          <button onClick={()=>{if(gName.trim())setStep(2);}} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:gName.trim()?"linear-gradient(135deg,#0D1B4B,#1A3DB5)":"#ccc",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800}}>Siguiente →</button>
-        </div>
-      </div>
-    );
-    if(step===2) return (
-      <div style={{flex:1,display:"flex",flexDirection:"column",background:C.bg}}>
-        <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12}}>
-          <button onClick={()=>setStep(1)} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
-          <span style={{flex:1,fontWeight:800,fontSize:16,color:C.white}}>Agregar Miembros</span>
-          <span style={{fontSize:12,color:C.muted}}>2 / 3</span>
-        </div>
-        <div style={{flex:1,overflowY:"auto",padding:16}}>
-          {students.map(s=>{const sel=selM.includes(s.id);return(
-            <div key={s.id} onClick={()=>toggleM(s.id)} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",borderRadius:14,background:sel?C.blueL:C.white,border:"1.5px solid "+(sel?C.blue2:C.border),marginBottom:10,cursor:"pointer"}}>
-              <div style={{width:44,height:44,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white,flexShrink:0}}>{s.avatar}</div>
-              <div style={{flex:1}}><div style={{fontWeight:700,fontSize:14,color:C.text}}>{s.name}</div><div style={{fontSize:12,color:C.mutedDark}}>{s.sport}</div></div>
-              <div style={{width:24,height:24,borderRadius:"50%",border:"2px solid "+(sel?C.blue2:C.border),background:sel?C.blue2:"transparent",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                {sel&&<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>}
-              </div>
-            </div>
-          );})}
-        </div>
-        <div style={{padding:"12px 16px",background:C.white,borderTop:"1px solid "+C.border}}>
-          <button onClick={()=>{if(selM.length>0)setStep(3);}} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:selM.length>0?"linear-gradient(135deg,#0D1B4B,#1A3DB5)":"#ccc",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800}}>Siguiente →</button>
-        </div>
-      </div>
-    );
-    return (
-      <div style={{flex:1,display:"flex",flexDirection:"column",background:C.bg}}>
-        <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12}}>
-          <button onClick={()=>setStep(2)} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
-          <span style={{flex:1,fontWeight:800,fontSize:16,color:C.white}}>Confirmar Grupo</span>
-          <span style={{fontSize:12,color:C.muted}}>3 / 3</span>
-        </div>
-        <div style={{flex:1,overflowY:"auto",padding:20}}>
-          <WhiteCard style={{marginBottom:14}}>
-            <div style={{fontSize:13,fontWeight:700,color:C.mutedDark,marginBottom:10}}>{"MIEMBROS ("+selM.length+")"}</div>
-            {selM.map(sid=>{const st=students.find(s=>s.id===sid);return st?(<div key={sid} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid "+C.border}}><div style={{width:36,height:36,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:C.white}}>{st.avatar}</div><div style={{fontSize:14,fontWeight:600,color:C.text}}>{st.name}</div></div>):null;})}
-          </WhiteCard>
-          <button onClick={()=>{const gName2=gName;const init=gName2.trim().split(" ").slice(0,2).map(w=>w[0]).join("").toUpperCase();setGroups(p=>[{id:"g"+Date.now(),name:gName2,avatar:init,lastMsg:"Grupo creado",time:"Ahora",isGroup:true,members:selM},...p]);setShowCreate(false);}} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,"+C.green+",#66BB6A)",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:10}}>✓ Crear Grupo</button>
-          <button onClick={()=>setShowCreate(false)} style={{width:"100%",padding:"15px",borderRadius:14,border:"1.5px solid "+C.border,background:C.white,color:C.mutedDark,fontSize:15,cursor:"pointer",fontWeight:700}}>Cancelar</button>
-        </div>
-      </div>
-    );
-  }
+  if(showCreate) return <CreateGroupScreen students={students} onClose={()=>setShowCreate(false)} onCreate={(g)=>setGroups(p=>[g,...p])}/>;
 
   if(view==="chat") return (
     <div style={{flex:1,display:"flex",flexDirection:"column",background:C.bg}}>
       <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"12px 16px",display:"flex",alignItems:"center",gap:12}}>
         <button onClick={()=>setView("list")} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:18}}>{"<"}</button>
         <div style={{width:38,height:38,borderRadius:"50%",background:C.whiteA,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white,flexShrink:0}}>{active?active.avatar:"G"}</div>
-        <div style={{flex:1}}><span style={{fontWeight:700,fontSize:14,color:C.white}}>{active?active.name:""}</span><div style={{fontSize:11,color:C.muted}}>En línea</div></div>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontWeight:700,fontSize:14,color:C.white,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{active?active.name:""}</div>
+          <div style={{fontSize:11,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+            {active?.isGroup&&active?.members?.length>0
+              ?active.members.map(id=>students.find(s=>s.id===id)?.name?.split(" ")[0]).filter(Boolean).join(", ")
+              :"En línea"}
+          </div>
+        </div>
       </div>
       <div style={{flex:1,overflowY:"auto",padding:"16px",display:"flex",flexDirection:"column",gap:10}}>
         {msgs.map(m=>(
@@ -1906,7 +2069,11 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification }) {
 
 function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount, newDate, setNewDate, onClose, onUpdate, classes=[], addIncome, packages=[], sendNotification}) {
   const [showRecordatorioPago,setShowRecordatorioPago]=useState(false);
-  const [pagoTipo,setPagoTipo]=useState(combo?.total?"clases":"mensual");
+  const [pagoTipo,setPagoTipo]=useState(()=>{
+    if(combo?.total>0) return "clases";
+    if(combo?.packType==="individual"||combo?.packType==="combo") return "clases";
+    return "mensual";
+  });
   const [payMethod,setPayMethod]=useState("efectivo");
   const [step,setStep]=useState("form");
   const TODAY=TODAY_DATE;
@@ -1968,33 +2135,49 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   };
 
 
-  // Build dates from LAST combo only
+  // Build dates from ALL active combos (individual + regular combos)
   const buildAllDates=()=>{
     const result=[];
-    const c=allCombos.length>0?allCombos[allCombos.length-1]:null;
-    if(!c||!c.total) return result;
-    let dates=c.dates&&c.dates.length>0?c.dates:(()=>{
-      const ds=[];
-      let cur=new Date((c.date||TODAY)+"T12:00:00");
-      while(ds.length<c.total){
-        if(classDowSet.size===0||classDowSet.has(cur.getDay())){
-          ds.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
-        }
-        cur.setDate(cur.getDate()+1);
+    // Include ALL combos that are NOT purely mensual
+    const activeCombos=allCombos.filter(c=>{
+      if(c.total>0) return true;
+      if(c.packType==="individual"||c.packType==="combo") return true;
+      // Legacy individual: null total but matches a specific class date
+      if(c.total===null&&c.date&&c.packType!=="mensual"){
+        const hasMatchingClass=myClasses.some(cls=>cls.date===c.date);
+        if(hasMatchingClass) return true;
       }
-      return ds;
-    })();
-    dates.forEach((ds,i)=>{
-      const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
-      const isPaidDate=i<paidCount;
-      const isGiven=(i<(c.used||0))||ds<=TODAY;
-      let status;
-      if(isPaidDate){
-        status=isGiven?"dada":"adar";
-      } else {
-        status=isGiven?"dada_unpaid":"pendiente";
+      return false;
+    });
+    if(activeCombos.length===0) return result;
+    activeCombos.forEach(c=>{
+      const effectiveTotal=c.total||1;
+      const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?effectiveTotal:0);
+      // Get dates: from stored dates array, or from matching class dates, or generate
+      let dates=[];
+      if(c.dates&&c.dates.length>0){
+        dates=c.dates;
+      } else if(c.date){
+        // Find class on this date
+        const matchingCls=myClasses.find(cls=>cls.date===c.date);
+        dates=[matchingCls?matchingCls.date:c.date];
       }
-      result.push({date:ds,status,comboId:c.id,isGiven});
+      dates.slice(0,Math.max(effectiveTotal,dates.length)).forEach((ds,i)=>{
+        const classOnDate=myClasses.find(cl=>cl.date===ds);
+        const isCancelled=!!(classOnDate?.cancelled&&!classOnDate?.rescheduled);
+        const isRescheduled=!!(classOnDate?.rescheduled);
+        const isPaidDate=i<paidCount&&!isCancelled;
+        const attEntry=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===ds);
+        const wasAusenteDada=attEntry?(attEntry.ausente_dada||[]).includes(s.id):false;
+        const wasAusenteReprog=attEntry?(attEntry.ausente_reprog||[]).includes(s.id):false;
+        const wasPresent=attEntry?(attEntry.present||[]).includes(s.id):false;
+        const wasAbsent=attEntry?(!wasPresent&&!wasAusenteDada&&!wasAusenteReprog):false;
+        const isGiven=isCancelled?false:wasAusenteReprog?false:attEntry?(wasPresent||wasAusenteDada):(ds<TODAY);
+        let status;
+        if(isPaidDate){status=isGiven?"dada":"adar";}
+        else{status=isGiven?"dada_unpaid":"pendiente";}
+        result.push({date:ds,status,comboId:c.id,isGiven,wasPresent,wasAbsent,wasAusenteDada,wasAusenteReprog,isCancelled,isRescheduled});
+      });
     });
     return result.sort((a,b)=>a.date.localeCompare(b.date));
   };
@@ -2070,7 +2253,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
       return dates;
     };
 
-    if(pagoTipo==="clases"&&lastCombo&&!lastCombo.paid&&qty>0){
+    if(pagoTipo==="clases"&&lastCombo&&!lastCombo.paid&&lastCombo.total>0&&qty>0){
       const lastIdx=updatedCombos.length-1;
       const existing=updatedCombos[lastIdx];
       const comboTotal=existing.total||0;
@@ -2111,7 +2294,9 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
 
     onUpdate({...s,combos:updatedCombos});
     if(addIncome&&parseInt(localAmount)>0){
-      addIncome(parseInt(localAmount), localDate||TODAY, s.name);
+      const qty=parseInt(localClasses)||0;
+      const detail=pagoTipo==="mensual"?"Plan Mensual":qty===1?"1 clase":qty+" clases";
+      addIncome(parseInt(localAmount), localDate||TODAY, s.name, detail);
     }
     setStep("success");
     // If all classes given (closed cycle), close faster
@@ -2158,33 +2343,61 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             </div>
           </div>
           {pagoTipo==="clases"&&(()=>{
-            const activeDates=allDates.filter(d=>d.status!=="dada"); // hide only paid+past dates
+            const lastComboDate=allDates.length>0?allDates[allDates.length-1].date:"";
+          const allPaid=allDates.every(d=>d.status==="dada"||d.status==="adar");
+          const lastDatePassed=lastComboDate&&lastComboDate<TODAY;
+          // Keep all dates visible until all are paid AND last date has passed
+          const activeDates=allPaid&&lastDatePassed?[]:allDates.filter(d=>d.status!=="dada");
             const qty=parseInt(localClasses)||0;
             const reviewDates=[
               ...activeDates.map((item,i)=>({...item,isNew:false,idx:i})),
               ...(lastCombo?.paid?projDates.map((item,i)=>({...item,isNew:true,idx:activeDates.length+i})):[]),
             ];
-            if(reviewDates.length===0) return null;
+            if(reviewDates.length===0){
+              // Fallback: show combo date for individual/unpaid
+              const fallbackDate=lastCombo?.date||TODAY;
+              return (
+                <div style={{marginBottom:20}}>
+                  <div style={{fontSize:11,fontWeight:700,color:"#5C7A9F",letterSpacing:0.5,marginBottom:8}}>FECHAS DE CLASE</div>
+                  <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0"}}>
+                    <div style={{width:28,height:28,borderRadius:"50%",background:C.blueL,border:"2px solid "+C.blue2,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                      <span style={{fontSize:11,fontWeight:800,color:C.blue2}}>1</span>
+                    </div>
+                    <div style={{flex:1,fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(fallbackDate)}</div>
+                    <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>No Pagada</span>
+                  </div>
+                </div>
+              );
+            }
             return (
             <div style={{marginBottom:20}}>
               <div style={{fontSize:11,fontWeight:700,color:"#5C7A9F",letterSpacing:0.5,marginBottom:8}}>FECHAS DE CLASE</div>
               {reviewDates.map((item,i)=>{
                 const isPaidNow=lastCombo?.paid?true:i<qty;
                 const isPaid=item.status!=="pendiente"||isPaidNow||item.isNew;
+                const wasAbsent=item.wasAbsent||false;
+                const isCancelled=item.isCancelled||false;
+                const wasRescheduled=classes.some(cls=>cls.students.includes(s.id)&&cls.date===item.date&&cls.rescheduled);
                 let leftBg,leftColor,leftLabel,rightBg,rightColor,rightLabel;
                 if(item.isNew||isPaid){
-                  leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="Clase No Dada";
+                  leftBg=wasAbsent?"#FFF3E0":isCancelled?"#F3E5F5":"#E8F5E9";
+                  leftColor=wasAbsent?"#E65100":isCancelled?"#7B1FA2":"#2E7D32";
+                  leftLabel=wasAbsent?"🚫 Ausente":isCancelled?"❌ Cancelada":"Clase No Dada";
                   rightBg="#E8F5E9";rightColor="#2E7D32";rightLabel="Pagada";
                 } else {
-                  leftBg="#FFF3E0";leftColor="#E65100";leftLabel="Clase No Dada";
+                  leftBg=wasAbsent?"#FFF3E0":isCancelled?"#F3E5F5":"#FFF3E0";
+                  leftColor=wasAbsent?"#E65100":isCancelled?"#7B1FA2":"#E65100";
+                  leftLabel=wasAbsent?"🚫 Ausente":isCancelled?"❌ Cancelada":"Clase No Dada";
                   rightBg="#FFF3E0";rightColor="#E65100";rightLabel="No Pagada";
                 }
                 return (
-                  <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #E3F2FD"}}>
+                  <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid #E3F2FD"}}>
                     <div style={{width:28,height:28,borderRadius:"50%",background:item.isNew?"#E8F5E9":C.blueL,border:"2px solid "+(item.isNew?"#43A047":C.blue2),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                       <span style={{fontSize:11,fontWeight:800,color:item.isNew?"#43A047":C.blue2}}>{i+1}</span>
                     </div>
                     <div style={{flex:1,fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(item.date)}</div>
+                    {wasAbsent&&<span title="Alumno ausente" style={{fontSize:14,cursor:"default"}}>🚫</span>}
+                    {wasRescheduled&&<span title="Clase reprogramada" style={{fontSize:14,cursor:"default"}}>🔄</span>}
                     <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:leftBg,color:leftColor,fontWeight:700,flexShrink:0}}>{leftLabel}</span>
                     <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700,flexShrink:0}}>{rightLabel}</span>
                   </div>
@@ -2238,16 +2451,14 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
                   </>
                 );
               })():(()=>{
-                // Count unpaid across all combos using paidCount
-                const totalUnpaid=allCombos.filter(c=>c.total).reduce((a,c)=>{
-                  const paid=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
-                  return a+Math.max(0,c.total-paid);
-                },0);
-                const remainingUnpaid=Math.max(0,totalUnpaid-(parseInt(localClasses)||0));
-                const paidRemaining=allCombos.filter(c=>c.total).reduce((a,c)=>{
-                  const paid=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
-                  return a+Math.max(0,paid-(c.used||0));
-                },0);
+                // Only use last combo for display
+                const lastC=allCombos.filter(c=>c.total).slice(-1)[0];
+                const effectiveTot=lastC?getEffectiveTotal(s,lastC,classes):0;
+                const paid=lastC?(lastC.paidCount!==undefined?lastC.paidCount:(lastC.paid?lastC.total:0)):0;
+                const unpaid=lastC?Math.max(0,effectiveTot-paid):0;
+                const given=lastC?Math.max(0,(lastC.used||0)):0;
+                const remainingUnpaid=Math.max(0,unpaid-(parseInt(localClasses)||0));
+                const paidRemaining=Math.max(0,paid-given);
                 const isRed=remainingUnpaid>0;
                 const displayNum=isRed?remainingUnpaid:paidRemaining;
                 return (
@@ -2276,11 +2487,19 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
               <div>
                 <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>¿Cuántas clases pagamos?</div>
-                <div style={{display:"flex",alignItems:"center",background:C.blueL,borderRadius:12,overflow:"hidden"}}>
-                  <button onClick={()=>setLocalClasses(Math.max(0,(parseInt(localClasses)||0)-1))} style={{width:44,height:46,border:"none",background:"#2C5EF7",color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>◀</button>
-                  <div style={{flex:1,textAlign:"center",fontSize:22,fontWeight:800,color:"#1A237E"}}>{parseInt(localClasses)||0}</div>
-                  <button onClick={()=>setLocalClasses((parseInt(localClasses)||0)+1)} style={{width:44,height:46,border:"none",background:"#2C5EF7",color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>▶</button>
-                </div>
+                {(()=>{
+                  const lastC=allCombos.filter(c=>c.total).slice(-1)[0];
+                  const effectiveTotal=lastC?getEffectiveTotal(s,lastC,classes):0;
+                  const paidCount=lastC?(lastC.paidCount!==undefined?lastC.paidCount:(lastC.paid?lastC.total:0)):0;
+                  // For individual/no-total combos, allow up to 20 classes
+                  const maxUnpaid=effectiveTotal>0?Math.max(0,effectiveTotal-paidCount):20;                  return (
+                    <div style={{display:"flex",alignItems:"center",background:C.blueL,borderRadius:12,overflow:"hidden"}}>
+                      <button onClick={()=>setLocalClasses(Math.max(0,(parseInt(localClasses)||0)-1))} style={{width:44,height:46,border:"none",background:"#2C5EF7",color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>◀</button>
+                      <div style={{flex:1,textAlign:"center",fontSize:22,fontWeight:800,color:"#1A237E"}}>{parseInt(localClasses)||0}</div>
+                      <button onClick={()=>setLocalClasses(Math.min(maxUnpaid,(parseInt(localClasses)||0)+1))} style={{width:44,height:46,border:"none",background:"#2C5EF7",color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>▶</button>
+                    </div>
+                  );
+                })()}
               </div>
               <div>
                 <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>Monto (₲)</div>
@@ -2316,39 +2535,71 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
           </div>
         </div>
 
-        {/* Fechas de clase list - only show if there are pending or future dates */}
+        {/* Fechas de clase list - show all until full cycle closes */}
         {pagoTipo==="clases"&&(()=>{
-          const activeDates=allDates.filter(d=>d.status!=="dada"); // hide only paid+past dates
+          const lastComboDate=allDates.length>0?allDates[allDates.length-1].date:"";
+          const allPaid=allDates.every(d=>d.status==="dada"||d.status==="adar"||d.isCancelled);
+          const lastDatePassed=lastComboDate&&lastComboDate<TODAY_DATE;
+          // Show ALL dates until every combo cycle is closed
+          const activeDates=allPaid&&lastDatePassed?[]:allDates;
           const hasNew=parseInt(localClasses)>0;
-          if(activeDates.length===0&&!hasNew) return null;
+          // Fallback for individual/unpaid with no generated dates
+          if(activeDates.length===0&&!hasNew){
+            const fallbackDate=lastCombo?.date||TODAY_DATE;
+            return (
+              <div style={{padding:"0 20px 16px"}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#5C7A9F",letterSpacing:0.5,marginBottom:8}}>FECHAS DE CLASE</div>
+                <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0"}}>
+                  <div style={{width:28,height:28,borderRadius:"50%",background:C.blueL,border:"2px solid #1976D2",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <span style={{fontSize:11,fontWeight:800,color:C.blue2}}>1</span>
+                  </div>
+                  <div style={{flex:1,fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(fallbackDate)}</div>
+                  <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:"#FFF3E0",color:"#E65100",fontWeight:700,flexShrink:0}}>Clase No Dada</span>
+                  <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:"#FFF3E0",color:"#E65100",fontWeight:700,flexShrink:0}}>No Pagada</span>
+                </div>
+              </div>
+            );
+          }
           return (
           <div style={{padding:"0 20px 16px"}}>
             <div style={{fontSize:11,fontWeight:700,color:"#5C7A9F",letterSpacing:0.5,marginBottom:8}}>FECHAS DE CLASE</div>
             {activeDates.map((item,i)=>{
               const qty=parseInt(localClasses)||0;
-              // Count only unpaid dates before this index
-              const unpaidBefore=activeDates.slice(0,i).filter(d=>d.status==="pendiente"||d.status==="dada_unpaid").length;
+              const isCancelled=item.isCancelled||false;
+              const isRescheduled=item.isRescheduled||false;
+              const wasAbsent=item.wasAbsent||false;
+              const wasAusenteDada=item.wasAusenteDada||false;
+              const wasAusenteReprog=item.wasAusenteReprog||false;
+              // Cancelled dates are never counted as payable
+              const unpaidBefore=activeDates.slice(0,i).filter(d=>
+                (d.status==="pendiente"||d.status==="dada_unpaid")&&!d.isCancelled
+              ).length;
               const isUnpaid=item.status==="pendiente"||item.status==="dada_unpaid";
-              const alreadyPaid=item.status==="adar";
-              const isPaidNow=alreadyPaid||(isUnpaid&&unpaidBefore<qty);
-              const isPaid=alreadyPaid||isPaidNow;
-              const isGiven=item.isGiven||item.status==="dada_unpaid";
-              let leftBg,leftColor,leftLabel,rightBg,rightColor,rightLabel;
-              if(isPaid){
-                if(isGiven){leftBg=C.blueL;leftColor=C.blue2;leftLabel="Clase Dada";rightBg=C.blueL;rightColor=C.blue2;rightLabel="Pagada";}
-                else{leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="Clase No Dada";rightBg="#E8F5E9";rightColor="#2E7D32";rightLabel="Pagada";}
-              } else {
-                if(isGiven){leftBg="#FFEBEE";leftColor="#C62828";leftLabel="Clase Dada";rightBg="#FFEBEE";rightColor="#C62828";rightLabel="No Pagada";}
-                else{leftBg="#FFF3E0";leftColor="#E65100";leftLabel="Clase No Dada";rightBg="#FFF3E0";rightColor="#E65100";rightLabel="No Pagada";}
-              }
+              const alreadyPaid=item.status==="adar"||item.status==="dada";
+              const isPaidNow=!isCancelled&&(alreadyPaid||(isUnpaid&&unpaidBefore<qty));
+              const isPaid=!isCancelled&&(alreadyPaid||isPaidNow);
+              const isGiven=item.isGiven||item.status==="dada_unpaid"||item.status==="dada";
+              // Class status label (left badge)
+              let leftBg,leftColor,leftLabel;
+              if(isRescheduled){leftBg="#E3F2FD";leftColor="#1565C0";leftLabel="🔄 Reprogramada";}
+              else if(isCancelled){leftBg="#F3E5F5";leftColor="#7B1FA2";leftLabel="❌ Cancelada — Pendiente";}
+              else if(wasAusenteReprog){leftBg="#E8EAF6";leftColor="#3949AB";leftLabel="↩ A Reprogramar";}
+              else if(wasAusenteDada){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="🚫 Ausente (Dada)";}
+              else if(wasAbsent){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="🚫 Ausente";}
+              else if(isGiven){leftBg=C.blueL;leftColor=C.blue2;leftLabel="Clase Dada";}
+              else{leftBg="#FFF3E0";leftColor="#E65100";leftLabel="Clase No Dada";}
+              // Payment badge — hide for cancelled (no payment until rescheduled)
+              const rightBg=isPaid?"#E8F5E9":"#FFEBEE";
+              const rightColor=isPaid?"#2E7D32":"#C62828";
+              const rightLabel=isPaid?"✓ Pagada":"No Pagada";
               return (
-                <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #E3F2FD"}}>
-                  <div style={{width:28,height:28,borderRadius:"50%",background:C.blueL,border:"2px solid #1976D2",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                    <span style={{fontSize:11,fontWeight:800,color:C.blue2}}>{i+1}</span>
+                <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid #E3F2FD"}}>
+                  <div style={{width:28,height:28,borderRadius:"50%",background:isCancelled?"#F3E5F5":C.blueL,border:"2px solid "+(isCancelled?"#7B1FA2":"#1976D2"),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <span style={{fontSize:11,fontWeight:800,color:isCancelled?"#7B1FA2":C.blue2}}>{i+1}</span>
                   </div>
                   <div style={{flex:1,fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(item.date)}</div>
                   <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:leftBg,color:leftColor,fontWeight:700,flexShrink:0}}>{leftLabel}</span>
-                  <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700,flexShrink:0}}>{rightLabel}</span>
+                  {!isCancelled&&<span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700,flexShrink:0}}>{rightLabel}</span>}
                 </div>
               );
             })}
@@ -2372,7 +2623,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
           <button onClick={handleConfirm} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:(parseInt(localClasses)>0&&parseInt(localAmount)>0)||(pagoTipo==="mensual"&&parseInt(localAmount)>0)?"linear-gradient(135deg,#52C048,#65CE5A)":"#CBD5E0",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:800}}>✓ Confirmar pago</button>
         </div>
       </div>
-      {showRecordatorioPago&&<RecordatorioModal student={s} onClose={()=>setShowRecordatorioPago(false)} sendNotification={sendNotification} getRem={()=>getRem(s)} getCombo={()=>getCombo(s)}/>}
+      {showRecordatorioPago&&<RecordatorioModal student={s} onClose={()=>setShowRecordatorioPago(false)} sendNotification={sendNotification} getRem={()=>getRem(s,classes)} getCombo={()=>getCombo(s)}/>}
     </div>
   );
 }
@@ -2419,7 +2670,7 @@ function RecordatorioModal({ student:s, onClose, sendNotification, getRem, getCo
 
 function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sendNotification }) {
   const combo=getCombo(s);
-  const rem=getRem(s);
+  const rem=getRem(s,classes);
   const isExpired=rem!==null&&rem<=0;
   const isWarning=rem!==null&&rem>0&&rem<=2;
   const [showPago,setShowPago]=useState(false);
@@ -2467,7 +2718,9 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
         </div>
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,flexWrap:"wrap"}}>
           <span style={{fontSize:12,padding:"4px 12px",borderRadius:20,background:C.blueL,color:C.blue2,fontWeight:700}}>{"🗓 Último pago: "+(combo?.date||"—")}</span>
-          <span style={{fontSize:12,padding:"4px 12px",borderRadius:20,background:combo?.total?C.blueL:C.greenL,color:combo?.total?C.blue2:C.green,fontWeight:700}}>{combo?.total?"📦 "+combo.total+" clases":"📅 Mensual"}</span>
+          <span style={{fontSize:12,padding:"4px 12px",borderRadius:20,background:combo?.total?C.blueL:combo?.packType==="individual"?C.blueL:combo?.packType==="combo"?C.blueL:C.greenL,color:combo?.total?C.blue2:combo?.packType&&combo.packType!=="mensual"?C.blue2:C.green,fontWeight:700}}>
+            {combo?.total?"📦 "+combo.total+" clases":combo?.packType==="individual"?"🎯 Individual":combo?.packType==="combo"?"📦 Combo":"📅 Mensual"}
+          </span>
         </div>
         {/* Class schedule or upcoming dates */}
         {(()=>{
@@ -2648,7 +2901,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
       )}
 
       {/* Recordatorio modal */}
-      {showRecordatorio&&<RecordatorioModal student={s} onClose={()=>setShowRecordatorio(false)} sendNotification={sendNotification} getRem={()=>getRem(s)} getCombo={()=>getCombo(s)}/>}
+      {showRecordatorio&&<RecordatorioModal student={s} onClose={()=>setShowRecordatorio(false)} sendNotification={sendNotification} getRem={()=>getRem(s,classes)} getCombo={()=>getCombo(s)}/>}
 
       {/* Comprobante de pago */}
       {showComprobante&&(()=>{
@@ -2845,7 +3098,20 @@ function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], send
   // Only show students that have at least one class assigned
   let list=students.filter(s=>classes.some(c=>c.students&&c.students.includes(s.id)));
   if(search.trim()) list=list.filter(s=>s.name.toLowerCase().includes(search.toLowerCase()));
-  if(filter==="mora") list=list.filter(s=>{const r=getRem(s);return r!==null&&r<=0;});
+  if(filter==="mora") list=list.filter(s=>{
+    const r=getRem(s,classes);
+    const combo=getCombo(s);
+    if(r!==null) return r<0; // clases: negative = unpaid
+    // mensual: check if overdue
+    if(!combo) return false;
+    const lastDate=combo.payDate||combo.date||TODAY_DATE;
+    const lastPay=new Date(lastDate+"T12:00:00");
+    const today=new Date(TODAY_DATE+"T12:00:00");
+    const isPaid=combo.paid===true;
+    const nextDue=isPaid?new Date(lastPay.getFullYear(),lastPay.getMonth()+1,lastPay.getDate()):lastPay;
+    const diffDays=Math.floor((today-nextDue)/(1000*60*60*24))+1;
+    return !isPaid||diffDays>0;
+  });
   return (
     <div>
       <div style={{position:"relative",marginBottom:12}}>
@@ -3000,14 +3266,79 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
                     </WhiteCard>
                   );
                 })()}
-                <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:10,marginTop:6}}>Movimientos</div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,marginTop:6}}>
+                  <div style={{fontSize:13,fontWeight:700,color:C.text}}>Movimientos</div>
+                  <button onClick={async()=>{
+                    const [yr2,mn2]=selMonth.split("-").map(Number);
+                    const mNames=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+                    const selMonthLabel=mNames[mn2-1]+" "+yr2;
+                    const canvas=document.createElement("canvas");
+                    const rowH=36; const headerH=120; const footerH=40;
+                    canvas.width=800; canvas.height=headerH+sorted.length*rowH+footerH+40;
+                    const ctx=canvas.getContext("2d");
+                    // Background
+                    ctx.fillStyle="#ffffff"; ctx.fillRect(0,0,canvas.width,canvas.height);
+                    // Header
+                    ctx.fillStyle="#0D1B4B"; ctx.fillRect(0,0,800,headerH);
+                    ctx.fillStyle="#ffffff"; ctx.font="bold 24px Arial"; ctx.textAlign="left";
+                    ctx.fillText("Reporte de Movimientos",30,45);
+                    ctx.font="14px Arial"; ctx.fillStyle="rgba(255,255,255,0.8)";
+                    ctx.fillText(selMonthLabel,30,70);
+                    // Summary
+                    const inc=monthFiltered.filter(e=>e.type==="ingreso").reduce((a,e)=>a+e.amount,0);
+                    const exp=monthFiltered.filter(e=>e.type==="gasto").reduce((a,e)=>a+e.amount,0);
+                    ctx.font="bold 13px Arial"; ctx.fillStyle="#65CE5A";
+                    ctx.fillText("Ingresos: "+fmtMoneyShort(inc),30,95);
+                    ctx.fillStyle="#EF5350";
+                    ctx.fillText("Gastos: "+fmtMoneyShort(exp),220,95);
+                    ctx.fillStyle="#fff";
+                    ctx.fillText("Balance: "+fmtMoneyShort(inc-exp),410,95);
+                    // Column headers
+                    ctx.fillStyle="#EEF2FF"; ctx.fillRect(0,headerH,800,30);
+                    ctx.fillStyle="#0D1B4B"; ctx.font="bold 12px Arial";
+                    ctx.fillText("FECHA",20,headerH+20);
+                    ctx.fillText("CATEGORÍA",120,headerH+20);
+                    ctx.fillText("NOTA",360,headerH+20);
+                    ctx.fillText("TIPO",560,headerH+20);
+                    ctx.textAlign="right"; ctx.fillText("MONTO",780,headerH+20);
+                    // Rows
+                    sorted.forEach((e,i)=>{
+                      const y=headerH+30+i*rowH;
+                      ctx.fillStyle=i%2===0?"#F8F9FF":"#ffffff"; ctx.fillRect(0,y,800,rowH);
+                      ctx.fillStyle="#0D1B4B"; ctx.font="13px Arial"; ctx.textAlign="left";
+                      ctx.fillText(e.date,20,y+22);
+                      ctx.fillText(e.category.slice(0,28),120,y+22);
+                      ctx.fillText((e.note||"").slice(0,25),360,y+22);
+                      ctx.fillStyle=e.type==="ingreso"?"#2E7D32":"#C62828";
+                      ctx.font="bold 12px Arial";
+                      ctx.fillText(e.type==="ingreso"?"↑ Ingreso":"↓ Gasto",560,y+22);
+                      ctx.textAlign="right";
+                      ctx.fillText((e.type==="ingreso"?"+":"-")+fmtMoneyShort(e.amount),780,y+22);
+                      // Divider
+                      ctx.strokeStyle="#EEF2FF"; ctx.lineWidth=1;
+                      ctx.beginPath(); ctx.moveTo(0,y+rowH); ctx.lineTo(800,y+rowH); ctx.stroke();
+                    });
+                    // Footer
+                    const fy=headerH+30+sorted.length*rowH+10;
+                    ctx.fillStyle="#9BACCB"; ctx.font="11px Arial"; ctx.textAlign="center";
+                    ctx.fillText("izicoach · Generado el "+TODAY_DATE,400,fy+20);
+                    // Download
+                    const a=document.createElement("a");
+                    a.href=canvas.toDataURL("image/png");
+                    a.download="movimientos-"+selMonthLabel+".png";
+                    a.click();
+                  }} style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:10,border:"1px solid "+C.border,background:C.white,cursor:"pointer",fontSize:12,color:C.blue2,fontWeight:700}}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Exportar
+                  </button>
+                </div>
                 {[...monthFiltered].sort((a,b)=>b.date.localeCompare(a.date)).map(e=>(
                   <WhiteCard key={e.id} style={{marginBottom:8}}>
                     <div style={{display:"flex",alignItems:"center",gap:12}}>
                       <div style={{width:40,height:40,borderRadius:12,background:e.type==="ingreso"?"linear-gradient(135deg,#52C048,#65CE5A)":"linear-gradient(135deg,#E53935,#EF5350)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:C.white,flexShrink:0}}>{e.type==="ingreso"?"↑":"↓"}</div>
                       <div style={{flex:1}}>
                         <div style={{fontSize:14,fontWeight:700,color:C.text}}>{e.category}</div>
-                        <div style={{fontSize:11,color:C.mutedDark}}>{e.date}{e.note?" · "+e.note:""}</div>
+                        <div style={{fontSize:11,color:C.mutedDark}}>{e.date}{e.note?" · "+e.note:""}{e.detail?" · "+e.detail:""}</div>
                       </div>
                       <div style={{fontWeight:800,color:e.type==="ingreso"?"#2E7D32":"#C62828",fontSize:14,marginRight:8}}>{(e.type==="ingreso"?"+":"-")+fmtMoneyShort(e.amount)}</div>
                       <div style={{display:"flex",gap:4}}>
@@ -3462,7 +3793,7 @@ function OnboardingFlow({ onComplete }) {
   );
 
   return (
-    <div style={{minHeight:"100%",background:"linear-gradient(160deg,#1565C0,#2196F3)",display:"flex",flexDirection:"column",padding:"32px 24px 24px"}}>
+    <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#1565C0,#2196F3)",display:"flex",flexDirection:"column",padding:"32px 24px 24px"}}>
       {/* Logo */}
       <div style={{textAlign:"center",marginBottom:32}}>
         <div style={{fontSize:22,fontWeight:900,color:"#fff",letterSpacing:-1}}>izi<span style={{color:"#90CAF9"}}>coach</span></div>
@@ -3814,8 +4145,8 @@ export default function App() {
     setCurrency(cur);
   };
 
-  const addIncome=(amount,date,studentName)=>{
-    setExpenses(p=>[...p,{id:Date.now(),category:"Cobros clases",amount,type:"ingreso",date:date||TODAY_DATE,note:studentName}]);
+  const addIncome=(amount,date,studentName,detail)=>{
+    setExpenses(p=>[...p,{id:Date.now(),category:"Cobros clases",amount,type:"ingreso",date:date||TODAY_DATE,note:studentName,detail:detail||""}]);
   };
 
   const handleDeleteClass=(id)=>{
@@ -3827,7 +4158,18 @@ export default function App() {
 
   const handleSaveClass=(cd,isEdit=false)=>{
     if(isEdit){
-      setClasses(p=>p.map(c=>c.id===cd.id?{...c,...cd}:c));
+      if(cd.applyToAll){
+        // Apply changes to ALL instances of same series (same title+time+days)
+        const orig=classes.find(c=>c.id===cd.id);
+        setClasses(p=>p.map(c=>{
+          if(c.title===orig?.title&&c.time===orig?.time&&JSON.stringify(c.days)===JSON.stringify(orig?.days)){
+            return {...c,...cd,date:c.date}; // keep each instance's own date
+          }
+          return c;
+        }));
+      } else {
+        setClasses(p=>p.map(c=>c.id===cd.id?{...c,...cd}:c));
+      }
       // If studentPacks changed, update student combos
       if(cd.studentPacks){
         setStudents(p=>p.map(s=>{
@@ -3837,7 +4179,6 @@ export default function App() {
           const combos=[...s.combos];
           const lastIdx=combos.length-1;
           if(lastIdx>=0){
-            // Update last combo with new pack/amount
             combos[lastIdx]={...combos[lastIdx],total:pn,amount:parseInt(sp.amount)||combos[lastIdx].amount};
           }
           return {...s,combos};
@@ -3858,17 +4199,29 @@ export default function App() {
       setStudents(p=>p.map(s=>{
         const sd=cd.studentData.find(x=>x.id===s.id);
         if(!sd) return s;
-        const pn=sd.pack==="mensual"?null:parseInt(sd.pack)||null;
+        const pkg=packages.find(p=>String(p.id)===String(sd.pack));
+        const isIndividual=sd.pack==="individual"||pkg?.type==="individual";
+        const isMensual=sd.pack==="mensual"||pkg?.type==="mensual";
+        const pn=isMensual?null:isIndividual?1:pkg?.qty||parseInt(sd.pack)||null;
+        const packType=isMensual?"mensual":isIndividual?"individual":"combo";
         const projectedClassDates=[];
-        if(pn&&cd.days&&cd.days.length>0){
-          const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
-          const dowSet=new Set(cd.days.map(d=>DAY_MAP[d]));
-          let cur=new Date((cd.date||TODAY_DATE)+"T12:00:00");
-          while(projectedClassDates.length<pn){
-            if(dowSet.has(cur.getDay())){
-              projectedClassDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+        if(pn){
+          if(cd.days&&cd.days.length>0){            const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+            const dowSet=new Set(cd.days.map(d=>DAY_MAP[d]));
+            let cur=new Date((cd.date||TODAY_DATE)+"T12:00:00");
+            while(projectedClassDates.length<pn){
+              if(dowSet.has(cur.getDay())){
+                projectedClassDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+              }
+              cur.setDate(cur.getDate()+1);
             }
-            cur.setDate(cur.getDate()+1);
+          } else {
+            // No recurring days — use class date(s) directly
+            let cur=new Date((cd.date||TODAY_DATE)+"T12:00:00");
+            for(let i=0;i<pn;i++){
+              projectedClassDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+              cur.setDate(cur.getDate()+1);
+            }
           }
         }
         const amount=parseInt(sd.amount)||0;
@@ -3877,9 +4230,10 @@ export default function App() {
         return {...s,combos:[...s.combos,{
           id:s.combos.length+1,
           total:pn,
+          packType,
           used:0,
           paid:sd.paid,
-          paidCount:sd.paid?pn||0:0,
+          paidCount:sd.paid?(pn||0):0,
           date:sd.pack==="mensual"?(sd.payDate||cd.date||TODAY_DATE):(cd.date||TODAY_DATE),
           payDate:sd.pack==="mensual"?(sd.payDate||cd.date||TODAY_DATE):undefined,
           amount,
@@ -3891,31 +4245,52 @@ export default function App() {
       cd.studentData.forEach(sd=>{
         const shouldSave=sd.savePay===undefined?true:sd.savePay;
         if(shouldSave&&sd.paid&&parseInt(sd.amount)>0){
-          addIncome(parseInt(sd.amount), cd.date||TODAY_DATE, sd.name||"Alumno");
+          const pn=packages.find(p=>String(p.id)===String(sd.pack));
+          const detail=sd.pack==="mensual"?"Plan Mensual":pn?.qty?(pn.qty===1?"1 clase":pn.qty+" clases"):pn?.name||"";
+          addIncome(parseInt(sd.amount), cd.date||TODAY_DATE, sd.name||"Alumno", detail);
         }
       });
     }
   };
 
   const handleAttendance=(cls)=>{
-    const today=new Date().toISOString().split("T")[0];
     const wD=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
-    const day=wD[new Date().getDay()];
+    const classDate=cls.date||new Date().toISOString().split("T")[0];
+    const day=wD[new Date(classDate+"T12:00:00").getDay()];
+    const presentIds=cls.students||[];
+    const ausenteDadaIds=cls.ausente_dada||[];
+    const ausenteReprogIds=cls.ausente_reprog||[];
+    const allClassStudents=classes.find(c=>c.id===cls.id)?.students||cls.students;
+    // Save attendance log with full status
     setClasses(p=>p.map(c=>{
       if(c.id!==cls.id) return c;
-      const log=[...(c.attendanceLog||[]),{date:today,day,present:[...cls.students]}];
+      const log=[...(c.attendanceLog||[]).filter(e=>e.date!==classDate),
+        {date:classDate,day,present:presentIds,ausente_dada:ausenteDadaIds,ausente_reprog:ausenteReprogIds}];
       return {...c,attendanceLog:log};
     }));
+    // Only increment 'used' for present + ausente_dada (class was given)
+    const givenIds=[...presentIds,...ausenteDadaIds];
     setStudents(p=>p.map(s=>{
-      if(!cls.students.includes(s.id)) return s;
+      if(!allClassStudents.includes(s.id)) return s;
+      const wasGiven=givenIds.includes(s.id);
+      if(!wasGiven) return s;
       const combos=[...s.combos];
+      if(combos.length===0) return s;
       const last=combos[combos.length-1];
-      combos[combos.length-1]={...last,used:last.used+1};
+      combos[combos.length-1]={...last,used:(last.used||0)+1};
       return {...s,combos};
     }));
+    // For ausente_reprog: mark their combo date as needing reschedule
+    // (coach will reschedule from Agenda)
   };
 
-  const handleNavigate=(section,subTab)=>{setTab(section);if(subTab&&section==="cobros")setFinanceTab(subTab);};
+  const [pendingReprog,setPendingReprog]=useState(null);
+  const handleNavigate=(section,params)=>{
+    setTab(section);
+    if(params?.subTab&&section==="cobros") setFinanceTab(params.subTab);
+    if(params?.subTab&&typeof params.subTab==="string") setFinanceTab(params.subTab);
+    if(params?.reprog) setPendingReprog(params.reprog);
+  };
 
   const coachTabs=[
     {id:"dashboard",label:"Inicio"},{id:"students",label:"Alumnos"},
@@ -3958,7 +4333,7 @@ export default function App() {
         {tab==="dashboard"&&isFirstTime&&<EmptyDashboard onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)}/>}
         {tab==="dashboard"&&!isFirstTime&&<Dashboard students={students} classes={classes} onNavigate={handleNavigate} onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)} expenses={expenses} coachProfile={coachProfile}/>}
         {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={classes} onInvite={()=>setShowInvite(true)}/>}
-        {tab==="agenda"&&<Agenda students={students} classes={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onDeleteClass={handleDeleteClass}/>}
+        {tab==="agenda"&&<Agenda students={students} classes={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)}/>}
         {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification}/>}
         {tab==="cobros"&&<Finances students={students} classes={classes} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification}/>}
         {tab==="finanzas"&&<Finances students={students} classes={classes} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages}/>}

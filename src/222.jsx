@@ -98,10 +98,11 @@ const EXPENSES = [
 
 function getCombo(s) {
   const combos=s.combos||[];
-  // Prefer last combo with total>0, fallback to last mensual (total=null, paid exists)
+  // Prefer last combo with total>0 (individual or combo clases)
   const withTotal=combos.filter(x=>x.total>0);
   if(withTotal.length>0) return withTotal[withTotal.length-1];
-  const mensual=combos.filter(x=>x.total===null&&(x.paid||x.payDate||x.date));
+  // Then mensual (total=null but has payment info)
+  const mensual=combos.filter(x=>x.total===null&&(x.paid||x.payDate||x.date)&&x.packType!=="individual");
   if(mensual.length>0) return mensual[mensual.length-1];
   return combos[combos.length-1]||null;
 }
@@ -115,17 +116,32 @@ function getEffectiveTotal(s, c, classes=[]) {
 }
 function getRem(s, classes=[]) {
   const combos=s.combos||[];
-  const c=combos.filter(x=>x.total>0).slice(-1)[0];
-  if(!c) return null;
-  const effectiveTotal=getEffectiveTotal(s,c,classes);
-  const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
-  const unpaid=Math.max(0,effectiveTotal-paidCount);
-  if(unpaid>0) return -unpaid;
-  const remaining=Math.max(0,paidCount-(c.used||0));
-  // If all paid and used, check if last date has passed → return null to remove from cobros
-  const lastDate=c.dates&&c.dates.length>0?c.dates[c.dates.length-1]:"";
-  if(remaining===0&&lastDate&&lastDate<TODAY_DATE) return null;
-  return remaining;
+  // All combos that are "clases" type (total>0 OR packType individual/combo)
+  const classCombos=combos.filter(x=>{
+    if(x.total>0) return true;
+    if(x.packType==="individual"||x.packType==="combo") return true;
+    // Legacy individual: null total but has a specific class date (not mensual)
+    if(x.total===null&&x.date&&x.packType!=="mensual"&&!x.payDate) return true;
+    return false;
+  });
+  if(classCombos.length===0) return null;
+  let totalUnpaid=0;
+  let totalPorDar=0;
+  let anyActive=false;
+  classCombos.forEach(c=>{
+    const effectiveTotal=c.total>0?getEffectiveTotal(s,c,classes):(c.total||1);
+    const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?effectiveTotal:0);
+    const unpaid=Math.max(0,effectiveTotal-paidCount);
+    const porDar=Math.max(0,paidCount-(c.used||0));
+    const lastDate=c.dates&&c.dates.length>0?c.dates[c.dates.length-1]:"";
+    const cycleOpen=!(porDar===0&&unpaid===0&&lastDate&&lastDate<TODAY_DATE);
+    if(cycleOpen) anyActive=true;
+    totalUnpaid+=unpaid;
+    totalPorDar+=porDar;
+  });
+  if(!anyActive) return null;
+  if(totalUnpaid>0) return -totalUnpaid;
+  return totalPorDar;
 }
 
 function IziLogoBlack({ height=34 }) {
@@ -798,6 +814,21 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
   const exp=monthExpenses.filter(e=>e.type==="gasto").reduce((a,b)=>a+b.amount,0);
   // Cobros alerts - students with unpaid combos
   const cobrosAlerts=students.filter(s=>{const r=getRem(s,classes);return r!==null&&r<0||(!getCombo(s)?.paid&&getCombo(s)?.total);});
+  // Classes that need rescheduling: ausente_reprog OR cancelled (but not already rescheduled)
+  const reprogAlerts=[
+    // Ausente-reprog: student marked as needing reschedule
+    ...classes.filter(c=>{
+      if(c.rescheduled) return false;
+      return (c.attendanceLog||[]).some(e=>(e.ausente_reprog||[]).length>0);
+    }).map(c=>{
+      const log=(c.attendanceLog||[]).find(e=>(e.ausente_reprog||[]).length>0);
+      return {cls:c,reason:"reprog",students:(log?.ausente_reprog||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean)};
+    }).filter(x=>x.students.length>0),
+    // Cancelled: class was suspended
+    ...classes.filter(c=>c.cancelled&&!c.rescheduled).map(c=>({
+      cls:c,reason:"cancelled",students:(c.students||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean)
+    })).filter(x=>x.students.length>0),
+  ];
   const todayC=classes.filter(c=>c.date===TODAY_DATE&&!c.cancelled);
   const mN=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
   const todayLabel=new Date(TODAY_DATE+"T12:00:00").getDate()+" de "+mN[new Date(TODAY_DATE+"T12:00:00").getMonth()];
@@ -860,6 +891,28 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
           </WhiteCard>
         ))}
         {todayC.length>4&&<button onClick={()=>onNavigate("agenda")} style={{width:"100%",padding:"10px",borderRadius:12,border:"1.5px solid "+C.blue2,background:C.blueL,color:C.blue2,fontSize:13,cursor:"pointer",fontWeight:700,marginBottom:8}}>Ver {todayC.length-4} clases más →</button>}
+
+        {/* Clases a reprogramar */}
+        {reprogAlerts.length>0&&(
+          <div style={{marginTop:8,marginBottom:8}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+              <div style={{fontSize:13,fontWeight:800,color:C.text}}>⛔↩ Clases a reprogramar</div>
+              <button onClick={()=>onNavigate("agenda")} style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:C.blue2,fontWeight:700}}>Ver agenda →</button>
+            </div>
+            {reprogAlerts.slice(0,4).map(({cls,reason,students:sts},i)=>(
+              <div key={i} onClick={()=>onNavigate("agenda",{reprog:cls})} style={{background:reason==="cancelled"?"#FFF3E0":"#E8EAF6",border:"1.5px solid "+(reason==="cancelled"?"#FFB74D":"#9FA8DA"),borderRadius:12,padding:"10px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
+                <div style={{width:36,height:36,borderRadius:12,background:reason==="cancelled"?"linear-gradient(135deg,#E65100,#FF7043)":"linear-gradient(135deg,#3949AB,#5C6BC0)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,color:"#fff",flexShrink:0}}>{reason==="cancelled"?"⛔":"↩"}</div>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:13,fontWeight:700,color:C.text}}>{cls.title}</div>
+                  <div style={{fontSize:11,color:reason==="cancelled"?"#E65100":"#3949AB",fontWeight:600}}>
+                    {reason==="cancelled"?"Clase suspendida":"A reprogramar"} · {sts.map(s=>s.name.split(" ")[0]).join(", ")} · {cls.date}
+                  </div>
+                </div>
+              </div>
+            ))}
+            {reprogAlerts.length>4&&<div style={{fontSize:12,color:C.mutedDark,textAlign:"center",marginBottom:4}}>+{reprogAlerts.length-4} más</div>}
+          </div>
+        )}
 
         {/* Alertas cobros */}
         {cobrosAlerts.length>0&&(
@@ -1058,7 +1111,8 @@ function MiniCalendar({ year, month, selDay, onSelect, classes=[] }) {
           const mm=String(month+1).padStart(2,"0"); const dd=String(d).padStart(2,"0");
           const ds=year+"-"+mm+"-"+dd; const isA=selDay===ds; const isTodayCell=ds===TODAY_DATE;
           const dayClasses=classes.filter(c=>c.date===ds&&!c.cancelled);
-          const hasClasses=dayClasses.length>0;
+          const cancelledClasses=classes.filter(c=>c.date===ds&&c.cancelled&&!c.rescheduled);
+          const hasClasses=dayClasses.length>0||cancelledClasses.length>0;
           return (
             <button key={i} onClick={()=>onSelect(ds)} style={{background:isA?"linear-gradient(135deg,"+C.blue2+","+C.blue3+")":isTodayCell?C.blueL:"transparent",border:isTodayCell&&!isA?"2px solid "+C.blue2:"none",borderRadius:"50%",width:34,height:34,margin:"auto",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:1,position:"relative"}}>
               <span style={{fontSize:13,fontWeight:isA||hasClasses?700:400,color:isA?C.white:isTodayCell?C.blue2:C.text,lineHeight:1}}>{d}</span>
@@ -1066,6 +1120,9 @@ function MiniCalendar({ year, month, selDay, onSelect, classes=[] }) {
                 <div style={{display:"flex",gap:2,position:"absolute",bottom:4}}>
                   {dayClasses.slice(0,3).map((_,ci)=>(
                     <div key={ci} style={{width:4,height:4,borderRadius:"50%",background:isA?"rgba(255,255,255,0.8)":C.blue2}}></div>
+                  ))}
+                  {cancelledClasses.slice(0,2).map((_,ci)=>(
+                    <div key={"c"+ci} style={{width:4,height:4,borderRadius:"50%",background:isA?"rgba(255,255,255,0.8)":"#E53935"}}></div>
                   ))}
                 </div>
               )}
@@ -1241,9 +1298,18 @@ function ReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent }) {
   const handleConfirm=()=>{
     if(!targetDate) return;
     const oldDate=cls.date;
-    // Update class
-    onSave({...cls, date:targetDate, time:newTime, rescheduled:true});
-    // Update student combo dates that contain the old date
+    const updatedLog=(cls.attendanceLog||[]).map(e=>
+      e.date===oldDate?{...e,ausente_reprog:[],rescheduled_to:targetDate}:e
+    );
+    if(cls.cancelled){
+      // Move the cancelled class to the new date (don't keep it in old date)
+      const updatedClass={...cls, date:targetDate, time:newTime, cancelled:false, rescheduled:true, attendanceLog:updatedLog};
+      onSave(updatedClass, false, null);
+    } else {
+      // ausente_reprog: move the class to new date
+      onSave({...cls, date:targetDate, time:newTime, rescheduled:true, attendanceLog:updatedLog});
+    }
+    // Update student combo dates
     if(onUpdateStudent){
       clsStudents.forEach(s=>{
         const updatedCombos=s.combos.map(c=>{
@@ -1415,7 +1481,7 @@ function AttModal({ att, students, onAttendance, onClose }) {
   );
 }
 
-function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, courts=[], packages=[], onUpdateStudent, onDeleteClass }) {
+function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, courts=[], packages=[], onUpdateStudent, onDeleteClass, pendingReprog, onClearPendingReprog }) {
   const [selDay,setSelDay]=useState(TODAY_DATE);
   const [viewYear,setViewYear]=useState(new Date().getFullYear());
   const [viewMonth,setViewMonth]=useState(new Date().getMonth());
@@ -1424,6 +1490,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
   const [showNew,setShowNew]=useState(false);
   const [att,setAtt]=useState(null);
   const [editCls,setEditCls]=useState(null);
+  const [editScopeData,setEditScopeData]=useState(null);
   const [gridNewTime,setGridNewTime]=useState(null);
   const [highlightCls,setHighlightCls]=useState(null);
   const [confirmDelete,setConfirmDelete]=useState(null); // class to delete
@@ -1461,7 +1528,9 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
   const sd=new Date(selDay+"T12:00:00");
   const selLabel=wD[sd.getDay()]+" "+sd.getDate()+" de "+mN[sd.getMonth()];
 
-  const [reprog,setReprog]=useState(null); // class to reschedule
+  const [reprog,setReprog]=useState(pendingReprog||null);
+  // Auto-open reprog modal if navigated from dashboard
+  useState(()=>{if(pendingReprog){setReprog(pendingReprog);onClearPendingReprog&&onClearPendingReprog();}}); // class to reschedule
 
   const ClassCard=({c})=>{
     const log=(c.attendanceLog||[]).find(e=>e.date===c.date);
@@ -1543,17 +1612,22 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
                     const ds=viewYear+"-"+mm+"-"+dd;
                     const isA=selDay===ds; const isToday=ds===TODAY_DATE;
                     const dayCls=classes.filter(c=>c.date===ds&&!c.cancelled);
+                    const cancelledCls=classes.filter(c=>c.date===ds&&c.cancelled&&!c.rescheduled);
                     const count=dayCls.length;
+                    const cancelledCount=cancelledCls.length;
                     return (
                       <button key={i} onClick={()=>handleCalNav(ds)} style={{background:isA?"linear-gradient(135deg,"+C.blue2+","+C.blue3+")":isToday?C.blueL:"transparent",border:isToday&&!isA?"2px solid "+C.blue2:"2px solid transparent",borderRadius:12,padding:"6px 2px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2,minHeight:48}}>
-                        <span style={{fontSize:14,fontWeight:isA||isToday?800:400,color:isA?C.white:isToday?C.blue2:C.text,lineHeight:1}}>{d}</span>
-                        {count>0&&(
+                        <span style={{fontSize:14,fontWeight:isA||isToday||count>0||cancelledCount>0?800:400,color:isA?C.white:isToday?C.blue2:C.text,lineHeight:1}}>{d}</span>
+                        {(count>0||cancelledCount>0)&&(
                           <div style={{display:"flex",gap:2,justifyContent:"center",flexWrap:"wrap"}}>
                             {count<=3?dayCls.map((_,ci)=>(
                               <div key={ci} style={{width:5,height:5,borderRadius:"50%",background:isA?"rgba(255,255,255,0.8)":C.blue2}}/>
                             )):(
                               <span style={{fontSize:9,fontWeight:700,color:isA?C.white:C.blue2}}>{count}</span>
                             )}
+                            {cancelledCls.map((_,ci)=>(
+                              <div key={"c"+ci} style={{width:5,height:5,borderRadius:"50%",background:isA?"rgba(255,255,255,0.8)":"#E53935"}}/>
+                            ))}
                           </div>
                         )}
                       </button>
@@ -1574,7 +1648,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
                 <div style={{fontSize:12,marginTop:4}}>Tocá + para agregar</div>
               </div>
             ):dayC.map(c=>(
-              <div key={c.id} style={{background:c.cancelled?"#FFF3E0":C.white,borderRadius:16,padding:"12px 14px",marginBottom:10,boxShadow:"0 2px 10px rgba(44,94,247,0.07)",border:"1px solid "+C.border}}>
+              <div key={c.id} onClick={()=>setHighlightCls(c.id===highlightCls?null:c.id)} style={{background:c.cancelled?"#FFF3E0":C.white,borderRadius:16,padding:"12px 14px",marginBottom:10,boxShadow:"0 2px 10px rgba(44,94,247,0.07)",border:"1.5px solid "+(highlightCls===c.id?C.blue2:C.border),cursor:"pointer"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
                   <div style={{flex:1}}>
                     <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
@@ -1585,9 +1659,6 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
                     <span style={{fontSize:11,padding:"3px 8px",borderRadius:20,background:C.blueL,color:C.blue2,fontWeight:600}}>{(c.days||[]).join(" · ")}</span>
-                    <button onClick={()=>setHighlightCls(c.id===highlightCls?null:c.id)} style={{width:32,height:32,borderRadius:"50%",background:C.bg,border:"1px solid "+C.border,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                      <span style={{fontSize:14,color:C.mutedDark,fontWeight:800,letterSpacing:1}}>···</span>
-                    </button>
                   </div>
                 </div>
                 <div style={{display:"flex",gap:4,marginTop:8,flexWrap:"wrap"}}>
@@ -1800,7 +1871,35 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
       })()}
 
       <button onClick={()=>setShowNew(true)} style={{position:"fixed",bottom:72,right:20,width:56,height:56,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:28,cursor:"pointer",zIndex:50,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
-      {editCls&&<EditClassScreen cls={editCls} students={students} onClose={()=>setEditCls(null)} onSave={(u)=>{onSaveClass(u,true);setEditCls(null);}} onCreateStudent={onAddStudent} packages={packages} onDelete={(id)=>{onDeleteClass&&onDeleteClass(id);setEditCls(null);}}/>}
+      {/* Edit scope modal */}
+      {editScopeData&&(
+        <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:600,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 20px"}}>
+          <div style={{background:"#fff",borderRadius:20,padding:24,width:"100%",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+            <div style={{fontSize:17,fontWeight:800,color:C.text,marginBottom:6}}>¿Aplicar cambios a?</div>
+            <div style={{fontSize:13,color:C.mutedDark,marginBottom:20}}>Esta es una clase recurrente. ¿El cambio aplica solo a esta fecha o a toda la serie?</div>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              <button onClick={()=>{onSaveClass(editScopeData,true);setEditScopeData(null);setEditCls(null);}} style={{padding:"14px",borderRadius:12,border:"1.5px solid "+C.border,background:C.blueL,color:C.blue2,cursor:"pointer",fontSize:14,fontWeight:700,textAlign:"left"}}>
+                📅 Solo esta clase ({editScopeData.date})
+              </button>
+              <button onClick={()=>{onSaveClass({...editScopeData,applyToAll:true},true);setEditScopeData(null);setEditCls(null);}} style={{padding:"14px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:700,textAlign:"left"}}>
+                🔄 A Todas las Clases
+              </button>
+              <button onClick={()=>setEditScopeData(null)} style={{padding:"12px",borderRadius:12,border:"1.5px solid "+C.border,background:"#fff",color:C.mutedDark,cursor:"pointer",fontSize:13,fontWeight:600}}>Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editCls&&<EditClassScreen cls={editCls} students={students} onClose={()=>setEditCls(null)} onSave={(u)=>{
+        // Check if this is a recurring class (has days array with values)
+        const isRecurring=editCls.days&&editCls.days.length>0;
+        if(isRecurring){
+          setEditScopeData(u);
+        } else {
+          onSaveClass(u,true);
+          setEditCls(null);
+        }
+      }} onCreateStudent={onAddStudent} packages={packages} onDelete={(id)=>{onDeleteClass&&onDeleteClass(id);setEditCls(null);}}/>}
 
       {/* Custom delete confirmation modal */}
       {confirmDelete&&(
@@ -1818,7 +1917,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
           </div>
         </div>
       )}
-      {reprog&&<ReprogModal cls={reprog} onClose={()=>setReprog(null)} onSave={(updated)=>{onSaveClass(updated,true);setReprog(null);}} students={students} onUpdateStudent={onUpdateStudent}/>}
+      {reprog&&<ReprogModal cls={reprog} onClose={()=>setReprog(null)} onSave={(updated,_,addNew)=>{onSaveClass(updated,true);if(addNew)onSaveClass(addNew,false);setReprog(null);}} students={students} onUpdateStudent={onUpdateStudent}/>}
       {showNew&&<NewClassModal onClose={()=>{setShowNew(false);setGridNewTime(null);setWeekOffset(0);}} onSave={onSaveClass} students={students} dateLabel={viewMode==="month"?selLabel:weekLabel()} onCreateStudent={onAddStudent} prefill={gridNewTime} courts={courts} packages={packages} onAddPackage={(pkg)=>{packages.push(pkg);}}/>}
       {att&&<AttModal att={att} students={students} onAttendance={onAttendance} onClose={()=>setAtt(null)}/>}
     </div>
@@ -1970,7 +2069,11 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification }) {
 
 function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount, newDate, setNewDate, onClose, onUpdate, classes=[], addIncome, packages=[], sendNotification}) {
   const [showRecordatorioPago,setShowRecordatorioPago]=useState(false);
-  const [pagoTipo,setPagoTipo]=useState(combo?.total>0?"clases":"mensual");
+  const [pagoTipo,setPagoTipo]=useState(()=>{
+    if(combo?.total>0) return "clases";
+    if(combo?.packType==="individual"||combo?.packType==="combo") return "clases";
+    return "mensual";
+  });
   const [payMethod,setPayMethod]=useState("efectivo");
   const [step,setStep]=useState("form");
   const TODAY=TODAY_DATE;
@@ -2032,57 +2135,49 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   };
 
 
-  // Build dates from LAST combo only
+  // Build dates from ALL active combos (individual + regular combos)
   const buildAllDates=()=>{
     const result=[];
-    const c=allCombos.length>0?allCombos[allCombos.length-1]:null;
-    if(!c||!c.total) return result;
-    let dates=c.dates&&c.dates.length>0?c.dates:(()=>{
-      const ds=[];
-      const startDate=c.date||TODAY;
-      // If individual (total=1) or no class days, just use the combo date
-      if(c.total===1||classDowSet.size===0){
-        ds.push(startDate);
-        while(ds.length<c.total){
-          let cur=new Date(ds[ds.length-1]+"T12:00:00");
-          cur.setDate(cur.getDate()+1);
-          ds.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
-        }
-        return ds;
+    // Include ALL combos that are NOT purely mensual
+    const activeCombos=allCombos.filter(c=>{
+      if(c.total>0) return true;
+      if(c.packType==="individual"||c.packType==="combo") return true;
+      // Legacy individual: null total but matches a specific class date
+      if(c.total===null&&c.date&&c.packType!=="mensual"){
+        const hasMatchingClass=myClasses.some(cls=>cls.date===c.date);
+        if(hasMatchingClass) return true;
       }
-      let cur=new Date(startDate+"T12:00:00");
-      while(ds.length<c.total){
-        if(classDowSet.has(cur.getDay())){
-          ds.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
-        }
-        cur.setDate(cur.getDate()+1);
+      return false;
+    });
+    if(activeCombos.length===0) return result;
+    activeCombos.forEach(c=>{
+      const effectiveTotal=c.total||1;
+      const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?effectiveTotal:0);
+      // Get dates: from stored dates array, or from matching class dates, or generate
+      let dates=[];
+      if(c.dates&&c.dates.length>0){
+        dates=c.dates;
+      } else if(c.date){
+        // Find class on this date
+        const matchingCls=myClasses.find(cls=>cls.date===c.date);
+        dates=[matchingCls?matchingCls.date:c.date];
       }
-      return ds;
-    })();
-    dates.forEach((ds,i)=>{
-      const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
-      const isPaidDate=i<paidCount;
-      // Check attendance for this specific date
-      const attEntry=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===ds);
-      const classOnDate=myClasses.find(cls=>cls.date===ds);
-      const isCancelled=classOnDate?.cancelled&&!classOnDate?.rescheduled;
-      const isRescheduled=classOnDate?.rescheduled||false;
-      const wasAbsent=attEntry?(
-        [...(attEntry.ausente_dada||[]),...(attEntry.ausente_reprog||[])].includes(s.id)||
-        (!attEntry.present.includes(s.id)&&!(attEntry.ausente_dada||[]).includes(s.id))
-      ):false;
-      const wasAusenteDada=attEntry?(attEntry.ausente_dada||[]).includes(s.id):false;
-      const wasAusenteReprog=attEntry?(attEntry.ausente_reprog||[]).includes(s.id):false;
-      const wasPresent=attEntry?(attEntry.present||[]).includes(s.id):false;
-      // Class is "given" if: present, ausente_dada, OR past with no record and not cancelled
-      const isGiven=isCancelled?false:wasAusenteReprog?false:attEntry?(wasPresent||wasAusenteDada):(ds<TODAY);
-      let status;
-      if(isPaidDate){
-        status=isGiven?"dada":"adar";
-      } else {
-        status=isGiven?"dada_unpaid":"pendiente";
-      }
-      result.push({date:ds,status,comboId:c.id,isGiven,wasPresent,wasAbsent,wasAusenteDada,wasAusenteReprog,isCancelled,isRescheduled});
+      dates.slice(0,Math.max(effectiveTotal,dates.length)).forEach((ds,i)=>{
+        const classOnDate=myClasses.find(cl=>cl.date===ds);
+        const isCancelled=!!(classOnDate?.cancelled&&!classOnDate?.rescheduled);
+        const isRescheduled=!!(classOnDate?.rescheduled);
+        const isPaidDate=i<paidCount&&!isCancelled;
+        const attEntry=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===ds);
+        const wasAusenteDada=attEntry?(attEntry.ausente_dada||[]).includes(s.id):false;
+        const wasAusenteReprog=attEntry?(attEntry.ausente_reprog||[]).includes(s.id):false;
+        const wasPresent=attEntry?(attEntry.present||[]).includes(s.id):false;
+        const wasAbsent=attEntry?(!wasPresent&&!wasAusenteDada&&!wasAusenteReprog):false;
+        const isGiven=isCancelled?false:wasAusenteReprog?false:attEntry?(wasPresent||wasAusenteDada):(ds<TODAY);
+        let status;
+        if(isPaidDate){status=isGiven?"dada":"adar";}
+        else{status=isGiven?"dada_unpaid":"pendiente";}
+        result.push({date:ds,status,comboId:c.id,isGiven,wasPresent,wasAbsent,wasAusenteDada,wasAusenteReprog,isCancelled,isRescheduled});
+      });
     });
     return result.sort((a,b)=>a.date.localeCompare(b.date));
   };
@@ -2158,7 +2253,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
       return dates;
     };
 
-    if(pagoTipo==="clases"&&lastCombo&&!lastCombo.paid&&qty>0){
+    if(pagoTipo==="clases"&&lastCombo&&!lastCombo.paid&&lastCombo.total>0&&qty>0){
       const lastIdx=updatedCombos.length-1;
       const existing=updatedCombos[lastIdx];
       const comboTotal=existing.total||0;
@@ -2358,8 +2453,9 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               })():(()=>{
                 // Only use last combo for display
                 const lastC=allCombos.filter(c=>c.total).slice(-1)[0];
+                const effectiveTot=lastC?getEffectiveTotal(s,lastC,classes):0;
                 const paid=lastC?(lastC.paidCount!==undefined?lastC.paidCount:(lastC.paid?lastC.total:0)):0;
-                const unpaid=lastC?Math.max(0,lastC.total-paid):0;
+                const unpaid=lastC?Math.max(0,effectiveTot-paid):0;
                 const given=lastC?Math.max(0,(lastC.used||0)):0;
                 const remainingUnpaid=Math.max(0,unpaid-(parseInt(localClasses)||0));
                 const paidRemaining=Math.max(0,paid-given);
@@ -2391,11 +2487,19 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
               <div>
                 <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>¿Cuántas clases pagamos?</div>
-                <div style={{display:"flex",alignItems:"center",background:C.blueL,borderRadius:12,overflow:"hidden"}}>
-                  <button onClick={()=>setLocalClasses(Math.max(0,(parseInt(localClasses)||0)-1))} style={{width:44,height:46,border:"none",background:"#2C5EF7",color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>◀</button>
-                  <div style={{flex:1,textAlign:"center",fontSize:22,fontWeight:800,color:"#1A237E"}}>{parseInt(localClasses)||0}</div>
-                  <button onClick={()=>setLocalClasses((parseInt(localClasses)||0)+1)} style={{width:44,height:46,border:"none",background:"#2C5EF7",color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>▶</button>
-                </div>
+                {(()=>{
+                  const lastC=allCombos.filter(c=>c.total).slice(-1)[0];
+                  const effectiveTotal=lastC?getEffectiveTotal(s,lastC,classes):0;
+                  const paidCount=lastC?(lastC.paidCount!==undefined?lastC.paidCount:(lastC.paid?lastC.total:0)):0;
+                  // For individual/no-total combos, allow up to 20 classes
+                  const maxUnpaid=effectiveTotal>0?Math.max(0,effectiveTotal-paidCount):20;                  return (
+                    <div style={{display:"flex",alignItems:"center",background:C.blueL,borderRadius:12,overflow:"hidden"}}>
+                      <button onClick={()=>setLocalClasses(Math.max(0,(parseInt(localClasses)||0)-1))} style={{width:44,height:46,border:"none",background:"#2C5EF7",color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>◀</button>
+                      <div style={{flex:1,textAlign:"center",fontSize:22,fontWeight:800,color:"#1A237E"}}>{parseInt(localClasses)||0}</div>
+                      <button onClick={()=>setLocalClasses(Math.min(maxUnpaid,(parseInt(localClasses)||0)+1))} style={{width:44,height:46,border:"none",background:"#2C5EF7",color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>▶</button>
+                    </div>
+                  );
+                })()}
               </div>
               <div>
                 <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>Monto (₲)</div>
@@ -2431,12 +2535,13 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
           </div>
         </div>
 
-        {/* Fechas de clase list - only show if there are pending or future dates */}
+        {/* Fechas de clase list - show all until full cycle closes */}
         {pagoTipo==="clases"&&(()=>{
           const lastComboDate=allDates.length>0?allDates[allDates.length-1].date:"";
-              const allPaid=allDates.every(d=>d.status==="dada"||d.status==="adar");
-              const lastDatePassed=lastComboDate&&lastComboDate<TODAY_DATE;
-              const activeDates=allPaid&&lastDatePassed?[]:allDates.filter(d=>d.status!=="dada");
+          const allPaid=allDates.every(d=>d.status==="dada"||d.status==="adar"||d.isCancelled);
+          const lastDatePassed=lastComboDate&&lastComboDate<TODAY_DATE;
+          // Show ALL dates until every combo cycle is closed
+          const activeDates=allPaid&&lastDatePassed?[]:allDates;
           const hasNew=parseInt(localClasses)>0;
           // Fallback for individual/unpaid with no generated dates
           if(activeDates.length===0&&!hasNew){
@@ -2460,38 +2565,41 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             <div style={{fontSize:11,fontWeight:700,color:"#5C7A9F",letterSpacing:0.5,marginBottom:8}}>FECHAS DE CLASE</div>
             {activeDates.map((item,i)=>{
               const qty=parseInt(localClasses)||0;
-              const unpaidBefore=activeDates.slice(0,i).filter(d=>d.status==="pendiente"||d.status==="dada_unpaid").length;
-              const isUnpaid=item.status==="pendiente"||item.status==="dada_unpaid";
-              const alreadyPaid=item.status==="adar";
-              const isPaidNow=alreadyPaid||(isUnpaid&&unpaidBefore<qty);
-              const isPaid=alreadyPaid||isPaidNow;
-              const isGiven=item.isGiven||item.status==="dada_unpaid";
+              const isCancelled=item.isCancelled||false;
+              const isRescheduled=item.isRescheduled||false;
               const wasAbsent=item.wasAbsent||false;
               const wasAusenteDada=item.wasAusenteDada||false;
               const wasAusenteReprog=item.wasAusenteReprog||false;
-              const isCancelled=item.isCancelled||false;
-              const isRescheduled=item.isRescheduled||false;
+              // Cancelled dates are never counted as payable
+              const unpaidBefore=activeDates.slice(0,i).filter(d=>
+                (d.status==="pendiente"||d.status==="dada_unpaid")&&!d.isCancelled
+              ).length;
+              const isUnpaid=item.status==="pendiente"||item.status==="dada_unpaid";
+              const alreadyPaid=item.status==="adar"||item.status==="dada";
+              const isPaidNow=!isCancelled&&(alreadyPaid||(isUnpaid&&unpaidBefore<qty));
+              const isPaid=!isCancelled&&(alreadyPaid||isPaidNow);
+              const isGiven=item.isGiven||item.status==="dada_unpaid"||item.status==="dada";
               // Class status label (left badge)
               let leftBg,leftColor,leftLabel;
               if(isRescheduled){leftBg="#E3F2FD";leftColor="#1565C0";leftLabel="🔄 Reprogramada";}
-              else if(isCancelled){leftBg="#F3E5F5";leftColor="#7B1FA2";leftLabel="❌ Cancelada";}
+              else if(isCancelled){leftBg="#F3E5F5";leftColor="#7B1FA2";leftLabel="❌ Cancelada — Pendiente";}
               else if(wasAusenteReprog){leftBg="#E8EAF6";leftColor="#3949AB";leftLabel="↩ A Reprogramar";}
               else if(wasAusenteDada){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="🚫 Ausente (Dada)";}
               else if(wasAbsent){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="🚫 Ausente";}
               else if(isGiven){leftBg=C.blueL;leftColor=C.blue2;leftLabel="Clase Dada";}
               else{leftBg="#FFF3E0";leftColor="#E65100";leftLabel="Clase No Dada";}
-              // Payment status label (right badge) — always independent
+              // Payment badge — hide for cancelled (no payment until rescheduled)
               const rightBg=isPaid?"#E8F5E9":"#FFEBEE";
               const rightColor=isPaid?"#2E7D32":"#C62828";
               const rightLabel=isPaid?"✓ Pagada":"No Pagada";
               return (
                 <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid #E3F2FD"}}>
-                  <div style={{width:28,height:28,borderRadius:"50%",background:C.blueL,border:"2px solid #1976D2",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                    <span style={{fontSize:11,fontWeight:800,color:C.blue2}}>{i+1}</span>
+                  <div style={{width:28,height:28,borderRadius:"50%",background:isCancelled?"#F3E5F5":C.blueL,border:"2px solid "+(isCancelled?"#7B1FA2":"#1976D2"),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <span style={{fontSize:11,fontWeight:800,color:isCancelled?"#7B1FA2":C.blue2}}>{i+1}</span>
                   </div>
                   <div style={{flex:1,fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(item.date)}</div>
                   <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:leftBg,color:leftColor,fontWeight:700,flexShrink:0}}>{leftLabel}</span>
-                  <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700,flexShrink:0}}>{rightLabel}</span>
+                  {!isCancelled&&<span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700,flexShrink:0}}>{rightLabel}</span>}
                 </div>
               );
             })}
@@ -2610,7 +2718,9 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
         </div>
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,flexWrap:"wrap"}}>
           <span style={{fontSize:12,padding:"4px 12px",borderRadius:20,background:C.blueL,color:C.blue2,fontWeight:700}}>{"🗓 Último pago: "+(combo?.date||"—")}</span>
-          <span style={{fontSize:12,padding:"4px 12px",borderRadius:20,background:combo?.total?C.blueL:C.greenL,color:combo?.total?C.blue2:C.green,fontWeight:700}}>{combo?.total?"📦 "+combo.total+" clases":"📅 Mensual"}</span>
+          <span style={{fontSize:12,padding:"4px 12px",borderRadius:20,background:combo?.total?C.blueL:combo?.packType==="individual"?C.blueL:combo?.packType==="combo"?C.blueL:C.greenL,color:combo?.total?C.blue2:combo?.packType&&combo.packType!=="mensual"?C.blue2:C.green,fontWeight:700}}>
+            {combo?.total?"📦 "+combo.total+" clases":combo?.packType==="individual"?"🎯 Individual":combo?.packType==="combo"?"📦 Combo":"📅 Mensual"}
+          </span>
         </div>
         {/* Class schedule or upcoming dates */}
         {(()=>{
@@ -4048,7 +4158,18 @@ export default function App() {
 
   const handleSaveClass=(cd,isEdit=false)=>{
     if(isEdit){
-      setClasses(p=>p.map(c=>c.id===cd.id?{...c,...cd}:c));
+      if(cd.applyToAll){
+        // Apply changes to ALL instances of same series (same title+time+days)
+        const orig=classes.find(c=>c.id===cd.id);
+        setClasses(p=>p.map(c=>{
+          if(c.title===orig?.title&&c.time===orig?.time&&JSON.stringify(c.days)===JSON.stringify(orig?.days)){
+            return {...c,...cd,date:c.date}; // keep each instance's own date
+          }
+          return c;
+        }));
+      } else {
+        setClasses(p=>p.map(c=>c.id===cd.id?{...c,...cd}:c));
+      }
       // If studentPacks changed, update student combos
       if(cd.studentPacks){
         setStudents(p=>p.map(s=>{
@@ -4058,7 +4179,6 @@ export default function App() {
           const combos=[...s.combos];
           const lastIdx=combos.length-1;
           if(lastIdx>=0){
-            // Update last combo with new pack/amount
             combos[lastIdx]={...combos[lastIdx],total:pn,amount:parseInt(sp.amount)||combos[lastIdx].amount};
           }
           return {...s,combos};
@@ -4079,11 +4199,14 @@ export default function App() {
       setStudents(p=>p.map(s=>{
         const sd=cd.studentData.find(x=>x.id===s.id);
         if(!sd) return s;
-        const pn=sd.pack==="mensual"?null:parseInt(sd.pack)||null;
+        const pkg=packages.find(p=>String(p.id)===String(sd.pack));
+        const isIndividual=sd.pack==="individual"||pkg?.type==="individual";
+        const isMensual=sd.pack==="mensual"||pkg?.type==="mensual";
+        const pn=isMensual?null:isIndividual?1:pkg?.qty||parseInt(sd.pack)||null;
+        const packType=isMensual?"mensual":isIndividual?"individual":"combo";
         const projectedClassDates=[];
         if(pn){
-          if(cd.days&&cd.days.length>0){
-            const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+          if(cd.days&&cd.days.length>0){            const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
             const dowSet=new Set(cd.days.map(d=>DAY_MAP[d]));
             let cur=new Date((cd.date||TODAY_DATE)+"T12:00:00");
             while(projectedClassDates.length<pn){
@@ -4107,9 +4230,10 @@ export default function App() {
         return {...s,combos:[...s.combos,{
           id:s.combos.length+1,
           total:pn,
+          packType,
           used:0,
           paid:sd.paid,
-          paidCount:sd.paid?pn||0:0,
+          paidCount:sd.paid?(pn||0):0,
           date:sd.pack==="mensual"?(sd.payDate||cd.date||TODAY_DATE):(cd.date||TODAY_DATE),
           payDate:sd.pack==="mensual"?(sd.payDate||cd.date||TODAY_DATE):undefined,
           amount,
@@ -4160,7 +4284,13 @@ export default function App() {
     // (coach will reschedule from Agenda)
   };
 
-  const handleNavigate=(section,subTab)=>{setTab(section);if(subTab&&section==="cobros")setFinanceTab(subTab);};
+  const [pendingReprog,setPendingReprog]=useState(null);
+  const handleNavigate=(section,params)=>{
+    setTab(section);
+    if(params?.subTab&&section==="cobros") setFinanceTab(params.subTab);
+    if(params?.subTab&&typeof params.subTab==="string") setFinanceTab(params.subTab);
+    if(params?.reprog) setPendingReprog(params.reprog);
+  };
 
   const coachTabs=[
     {id:"dashboard",label:"Inicio"},{id:"students",label:"Alumnos"},
@@ -4203,7 +4333,7 @@ export default function App() {
         {tab==="dashboard"&&isFirstTime&&<EmptyDashboard onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)}/>}
         {tab==="dashboard"&&!isFirstTime&&<Dashboard students={students} classes={classes} onNavigate={handleNavigate} onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)} expenses={expenses} coachProfile={coachProfile}/>}
         {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={classes} onInvite={()=>setShowInvite(true)}/>}
-        {tab==="agenda"&&<Agenda students={students} classes={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onDeleteClass={handleDeleteClass}/>}
+        {tab==="agenda"&&<Agenda students={students} classes={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)}/>}
         {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification}/>}
         {tab==="cobros"&&<Finances students={students} classes={classes} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification}/>}
         {tab==="finanzas"&&<Finances students={students} classes={classes} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages}/>}
