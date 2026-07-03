@@ -823,16 +823,6 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
   const exp=monthExpenses.filter(e=>e.type==="gasto").reduce((a,b)=>a+b.amount,0);
   // Cobros alerts - students with unpaid combos
   const cobrosAlerts=students.filter(s=>{const r=getRem(s,classes);return r!==null&&r<0||(!getCombo(s)?.paid&&getCombo(s)?.total);});
-  // Combos that just completed and need renewal (new combo created but unpaid)
-  const comboRenewalAlerts=students.filter(s=>{
-    const combos=s.combos||[];
-    if(combos.length<2) return false;
-    const last=combos[combos.length-1];
-    const prev=combos[combos.length-2];
-    // Last combo is unpaid (auto-created), previous was paid+complete
-    return last&&!last.paid&&last.paidCount===0&&prev?.paid&&prev?.total>0;
-  });
-
   // Classes that need rescheduling: ausente_reprog OR cancelled (but not already rescheduled)
   const reprogAlerts=[
     // Ausente-reprog: student marked as needing reschedule
@@ -933,30 +923,6 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
           </div>
         )}
 
-        {/* Combo renovacion alerts */}
-        {comboRenewalAlerts.length>0&&(
-          <div style={{marginBottom:8}}>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
-              <div style={{fontSize:13,fontWeight:800,color:C.text}}>🔄 Combos a renovar</div>
-              <button onClick={()=>onNavigate("cobros")} style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:C.blue2,fontWeight:700}}>Ver cobros →</button>
-            </div>
-            {comboRenewalAlerts.slice(0,3).map((s,i)=>{
-              const last=s.combos[s.combos.length-1];
-              return (
-                <div key={i} onClick={()=>onNavigate("cobros")} style={{background:"#E8F5E9",border:"1.5px solid #A5D6A7",borderRadius:12,padding:"10px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
-                  <div style={{width:36,height:36,borderRadius:"50%",background:"linear-gradient(135deg,#2E7D32,#43A047)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:800,color:"#fff",flexShrink:0}}>{s.avatar[0]}</div>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:13,fontWeight:700,color:C.text}}>{s.name}</div>
-                    <div style={{fontSize:11,color:"#2E7D32",fontWeight:600}}>Combo de {last?.total} clases completado · Nuevo combo sin pagar</div>
-                  </div>
-                  <div style={{fontSize:20,fontWeight:900,color:"#2E7D32"}}>{last?.total}</div>
-                </div>
-              );
-            })}
-            {comboRenewalAlerts.length>3&&<div style={{fontSize:12,color:C.mutedDark,textAlign:"center",marginBottom:4}}>+{comboRenewalAlerts.length-3} más</div>}
-          </div>
-        )}
-
         {/* Alertas cobros */}
         {cobrosAlerts.length>0&&(
           <div style={{marginTop:8}}>
@@ -1052,7 +1018,7 @@ function Students({ students, onAdd, onUpdate, onChat, classes=[], onInvite }) {
                 const isRed=rem!==null&&rem<0||(!combo?.paid);
                 const noData=!combo||(!combo.total&&!combo.paidCount&&!combo.paid);
                 const statusColor=noData?"#9BACCB":rem===null?C.blue2:isRed?"#C62828":rem===0?"#43A047":C.blue2;
-                const statusLabel=noData?"Sin registro":rem===null?"Mensual":isRed?"A cobrar":rem===0?"Al día":"Programadas";
+                const statusLabel=noData?"Sin registro":rem===null?"Mensual":isRed?"A cobrar":rem===0?"Al día":"Por dar";
                 return (
                   <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid "+C.border}}>
                     {/* Classes */}
@@ -1075,8 +1041,8 @@ function Students({ students, onAdd, onUpdate, onChat, classes=[], onInvite }) {
                     <div style={{background:C.blueL,borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                       <div style={{fontSize:12,fontWeight:700,color:C.mutedDark}}>Estado de Cuenta</div>
                       <div style={{display:"flex",alignItems:"baseline",gap:6}}>
-                        <span style={{fontSize:noData?14:26,fontWeight:900,color:statusColor}}>{noData?"Sin registro":rem===null?"Mensual":Math.abs(rem)}</span>
-                        {!noData&&rem!==null&&<span style={{fontSize:11,fontWeight:700,color:statusColor}}>{statusLabel}</span>}
+                        <span style={{fontSize:noData?14:26,fontWeight:900,color:statusColor}}>{noData?"Sin registro":rem===null?"∞":Math.abs(rem)}</span>
+                        {!noData&&<span style={{fontSize:11,fontWeight:700,color:statusColor}}>{statusLabel}</span>}
                       </div>
                     </div>
                   </div>
@@ -2425,12 +2391,12 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
                 if(item.isNew||isPaid){
                   leftBg=wasAbsent?"#FFF3E0":isCancelled?"#F3E5F5":"#E8F5E9";
                   leftColor=wasAbsent?"#E65100":isCancelled?"#7B1FA2":"#2E7D32";
-                  leftLabel=wasAbsent?"🚫 Ausente":isCancelled?"❌ Cancelada":"Programada";
+                  leftLabel=wasAbsent?"🚫 Ausente":isCancelled?"❌ Cancelada":"Clase No Dada";
                   rightBg="#E8F5E9";rightColor="#2E7D32";rightLabel="Pagada";
                 } else {
                   leftBg=wasAbsent?"#FFF3E0":isCancelled?"#F3E5F5":"#FFF3E0";
                   leftColor=wasAbsent?"#E65100":isCancelled?"#7B1FA2":"#E65100";
-                  leftLabel=wasAbsent?"🚫 Ausente":isCancelled?"❌ Cancelada":"Programada";
+                  leftLabel=wasAbsent?"🚫 Ausente":isCancelled?"❌ Cancelada":"Clase No Dada";
                   rightBg="#FFF3E0";rightColor="#E65100";rightLabel="No Pagada";
                 }
                 return (
@@ -2512,7 +2478,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
                 return (
                   <>
                     <div style={{fontSize:40,fontWeight:900,lineHeight:1,color:isRed?"#C62828":displayNum===0?"#43A047":C.blue2}}>{displayNum}</div>
-                    <div style={{fontSize:11,fontWeight:700,color:isRed?"#C62828":displayNum===0?"#43A047":C.blue2,marginTop:4}}>{isRed?"A cobrar":displayNum===0?"Al día":"Programadas"}</div>
+                    <div style={{fontSize:11,fontWeight:700,color:isRed?"#C62828":displayNum===0?"#43A047":C.blue2,marginTop:4}}>{isRed?"A cobrar":displayNum===0?"Al día":"Por dar"}</div>
                   </>
                 );
               })()}
@@ -2634,8 +2600,8 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               else if(wasAusenteReprog){leftBg="#E8EAF6";leftColor="#3949AB";leftLabel="↩ A Reprogramar";}
               else if(wasAusenteDada){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="🚫 Ausente (Dada)";}
               else if(wasAbsent){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="🚫 Ausente";}
-              else if(isGiven){leftBg=C.blueL;leftColor=C.blue2;leftLabel="Realizada";}
-              else{leftBg="#FFF3E0";leftColor="#E65100";leftLabel="Programada";}
+              else if(isGiven){leftBg=C.blueL;leftColor=C.blue2;leftLabel="Clase Dada";}
+              else{leftBg="#FFF3E0";leftColor="#E65100";leftLabel="Clase No Dada";}
               // Payment badge — hide for cancelled (no payment until rescheduled)
               const rightBg=isPaid?"#E8F5E9":"#FFEBEE";
               const rightColor=isPaid?"#2E7D32":"#C62828";
@@ -2832,7 +2798,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             })():(
               <>
                 <div style={{fontSize:40,fontWeight:900,color:!combo?.paid?"#C62828":rem<=0?"#43A047":C.blue2,lineHeight:1}}>{Math.abs(rem)}</div>
-                <div style={{fontSize:11,fontWeight:700,color:!combo?.paid?"#C62828":rem<=0?"#43A047":C.blue2,marginTop:2}}>{!combo?.paid?"A cobrar":rem<=0?"Al día":"Programadas"}</div>
+                <div style={{fontSize:11,fontWeight:700,color:!combo?.paid?"#C62828":rem<=0?"#43A047":C.blue2,marginTop:2}}>{!combo?.paid?"A cobrar":rem<=0?"Al día":"Por dar"}</div>
               </>
             )}
           </div>
@@ -4315,12 +4281,9 @@ export default function App() {
       cd.studentData.forEach(sd=>{
         const shouldSave=sd.savePay===undefined?true:sd.savePay;
         if(shouldSave&&sd.paid&&parseInt(sd.amount)>0){
-          const pkg=packages.find(p=>String(p.id)===String(sd.pack));
-          const studentName=students.find(s=>String(s.id)===String(sd.id))?.name||"Alumno";
-          const detail=sd.pack==="mensual"||pkg?.type==="mensual"?"Plan Mensual":
-            sd.pack==="individual"||pkg?.type==="individual"?"Clase Individual":
-            pkg?.qty?(pkg.qty+" clases"):pkg?.name||"";
-          addIncome(parseInt(sd.amount), cd.date||TODAY_DATE, studentName, detail);
+          const pn=packages.find(p=>String(p.id)===String(sd.pack));
+          const detail=sd.pack==="mensual"?"Plan Mensual":pn?.qty?(pn.qty===1?"1 clase":pn.qty+" clases"):pn?.name||"";
+          addIncome(parseInt(sd.amount), cd.date||TODAY_DATE, sd.name||"Alumno", detail);
         }
       });
     }
@@ -4349,44 +4312,8 @@ export default function App() {
       if(!wasGiven) return s;
       const combos=[...s.combos];
       if(combos.length===0) return s;
-      const lastIdx=combos.length-1;
-      const last=combos[lastIdx];
-      const newUsed=(last.used||0)+1;
-      combos[lastIdx]={...last,used:newUsed};
-      // Check if combo is now complete (all paid + all given)
-      const effectiveTotal=last.total||0;
-      const paidCount=last.paidCount!==undefined?last.paidCount:(last.paid?effectiveTotal:0);
-      const allGiven=newUsed>=paidCount&&paidCount>=effectiveTotal&&effectiveTotal>0;
-      if(allGiven&&last.dates&&last.dates.length>0){
-        // Generate next combo dates starting from day after last date
-        const myClsForStudent=classes.filter(c=>c.students&&c.students.includes(s.id));
-        const classDays=myClsForStudent.length>0?myClsForStudent[0].days:[];
-        const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
-        const dowSet=new Set(classDays.map(d=>DAY_MAP[d]));
-        const lastDate=last.dates[last.dates.length-1];
-        let cur=new Date(lastDate+"T12:00:00");
-        cur.setDate(cur.getDate()+1);
-        const nextDates=[];
-        while(nextDates.length<effectiveTotal){
-          if(dowSet.size===0||dowSet.has(cur.getDay())){
-            nextDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
-          }
-          cur.setDate(cur.getDate()+1);
-        }
-        // Add new unpaid combo
-        combos.push({
-          id:combos.length+1,
-          total:effectiveTotal,
-          packType:last.packType||"combo",
-          used:0,
-          paid:false,
-          paidCount:0,
-          date:nextDates[0]||lastDate,
-          amount:last.amount,
-          dates:nextDates,
-          payments:[],
-        });
-      }
+      const last=combos[combos.length-1];
+      combos[combos.length-1]={...last,used:(last.used||0)+1};
       return {...s,combos};
     }));
     // For ausente_reprog: mark their combo date as needing reschedule
