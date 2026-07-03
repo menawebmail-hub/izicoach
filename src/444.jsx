@@ -2324,23 +2324,6 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         date:localDate||TODAY,
         payments:[...(existing.payments||[]),newPayment],
       };
-      // If fully paid AND all classes already given → auto-create next combo
-      if(fullyPaid&&givenCount>=comboTotal&&comboTotal>0){
-        const lastComboDate=(existing.dates||[]).slice(-1)[0]||TODAY;
-        const nextDates=generateNewDates(comboTotal, lastComboDate);
-        updatedCombos.push({
-          id:updatedCombos.length+1,
-          total:comboTotal,
-          packType:existing.packType||"combo",
-          used:givenCount>=comboTotal?0:0,
-          paid:false,
-          paidCount:0,
-          date:nextDates[0]||TODAY,
-          amount:existing.amount||0,
-          dates:nextDates,
-          payments:[],
-        });
-      }
     } else if(pagoTipo==="clases"&&qty>0){
       const allExistingDates=updatedCombos.flatMap(c=>c.dates||[]).sort();
       const lastDate=allExistingDates.length>0?allExistingDates[allExistingDates.length-1]:TODAY;
@@ -2733,7 +2716,7 @@ function RecordatorioModal({ student:s, onClose, sendNotification, getRem, getCo
   );
 }
 
-function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance }) {
+function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sendNotification }) {
   const combo=getCombo(s);
   const rem=getRem(s,classes);
   const isExpired=rem!==null&&rem<=0;
@@ -2756,23 +2739,12 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
 
   const attLogs=[];
   classes.forEach(cls=>{
-    if(!cls.students||!cls.students.includes(s.id)) return;
-    // Show classes with explicit attendance
-    const logged=(cls.attendanceLog||[]).filter(entry=>
-      entry.present&&entry.present.includes(s.id)||
-      entry.ausente_dada&&entry.ausente_dada.includes(s.id)
-    );
-    logged.forEach(entry=>{
+    if(!cls.students.includes(s.id)) return;
+    (cls.attendanceLog||[]).forEach(entry=>{
+      if(!entry.present.includes(s.id)) return;
       const d=new Date(entry.date+"T12:00:00");
-      const isAusenteDada=entry.ausente_dada&&entry.ausente_dada.includes(s.id);
-      attLogs.push({date:entry.date,day:entry.day||"",month:MONTHS[d.getMonth()],year:d.getFullYear(),dayNum:d.getDate(),className:cls.title,time:cls.time,status:isAusenteDada?"ausente_dada":"presente"});
+      attLogs.push({date:entry.date,day:entry.day,month:MONTHS[d.getMonth()],year:d.getFullYear(),dayNum:d.getDate(),className:cls.title,time:cls.time});
     });
-    // Also include past classes with NO attendance record (default = present)
-    if(cls.date<TODAY_DATE&&!(cls.attendanceLog||[]).find(e=>e.date===cls.date)){
-      const d=new Date(cls.date+"T12:00:00");
-      const wD=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
-      attLogs.push({date:cls.date,day:wD[d.getDay()],month:MONTHS[d.getMonth()],year:d.getFullYear(),dayNum:d.getDate(),className:cls.title,time:cls.time,status:"presente"});
-    }
   });
   attLogs.sort((a,b)=>b.date.localeCompare(a.date));
   const byMonth={};
@@ -3152,7 +3124,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
                           </div>
                           <div style={{textAlign:"right"}}>
                             <div style={{fontSize:12,fontWeight:600,color:C.blue2}}>{e.time}</div>
-                            <span style={{fontSize:10,padding:"2px 6px",borderRadius:10,background:e.status==="ausente_dada"?"#FFF3E0":"#EDFBEC",color:e.status==="ausente_dada"?"#E65100":"#2E7D32",fontWeight:700}}>{e.status==="ausente_dada"?"Ausente":"✓"}</span>
+                            <div style={{width:8,height:8,borderRadius:"50%",background:C.green,margin:"4px auto 0"}}></div>
                           </div>
                         </div>
                       </WhiteCard>
@@ -3168,25 +3140,17 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
   );
 }
 
-function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance }) {
+function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], sendNotification }) {
   const [search,setSearch]=useState("");
   const [filter,setFilter]=useState("none");
-  const allList=students.filter(s=>classes.some(c=>c.students&&c.students.includes(s.id)));
-  let list=[...allList];
+  // Only show students that have at least one class assigned
+  let list=students.filter(s=>classes.some(c=>c.students&&c.students.includes(s.id)));
   if(search.trim()) list=list.filter(s=>s.name.toLowerCase().includes(search.toLowerCase()));
-  list=list.sort((a,b)=>{
-    const ra=getRem(a,classes);
-    const rb=getRem(b,classes);
-    const scoreA=ra===null?1:ra<0?-1:ra>0?0:1;
-    const scoreB=rb===null?1:rb<0?-1:rb>0?0:1;
-    if(scoreA!==scoreB) return scoreA-scoreB;
-    if(ra!==null&&rb!==null) return ra-rb;
-    return a.name.localeCompare(b.name);
-  });
   if(filter==="mora") list=list.filter(s=>{
     const r=getRem(s,classes);
     const combo=getCombo(s);
-    if(r!==null) return r<0;
+    if(r!==null) return r<0; // clases: negative = unpaid
+    // mensual: check if overdue
     if(!combo) return false;
     const lastDate=combo.payDate||combo.date||TODAY_DATE;
     const lastPay=new Date(lastDate+"T12:00:00");
@@ -3196,30 +3160,10 @@ function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], send
     const diffDays=Math.floor((today-nextDue)/(1000*60*60*24))+1;
     return !isPaid||diffDays>0;
   });
-  // Summary
-  const enMora=allList.filter(s=>{const r=getRem(s,classes);return r!==null&&r<0;});
-  const programadas=allList.filter(s=>{const r=getRem(s,classes);return r!==null&&r>0;}).length;
-  const alDia=allList.length-enMora.length-programadas;
   return (
-    <div style={{flex:1,overflowY:"auto",padding:"0 16px",paddingBottom:"calc(120px + env(safe-area-inset-bottom, 34px))"}}>
-      {allList.length>0&&(
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:16,marginTop:8}}>
-          <div style={{background:"#FFEBEE",borderRadius:14,padding:"12px 10px",textAlign:"center"}}>
-            <div style={{fontSize:22,fontWeight:900,color:"#C62828"}}>{enMora.length}</div>
-            <div style={{fontSize:10,fontWeight:700,color:"#C62828",marginTop:2}}>EN MORA</div>
-          </div>
-          <div style={{background:C.blueL,borderRadius:14,padding:"12px 10px",textAlign:"center"}}>
-            <div style={{fontSize:22,fontWeight:900,color:C.blue2}}>{programadas}</div>
-            <div style={{fontSize:10,fontWeight:700,color:C.blue2,marginTop:2}}>PROGRAMADAS</div>
-          </div>
-          <div style={{background:"#EDFBEC",borderRadius:14,padding:"12px 10px",textAlign:"center"}}>
-            <div style={{fontSize:22,fontWeight:900,color:"#2E7D32"}}>{alDia}</div>
-            <div style={{fontSize:10,fontWeight:700,color:"#2E7D32",marginTop:2}}>AL DÍA</div>
-          </div>
-        </div>
-      )}
+    <div>
       <div style={{position:"relative",marginBottom:12}}>
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar alumno..." style={{width:"100%",padding:"11px 14px",borderRadius:12,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",background:C.white,color:C.text,outline:"none"}}/>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar alumno..." style={{width:"100%",padding:"11px 14px 11px 14px",borderRadius:12,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",background:C.white,color:C.text,outline:"none"}}/>
         {search&&<button onClick={()=>setSearch("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:C.mutedDark,fontSize:18}}>×</button>}
       </div>
       <div style={{display:"flex",gap:8,marginBottom:16}}>
@@ -3237,12 +3181,12 @@ function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], send
           </button>
         </div>
       )}
-      {list.map(s=><PaymentCard key={s.id} student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance}/>)}
+      {list.map(s=><PaymentCard key={s.id} student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification}/>)}
     </div>
   );
 }
 
-function Finances({ students, classes, initialTab="payments", onUpdate, expenses=[], setExpenses, addIncome, packages=[], sendNotification, onAttendance }) {
+function Finances({ students, classes, initialTab="payments", onUpdate, expenses=[], setExpenses, addIncome, packages=[], sendNotification }) {
   const [tab,setTab]=useState(initialTab);
   const [selMonth,setSelMonth]=useState((()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");})());
   const [showMovModal,setShowMovModal]=useState(null);
@@ -3270,7 +3214,7 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
         <div style={{fontSize:13,color:C.muted,marginTop:4}}>{initialTab==="payments"?"Estado de cobros por alumno":"Resumen financiero del mes"}</div>
       </div>
       <div style={{padding:"16px",marginTop:-8}}>
-        {tab==="payments"&&<PaymentsTab students={students} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance}/>}
+        {tab==="payments"&&<PaymentsTab students={students} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification}/>}
         {tab==="expenses"&&(
           <div>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:C.white,borderRadius:14,padding:"12px 16px",marginBottom:14,border:"1px solid "+C.border}}>
@@ -4500,7 +4444,7 @@ export default function App() {
         {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={classes} onInvite={()=>setShowInvite(true)}/>}
         {tab==="agenda"&&<Agenda students={students} classes={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)}/>}
         {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification}/>}
-        {tab==="cobros"&&<Finances students={students} classes={classes} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance}/>}
+        {tab==="cobros"&&<Finances students={students} classes={classes} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification}/>}
         {tab==="finanzas"&&<Finances students={students} classes={classes} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages}/>}
         {showNewClass&&<NewClassModal onClose={()=>{setShowNewClass(false);if(classes.length===0)setTab("agenda");}} onSave={handleSaveClass} students={students} dateLabel="Nueva clase" onCreateStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])}/>}
         {showNewStudent&&<NewStudentModal onClose={()=>setShowNewStudent(false)} onSave={(d)=>setStudents(p=>[...p,{id:Date.now(),...d}])}/>}
