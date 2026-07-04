@@ -43,21 +43,6 @@ const setCUR=(v)=>{_cur.v=v;};
 const fmtMoney=(amount)=>{const c=_cur.v;return c+" "+formatNum(amount,c);};
 const fmtMoneyShort=(amount)=>{const c=_cur.v;return c+" "+formatNum(amount,c);};
 
-// Money input that formats as you type
-function MoneyInput({value, onChange, placeholder, style}) {
-  const cur=getCUR();
-  const [display,setDisplay]=useState(value?formatNum(value,cur):"");
-  const handleChange=(e)=>{
-    const raw=e.target.value.replace(/[^0-9]/g,"");
-    const num=parseInt(raw)||0;
-    setDisplay(raw===""?"":formatNum(num,cur));
-    onChange(num);
-  };
-  // Sync display when value changes externally
-  useState(()=>{setDisplay(value?formatNum(value,cur):"");});
-  return <input type="text" inputMode="numeric" value={display} onChange={handleChange} placeholder={placeholder||"0"} style={style}/>;
-}
-
 // Hide number input spinners globally
 const styleEl=document.createElement('style');
 styleEl.textContent='input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}input[type=number]{-moz-appearance:textfield}*{font-family:Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}';
@@ -245,7 +230,7 @@ function NewPackageModal({ onSave, onClose, currency }) {
         {pType==="combo"&&<div style={{marginBottom:12}}><label style={{fontSize:12,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>CANTIDAD DE CLASES</label><input type="text" inputMode="numeric" pattern="[0-9]*" value={pQty} onChange={e=>setPQty(e.target.value)} placeholder="8" style={iS}/></div>}
         <div style={{marginBottom:20}}>
           <label style={{fontSize:12,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>PRECIO ({currency||getCUR()}) *</label>
-          <MoneyInput value={parseInt(pPrice)||0} onChange={v=>setPPrice(v)} placeholder="400000" style={iS}/>
+          <input type="text" inputMode="numeric" pattern="[0-9]*" value={pPrice} onChange={e=>setPPrice(e.target.value)} placeholder="400000" style={iS}/>
         </div>
         <div style={{display:"flex",gap:10}}>
           <button onClick={onClose} style={{flex:1,padding:"13px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:14,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
@@ -454,7 +439,7 @@ function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, coach
                   </div>
                 </div>
                 {pType==="combo"&&<div style={{marginBottom:10}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>CANTIDAD DE CLASES</label><input type="text" inputMode="numeric" pattern="[0-9]*" value={pQty} onChange={e=>setPQty(e.target.value)} placeholder="8" style={iS}/></div>}
-                <div style={{marginBottom:14}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>PRECIO (₲) *</label><MoneyInput value={parseInt(pPrice)||0} onChange={v=>setPPrice(v)} placeholder="400000" style={iS}/></div>
+                <div style={{marginBottom:14}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>PRECIO (₲) *</label><input type="text" inputMode="numeric" pattern="[0-9]*" value={pPrice} onChange={e=>setPPrice(e.target.value)} placeholder="400000" style={iS}/></div>
                 <div style={{display:"flex",gap:8}}>
                   <button onClick={()=>{setShowNewPack(false);setPName("");setPQty("");setPPrice("");}} style={{flex:1,padding:"11px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:13,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
                   <button onClick={()=>{if(!pName.trim()||!pPrice)return;setPackages(prev=>[...prev,{id:Date.now(),name:pName.trim(),type:pType,qty:pType==="combo"?parseInt(pQty)||null:null,price:parseInt(pPrice)}]);setPName("");setPQty("");setPPrice("");setShowNewPack(false);}} style={{flex:1,padding:"11px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:13,fontWeight:800}}>Guardar</button>
@@ -716,7 +701,7 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:10,marginBottom:10}}>
                     <div>
                       <label style={{fontSize:11,color:C.blue2,fontWeight:700,display:"block",marginBottom:4}}>MONTO ({getCUR()})</label>
-                      <MoneyInput value={parseInt(sd.amount)||0} onChange={v=>upd(s.id,"amount",v)} placeholder="0" style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:13,boxSizing:"border-box",background:C.bg,color:C.text,outline:"none"}}/>
+                      <input type="text" inputMode="numeric" pattern="[0-9]*" value={sd.amount} onChange={e=>upd(s.id,"amount",e.target.value)} placeholder="400000" style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:13,boxSizing:"border-box",background:C.bg,color:C.text,outline:"none"}}/>
                     </div>
                     <div>
                       <label style={{fontSize:11,color:C.blue2,fontWeight:700,display:"block",marginBottom:4}}>PAQUETE <span style={{fontSize:9,color:C.mutedDark,fontWeight:500}}>(opcional)</span></label>
@@ -1616,7 +1601,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
       </div>
       <div style={{display:"flex",gap:8}}>
         <button onClick={()=>setReprog(c)} style={{flex:1,padding:"9px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>📅 Reprogramar</button>
-        <button onClick={()=>onSaveClass({...c,cancelled:!c.cancelled,applyToAll:false},true)} style={{flex:1,padding:"9px",borderRadius:10,border:"1.5px solid "+(c.cancelled?"#C62828":"#FFB74D"),background:c.cancelled?"#FFEBEE":"#FFF3E0",color:c.cancelled?"#C62828":"#E65100",fontSize:12,cursor:"pointer",fontWeight:700}}>{c.cancelled?"❌ Clase Cancelada":"⛔ Cancelar clase"}</button>
+        <button onClick={()=>onSaveClass({...c,cancelled:!c.cancelled},true)} style={{flex:1,padding:"9px",borderRadius:10,border:"1.5px solid "+(c.cancelled?"#C62828":"#FFB74D"),background:c.cancelled?"#FFEBEE":"#FFF3E0",color:c.cancelled?"#C62828":"#E65100",fontSize:12,cursor:"pointer",fontWeight:700}}>{c.cancelled?"❌ Clase Cancelada":"⛔ Cancelar clase"}</button>
       </div>
     </WhiteCard>
     );
@@ -1765,7 +1750,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
                       {label:"Editar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,action:()=>{setEditCls(c);setHighlightCls(null);}},
                       {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt({...c,attendanceLog:c.attendanceLog||[]});setHighlightCls(null);}},
                       {label:"Reprogramar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14l2 2 4-4"/></svg>,action:()=>{setReprog(c);setHighlightCls(null);}},
-                      {label:c.cancelled?"Reactivar":"Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>,action:()=>{onSaveClass({...c,cancelled:!c.cancelled,applyToAll:false},true);setHighlightCls(null);}},
+                      {label:c.cancelled?"Reactivar":"Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>,action:()=>{onSaveClass({...c,cancelled:!c.cancelled},true);setHighlightCls(null);}},
                     ].map(btn=>(
                       <button key={btn.label} onClick={btn.action} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"13px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)",color:"#fff",fontSize:14,cursor:"pointer",fontWeight:700,boxShadow:"0 4px 12px rgba(101,206,90,0.3)"}}>
                         {btn.icon}{btn.label}
@@ -1907,7 +1892,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
                           {label:"Editar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,action:()=>{setEditCls(c);setHighlightCls(null);}},
                           {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt({...c,attendanceLog:c.attendanceLog||[]});setHighlightCls(null);}},
                           {label:"Reprogramar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14l2 2 4-4"/></svg>,action:()=>{setReprog(c);setHighlightCls(null);}},
-                          {label:c.cancelled?"Reactivar":"Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>,action:()=>{onSaveClass({...c,cancelled:!c.cancelled,applyToAll:false},true);setHighlightCls(null);}},
+                          {label:c.cancelled?"Reactivar":"Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>,action:()=>{onSaveClass({...c,cancelled:!c.cancelled},true);setHighlightCls(null);}},
                         ].map(btn=>(
                           <button key={btn.label} onClick={btn.action} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"13px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)",color:"#fff",fontSize:14,cursor:"pointer",fontWeight:700,boxShadow:"0 4px 12px rgba(101,206,90,0.3)"}}>
                             {btn.icon}{btn.label}
@@ -2583,13 +2568,13 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               </div>
               <div>
                 <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>Monto (₲)</div>
-                <MoneyInput value={parseInt(localAmount)||0} onChange={v=>setLocalAmount(v)} placeholder="0" style={iSp}/>
+                <input type="text" inputMode="numeric" pattern="[0-9]*" value={localAmount||""} placeholder="0" onChange={e=>setLocalAmount(e.target.value)} inputMode="numeric" pattern="[0-9]*" style={iSp}/>
               </div>
             </div>
           ):(
             <div style={{marginBottom:10}}>
               <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>Monto (₲)</div>
-              <MoneyInput value={parseInt(localAmount)||0} onChange={v=>setLocalAmount(v)} placeholder="0" style={iSp}/>
+              <input type="text" inputMode="numeric" pattern="[0-9]*" value={localAmount||""} placeholder="0" onChange={e=>setLocalAmount(e.target.value)} inputMode="numeric" pattern="[0-9]*" style={iSp}/>
             </div>
           )}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
@@ -3537,7 +3522,7 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
             </div>
             <div style={{marginBottom:14}}>
               <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Monto (₲)</label>
-              <MoneyInput value={parseInt(movAmount)||0} onChange={v=>setMovAmount(v)} placeholder="200000" style={{width:"100%",padding:"13px 16px",borderRadius:12,border:"none",fontSize:15,fontWeight:700,boxSizing:"border-box",background:C.blueL,color:C.text,outline:"none"}}/>
+              <input type="text" inputMode="numeric" pattern="[0-9]*" value={movAmount} onChange={e=>setMovAmount(e.target.value)} placeholder="200000" style={{width:"100%",padding:"13px 16px",borderRadius:12,border:"none",fontSize:15,fontWeight:700,boxSizing:"border-box",background:C.blueL,color:C.text,outline:"none"}}/>
             </div>
             <div style={{marginBottom:24}}>
               <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Fecha</label>
@@ -4026,7 +4011,7 @@ function OnboardingFlow({ onComplete }) {
           <div style={{display:"flex",gap:8,marginBottom:20,alignItems:"flex-end"}}>
             <div style={{flex:1}}>
               <label style={lS}>PRECIO ({selectedCountry?.currency||getCUR()})</label>
-              <MoneyInput value={parseInt(pPrice)||0} onChange={v=>setPPrice(v)} placeholder="400000" style={iS}/>
+              <input value={pPrice} onChange={e=>setPPrice(e.target.value)} placeholder={"Ej: 400000"} type="text" inputMode="numeric" pattern="[0-9]*" style={iS}/>
             </div>
             <button onClick={()=>{
               if(!pNameOnboard||!pNameOnboard.trim()){setPNameOnboard(null);return;}
