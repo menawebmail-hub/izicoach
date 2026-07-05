@@ -46,13 +46,13 @@ const fmtMoneyShort=(amount)=>{const c=_cur.v;return c+" "+formatNum(amount,c);}
 // Money input that formats as you type
 function MoneyInput({value, onChange, placeholder, style}) {
   const cur=getCUR();
-  const formatted=value?formatNum(value,cur):"";
-  const [display,setDisplay]=useState(formatted);
-  const [lastValue,setLastValue]=useState(value);
-  // Sync when value changes externally
-  if(value!==lastValue){
-    setLastValue(value);
-    setDisplay(formatted);
+  const [display,setDisplay]=useState(value?formatNum(value,cur):"");
+  // Sync when value changes externally (e.g. package selected)
+  const prevValue=React.useRef(value);
+  if(prevValue.current!==value){
+    prevValue.current=value;
+    const newDisplay=value?formatNum(value,cur):"";
+    if(display!==newDisplay) setDisplay(newDisplay);
   }
   const handleChange=(e)=>{
     const raw=e.target.value.replace(/[^0-9]/g,"");
