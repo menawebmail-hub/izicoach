@@ -43,6 +43,26 @@ const setCUR=(v)=>{_cur.v=v;};
 const fmtMoney=(amount)=>{const c=_cur.v;return c+" "+formatNum(amount,c);};
 const fmtMoneyShort=(amount)=>{const c=_cur.v;return c+" "+formatNum(amount,c);};
 
+// Money input that formats as you type
+function MoneyInput({value, onChange, placeholder, style}) {
+  const cur=getCUR();
+  const formatted=value?formatNum(value,cur):"";
+  const [display,setDisplay]=useState(formatted);
+  const [lastValue,setLastValue]=useState(value);
+  // Sync when value changes externally
+  if(value!==lastValue){
+    setLastValue(value);
+    setDisplay(formatted);
+  }
+  const handleChange=(e)=>{
+    const raw=e.target.value.replace(/[^0-9]/g,"");
+    const num=parseInt(raw)||0;
+    setDisplay(raw===""?"":formatNum(num,cur));
+    onChange(num);
+  };
+  return <input type="text" inputMode="numeric" value={display} onChange={handleChange} placeholder={placeholder||"0"} style={style}/>;
+}
+
 // Hide number input spinners globally
 const styleEl=document.createElement('style');
 styleEl.textContent='input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}input[type=number]{-moz-appearance:textfield}*{font-family:Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}';
@@ -114,6 +134,25 @@ function getEffectiveTotal(s, c, classes=[]) {
   const cancelledCount=comboDates.filter(ds=>myClasses.some(cls=>cls.date===ds&&cls.cancelled&&!cls.rescheduled)).length;
   return Math.max(1, c.total - cancelledCount);
 }
+// Check if a class date is beyond the active combo (combo done, next unpaid)
+function isNextComboPending(cls, students) {
+  const clsStudents=(cls.students||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean);
+  if(clsStudents.length===0) return false;
+  return clsStudents.some(s=>{
+    const combos=(s.combos||[]).filter(c=>c.total>0||(c.packType&&c.packType!=="mensual"));
+    if(combos.length===0) return false;
+    const lastCombo=combos[combos.length-1];
+    if(!lastCombo) return false;
+    const lastDate=lastCombo.dates&&lastCombo.dates.length>0?lastCombo.dates[lastCombo.dates.length-1]:"";
+    if(!lastDate) return false;
+    // Class date is beyond last combo's last date
+    const isBeyond=cls.date>lastDate;
+    // AND the last combo is fully paid
+    const paidCount=lastCombo.paidCount!==undefined?lastCombo.paidCount:(lastCombo.paid?lastCombo.total:0);
+    const fullyPaid=paidCount>=(lastCombo.total||1);
+    return isBeyond&&fullyPaid;
+  });
+}
 function getRem(s, classes=[]) {
   const combos=s.combos||[];
   // All combos that are "clases" type (total>0 OR packType individual/combo)
@@ -132,7 +171,16 @@ function getRem(s, classes=[]) {
     const effectiveTotal=c.total>0?getEffectiveTotal(s,c,classes):(c.total||1);
     const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?effectiveTotal:0);
     const unpaid=Math.max(0,effectiveTotal-paidCount);
-    const porDar=Math.max(0,paidCount-(c.used||0));
+    // Past dates count as given UNLESS marked as "ausente - no dada" (ausente_reprog)
+    const studentClasses=classes.filter(cls=>cls.students&&cls.students.includes(s.id));
+    const pastGiven=(c.dates||[c.date]).filter(d=>{
+      if(!d||d>=TODAY_DATE) return false;
+      const attEntry=studentClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===d);
+      if(attEntry&&(attEntry.ausente_reprog||[]).includes(s.id)) return false; // not given
+      return true; // past + no record OR present OR ausente_dada = given
+    }).length;
+    const effectiveUsed=Math.max(c.used||0,pastGiven);
+    const porDar=Math.max(0,paidCount-effectiveUsed);
     const lastDate=c.dates&&c.dates.length>0?c.dates[c.dates.length-1]:"";
     const cycleOpen=!(porDar===0&&unpaid===0&&lastDate&&lastDate<TODAY_DATE);
     if(cycleOpen) anyActive=true;
@@ -221,7 +269,7 @@ function NewPackageModal({ onSave, onClose, currency }) {
         {pType==="combo"&&<div style={{marginBottom:12}}><label style={{fontSize:12,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>CANTIDAD DE CLASES</label><input type="text" inputMode="numeric" pattern="[0-9]*" value={pQty} onChange={e=>setPQty(e.target.value)} placeholder="8" style={iS}/></div>}
         <div style={{marginBottom:20}}>
           <label style={{fontSize:12,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>PRECIO ({currency||getCUR()}) *</label>
-          <input type="text" inputMode="numeric" pattern="[0-9]*" value={pPrice} onChange={e=>setPPrice(e.target.value)} placeholder="400000" style={iS}/>
+          <MoneyInput value={parseInt(pPrice)||0} onChange={v=>setPPrice(v)} placeholder="400000" style={iS}/>
         </div>
         <div style={{display:"flex",gap:10}}>
           <button onClick={onClose} style={{flex:1,padding:"13px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:14,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
@@ -430,7 +478,7 @@ function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, coach
                   </div>
                 </div>
                 {pType==="combo"&&<div style={{marginBottom:10}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>CANTIDAD DE CLASES</label><input type="text" inputMode="numeric" pattern="[0-9]*" value={pQty} onChange={e=>setPQty(e.target.value)} placeholder="8" style={iS}/></div>}
-                <div style={{marginBottom:14}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>PRECIO (₲) *</label><input type="text" inputMode="numeric" pattern="[0-9]*" value={pPrice} onChange={e=>setPPrice(e.target.value)} placeholder="400000" style={iS}/></div>
+                <div style={{marginBottom:14}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>PRECIO (₲) *</label><MoneyInput value={parseInt(pPrice)||0} onChange={v=>setPPrice(v)} placeholder="400000" style={iS}/></div>
                 <div style={{display:"flex",gap:8}}>
                   <button onClick={()=>{setShowNewPack(false);setPName("");setPQty("");setPPrice("");}} style={{flex:1,padding:"11px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:13,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
                   <button onClick={()=>{if(!pName.trim()||!pPrice)return;setPackages(prev=>[...prev,{id:Date.now(),name:pName.trim(),type:pType,qty:pType==="combo"?parseInt(pQty)||null:null,price:parseInt(pPrice)}]);setPName("");setPQty("");setPPrice("");setShowNewPack(false);}} style={{flex:1,padding:"11px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:13,fontWeight:800}}>Guardar</button>
@@ -692,7 +740,7 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:10,marginBottom:10}}>
                     <div>
                       <label style={{fontSize:11,color:C.blue2,fontWeight:700,display:"block",marginBottom:4}}>MONTO ({getCUR()})</label>
-                      <input type="text" inputMode="numeric" pattern="[0-9]*" value={sd.amount} onChange={e=>upd(s.id,"amount",e.target.value)} placeholder="400000" style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:13,boxSizing:"border-box",background:C.bg,color:C.text,outline:"none"}}/>
+                      <MoneyInput value={parseInt(sd.amount)||0} onChange={v=>upd(s.id,"amount",v)} placeholder="0" style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:13,boxSizing:"border-box",background:C.bg,color:C.text,outline:"none"}}/>
                     </div>
                     <div>
                       <label style={{fontSize:11,color:C.blue2,fontWeight:700,display:"block",marginBottom:4}}>PAQUETE <span style={{fontSize:9,color:C.mutedDark,fontWeight:500}}>(opcional)</span></label>
@@ -813,7 +861,22 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
   const income=monthExpenses.filter(e=>e.type==="ingreso").reduce((a,b)=>a+b.amount,0);
   const exp=monthExpenses.filter(e=>e.type==="gasto").reduce((a,b)=>a+b.amount,0);
   // Cobros alerts - students with unpaid combos
-  const cobrosAlerts=students.filter(s=>{const r=getRem(s,classes);return r!==null&&r<0||(!getCombo(s)?.paid&&getCombo(s)?.total);});
+  const cobrosAlerts=students.filter(s=>{if(s.suspended)return false;const r=getRem(s,classes);return r!==null&&r<0||(!getCombo(s)?.paid&&getCombo(s)?.total);});
+  // Combos that just completed and need renewal (new combo created but unpaid)
+  const comboRenewalAlerts=students.filter(s=>{
+    const combos=s.combos||[];
+    if(combos.length<2) return false;
+    const last=combos[combos.length-1];
+    const prev=combos[combos.length-2];
+    // Last combo is unpaid (auto-created), previous was paid+complete
+    // But only show if the last combo has NO dates yet (not yet renewed manually)
+    const lastHasDates=last?.dates&&last.dates.length>0;
+    const lastDateIsFuture=lastHasDates&&last.dates[0]>TODAY_DATE;
+    // Don't show if already renewed (last combo has future dates = already set up)
+    if(lastHasDates&&lastDateIsFuture) return false;
+    return last&&!last.paid&&last.paidCount===0&&prev?.paid&&prev?.total>0;
+  });
+
   // Classes that need rescheduling: ausente_reprog OR cancelled (but not already rescheduled)
   const reprogAlerts=[
     // Ausente-reprog: student marked as needing reschedule
@@ -914,6 +977,30 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
           </div>
         )}
 
+        {/* Combo renovacion alerts */}
+        {comboRenewalAlerts.length>0&&(
+          <div style={{marginBottom:8}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+              <div style={{fontSize:13,fontWeight:800,color:C.text}}>🔄 Combos a renovar</div>
+              <button onClick={()=>onNavigate("cobros")} style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:C.blue2,fontWeight:700}}>Ver cobros →</button>
+            </div>
+            {comboRenewalAlerts.slice(0,3).map((s,i)=>{
+              const last=s.combos[s.combos.length-1];
+              return (
+                <div key={i} onClick={()=>onNavigate("cobros")} style={{background:"#E8F5E9",border:"1.5px solid #A5D6A7",borderRadius:12,padding:"10px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
+                  <div style={{width:36,height:36,borderRadius:"50%",background:"linear-gradient(135deg,#2E7D32,#43A047)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:800,color:"#fff",flexShrink:0}}>{s.avatar[0]}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:13,fontWeight:700,color:C.text}}>{s.name}</div>
+                    <div style={{fontSize:11,color:"#2E7D32",fontWeight:600}}>Combo de {last?.total} clases completado · Nuevo combo sin pagar</div>
+                  </div>
+                  <div style={{fontSize:20,fontWeight:900,color:"#2E7D32"}}>{last?.total}</div>
+                </div>
+              );
+            })}
+            {comboRenewalAlerts.length>3&&<div style={{fontSize:12,color:C.mutedDark,textAlign:"center",marginBottom:4}}>+{comboRenewalAlerts.length-3} más</div>}
+          </div>
+        )}
+
         {/* Alertas cobros */}
         {cobrosAlerts.length>0&&(
           <div style={{marginTop:8}}>
@@ -1009,7 +1096,13 @@ function Students({ students, onAdd, onUpdate, onChat, classes=[], onInvite }) {
                 const isRed=rem!==null&&rem<0||(!combo?.paid);
                 const noData=!combo||(!combo.total&&!combo.paidCount&&!combo.paid);
                 const statusColor=noData?"#9BACCB":rem===null?C.blue2:isRed?"#C62828":rem===0?"#43A047":C.blue2;
-                const statusLabel=noData?"Sin registro":rem===null?"Mensual":isRed?"A cobrar":rem===0?"Al día":"Por dar";
+                const statusLabel=noData?"Sin registro":rem===null?"Mensual":isRed?"A cobrar":rem===0?"Al día":"Programadas";
+                // Mini 4-column summary
+                const allDatesS=(s.combos||[]).filter(c=>c.total>0||(c.packType&&c.packType!=="mensual")).flatMap(c=>(c.dates||[]).map((d,i)=>({
+                  date:d,
+                  isPaid:(c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0))>i,
+                  isGiven:(()=>{const att=myClasses.flatMap(cl=>cl.attendanceLog||[]).find(e=>e.date===d);return att?(att.present||[]).includes(s.id)||(att.ausente_dada||[]).includes(s.id):d<TODAY_DATE;})(),
+                })));
                 return (
                   <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid "+C.border}}>
                     {/* Classes */}
@@ -1028,14 +1121,27 @@ function Students({ students, onAdd, onUpdate, onChat, classes=[], onInvite }) {
                       </div>
                     )}
                     {myClasses.length===0&&<div style={{fontSize:12,color:C.mutedDark,marginBottom:10}}>Sin clases asignadas</div>}
-                    {/* Estado de cuenta */}
-                    <div style={{background:C.blueL,borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                      <div style={{fontSize:12,fontWeight:700,color:C.mutedDark}}>Estado de Cuenta</div>
-                      <div style={{display:"flex",alignItems:"baseline",gap:6}}>
-                        <span style={{fontSize:noData?14:26,fontWeight:900,color:statusColor}}>{noData?"Sin registro":rem===null?"∞":Math.abs(rem)}</span>
-                        {!noData&&<span style={{fontSize:11,fontWeight:700,color:statusColor}}>{statusLabel}</span>}
-                      </div>
-                    </div>
+                    {/* Estado de Cuenta - 4 columns */}
+                    {allDatesS.length>0&&(()=>{
+                      const nP=allDatesS.filter(d=>!d.isPaid).length;
+                      const pg=allDatesS.filter(d=>d.isPaid).length;
+                      const pr=allDatesS.filter(d=>!d.isGiven&&d.date>=TODAY_DATE).length;
+                      const re=allDatesS.filter(d=>d.isGiven).length;
+                      const miniCols=[{n:nP,c:"#C62828",bg:"#FFEBEE",l:"No Pag."},{n:pg,c:"#2E7D32",bg:"#EDFBEC",l:"Pagada"},{n:pr,c:C.blue2,bg:C.blueL,l:"Progr."},{n:re,c:"#555",bg:"#F5F5F5",l:"Realiz."}];
+                      return (
+                        <>
+                          <div style={{fontSize:11,fontWeight:700,color:C.mutedDark,marginBottom:6}}>ESTADO DE CUENTA</div>
+                          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:4}}>
+                            {miniCols.map((col,i)=>(
+                              <div key={i} style={{background:col.bg,borderRadius:8,padding:"6px 2px",textAlign:"center"}}>
+                                <div style={{fontSize:15,fontWeight:900,color:col.c,lineHeight:1}}>{col.n}</div>
+                                <div style={{fontSize:8,fontWeight:700,color:col.c,marginTop:2}}>{col.l}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
                 );
               })()}
@@ -1558,7 +1664,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
       </div>
       <div style={{display:"flex",gap:8}}>
         <button onClick={()=>setReprog(c)} style={{flex:1,padding:"9px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>📅 Reprogramar</button>
-        <button onClick={()=>onSaveClass({...c,cancelled:!c.cancelled},true)} style={{flex:1,padding:"9px",borderRadius:10,border:"1.5px solid "+(c.cancelled?"#C62828":"#FFB74D"),background:c.cancelled?"#FFEBEE":"#FFF3E0",color:c.cancelled?"#C62828":"#E65100",fontSize:12,cursor:"pointer",fontWeight:700}}>{c.cancelled?"❌ Clase Cancelada":"⛔ Cancelar clase"}</button>
+        <button onClick={()=>onSaveClass({...c,cancelled:!c.cancelled,applyToAll:false},true)} style={{flex:1,padding:"9px",borderRadius:10,border:"1.5px solid "+(c.cancelled?"#C62828":"#FFB74D"),background:c.cancelled?"#FFEBEE":"#FFF3E0",color:c.cancelled?"#C62828":"#E65100",fontSize:12,cursor:"pointer",fontWeight:700}}>{c.cancelled?"❌ Clase Cancelada":"⛔ Cancelar clase"}</button>
       </div>
     </WhiteCard>
     );
@@ -1648,11 +1754,12 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
                 <div style={{fontSize:12,marginTop:4}}>Tocá + para agregar</div>
               </div>
             ):dayC.map(c=>(
-              <div key={c.id} onClick={()=>setHighlightCls(c.id===highlightCls?null:c.id)} style={{background:c.cancelled?"#FFF3E0":C.white,borderRadius:16,padding:"12px 14px",marginBottom:10,boxShadow:"0 2px 10px rgba(44,94,247,0.07)",border:"1.5px solid "+(highlightCls===c.id?C.blue2:C.border),cursor:"pointer"}}>
+              <div key={c.id} onClick={()=>setHighlightCls(c.id===highlightCls?null:c.id)} style={{background:c.cancelled?"#FFF3E0":isNextComboPending(c,students)?"#F5F5F5":C.white,borderRadius:16,padding:"12px 14px",marginBottom:10,boxShadow:"0 2px 10px rgba(44,94,247,0.07)",border:"1.5px solid "+(highlightCls===c.id?C.blue2:isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:"pointer",opacity:isNextComboPending(c,students)?0.75:1}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
                   <div style={{flex:1}}>
                     <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                      <div style={{fontWeight:800,fontSize:15,color:c.cancelled?"#C62828":C.text}}>{c.title}{c.cancelled?" (Cancelada)":""}</div>
+                      <div style={{fontWeight:800,fontSize:15,color:c.cancelled?"#C62828":isNextComboPending(c,students)?"#9E9E9E":C.text}}>{c.title}{c.cancelled?" (Cancelada)":""}</div>
+                      {isNextComboPending(c,students)&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#EEEEEE",color:"#757575",fontWeight:700}}>Sin pagar</span>}
                       {(()=>{const log=(c.attendanceLog||[]).find(e=>e.date===c.date);if(!log)return null;const dC=(log.ausente_dada||[]).length;const nC=(log.ausente_reprog||[]).length;if(!dC&&!nC)return null;return(<>{dC>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700,flexShrink:0}}>✗ Ausente-Dada</span>}{nC>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF8E1",color:"#F57F17",fontWeight:700,flexShrink:0}}>↩ A Reprogramar</span>}</>);})()}
                     </div>
                     <div style={{fontSize:12,color:C.mutedDark,marginTop:2}}>{c.time+(c.timeEnd?" - "+c.timeEnd:"")} · {c.court}</div>
@@ -1707,7 +1814,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
                       {label:"Editar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,action:()=>{setEditCls(c);setHighlightCls(null);}},
                       {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt({...c,attendanceLog:c.attendanceLog||[]});setHighlightCls(null);}},
                       {label:"Reprogramar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14l2 2 4-4"/></svg>,action:()=>{setReprog(c);setHighlightCls(null);}},
-                      {label:c.cancelled?"Reactivar":"Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>,action:()=>{onSaveClass({...c,cancelled:!c.cancelled},true);setHighlightCls(null);}},
+                      {label:c.cancelled?"Reactivar":"Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>,action:()=>{onSaveClass({...c,cancelled:!c.cancelled,applyToAll:false},true);setHighlightCls(null);}},
                     ].map(btn=>(
                       <button key={btn.label} onClick={btn.action} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"13px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)",color:"#fff",fontSize:14,cursor:"pointer",fontWeight:700,boxShadow:"0 4px 12px rgba(101,206,90,0.3)"}}>
                         {btn.icon}{btn.label}
@@ -1796,8 +1903,11 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
                     const colL=`calc(${LEFT}px + (100% - ${LEFT}px - ${RIGHT}px) / ${c.totalCols} * ${c.col} + ${c.col*2}px)`;
                     return (
                       <div key={c.id} onClick={()=>setHighlightCls(c.id===highlightCls?null:c.id)}
-                        style={{position:"absolute",top:topPx,left:colL,width:colW,height:heightPx,background:c.cancelled?"#FFF3E0":C.white,borderRadius:12,padding:"6px 10px",border:"1.5px solid "+(highlightCls===c.id?C.blue2:C.border),cursor:"pointer",boxShadow:"0 2px 8px rgba(44,94,247,0.10)",overflow:"hidden",borderLeft:"4px solid "+(c.cancelled?"#E65100":C.blue2),zIndex:2}}>
-                        <div style={{fontSize:13,fontWeight:800,color:c.cancelled?"#C62828":C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.title}{c.cancelled?" (Cancelada)":""}</div>
+                        style={{position:"absolute",top:topPx,left:colL,width:colW,height:heightPx,background:c.cancelled?"#FFF3E0":isNextComboPending(c,students)?"#F5F5F5":C.white,borderRadius:12,padding:"6px 10px",border:"1.5px solid "+(highlightCls===c.id?C.blue2:isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:"pointer",boxShadow:"0 2px 8px rgba(44,94,247,0.10)",overflow:"hidden",borderLeft:"4px solid "+(c.cancelled?"#E65100":isNextComboPending(c,students)?"#BDBDBD":C.blue2),zIndex:2,opacity:isNextComboPending(c,students)?0.7:1}}>
+                        <div style={{display:"flex",alignItems:"center",gap:4,overflow:"hidden"}}>
+                          <div style={{fontSize:13,fontWeight:800,color:c.cancelled?"#C62828":isNextComboPending(c,students)?"#9E9E9E":C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",flex:1}}>{c.title}{c.cancelled?" (Cancelada)":""}</div>
+                          {isNextComboPending(c,students)&&<span style={{fontSize:9,padding:"2px 5px",borderRadius:8,background:"#EEEEEE",color:"#757575",fontWeight:700,flexShrink:0}}>Sin pagar</span>}
+                        </div>
                         <div style={{fontSize:11,color:C.mutedDark,marginTop:1}}>{c.time+(c.timeEnd?" – "+c.timeEnd:"")} · {c.court}</div>
                         {(()=>{const log=(c.attendanceLog||[]).find(e=>e.date===c.date);if(!log)return null;const dC=(log.ausente_dada||[]).length;const nC=(log.ausente_reprog||[]).length;if(!dC&&!nC)return null;return(<div style={{display:"flex",gap:4,marginTop:4}}>{dC>0&&<span style={{fontSize:11,padding:"3px 8px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ Ausente-Dada</span>}{nC>0&&<span style={{fontSize:11,padding:"3px 8px",borderRadius:10,background:"#FFF8E1",color:"#F57F17",fontWeight:700}}>↩ A Reprogramar</span>}</div>);})()}
                         {heightPx>52&&<div style={{display:"flex",gap:3,marginTop:4,flexWrap:"wrap"}}>
@@ -1849,7 +1959,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
                           {label:"Editar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,action:()=>{setEditCls(c);setHighlightCls(null);}},
                           {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt({...c,attendanceLog:c.attendanceLog||[]});setHighlightCls(null);}},
                           {label:"Reprogramar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14l2 2 4-4"/></svg>,action:()=>{setReprog(c);setHighlightCls(null);}},
-                          {label:c.cancelled?"Reactivar":"Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>,action:()=>{onSaveClass({...c,cancelled:!c.cancelled},true);setHighlightCls(null);}},
+                          {label:c.cancelled?"Reactivar":"Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>,action:()=>{onSaveClass({...c,cancelled:!c.cancelled,applyToAll:false},true);setHighlightCls(null);}},
                         ].map(btn=>(
                           <button key={btn.label} onClick={btn.action} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"13px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)",color:"#fff",fontSize:14,cursor:"pointer",fontWeight:700,boxShadow:"0 4px 12px rgba(101,206,90,0.3)"}}>
                             {btn.icon}{btn.label}
@@ -2253,12 +2363,12 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
       return dates;
     };
 
-    if(pagoTipo==="clases"&&lastCombo&&!lastCombo.paid&&lastCombo.total>0&&qty>0){
+    if(pagoTipo==="clases"&&lastCombo&&lastCombo.total>0&&qty>0){
       const lastIdx=updatedCombos.length-1;
       const existing=updatedCombos[lastIdx];
       const comboTotal=existing.total||0;
       const givenCount=(existing.dates||[]).filter(d=>d<=TODAY).length;
-      const prevPaid=existing.paidCount||0;
+      const prevPaid=existing.paidCount!==undefined?existing.paidCount:(existing.paid?comboTotal:0);
       const newPaidCount=Math.min(comboTotal, prevPaid+qty);
       const fullyPaid=newPaidCount>=comboTotal;
       // Save this payment as a separate entry
@@ -2281,6 +2391,23 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         date:localDate||TODAY,
         payments:[...(existing.payments||[]),newPayment],
       };
+      // If fully paid AND all classes already given → auto-create next combo
+      if(fullyPaid&&givenCount>=comboTotal&&comboTotal>0){
+        const lastComboDate=(existing.dates||[]).slice(-1)[0]||TODAY;
+        const nextDates=generateNewDates(comboTotal, lastComboDate);
+        updatedCombos.push({
+          id:updatedCombos.length+1,
+          total:comboTotal,
+          packType:existing.packType||"combo",
+          used:givenCount>=comboTotal?0:0,
+          paid:false,
+          paidCount:0,
+          date:nextDates[0]||TODAY,
+          amount:existing.amount||0,
+          dates:nextDates,
+          payments:[],
+        });
+      }
     } else if(pagoTipo==="clases"&&qty>0){
       const allExistingDates=updatedCombos.flatMap(c=>c.dates||[]).sort();
       const lastDate=allExistingDates.length>0?allExistingDates[allExistingDates.length-1]:TODAY;
@@ -2382,12 +2509,12 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
                 if(item.isNew||isPaid){
                   leftBg=wasAbsent?"#FFF3E0":isCancelled?"#F3E5F5":"#E8F5E9";
                   leftColor=wasAbsent?"#E65100":isCancelled?"#7B1FA2":"#2E7D32";
-                  leftLabel=wasAbsent?"🚫 Ausente":isCancelled?"❌ Cancelada":"Clase No Dada";
+                  leftLabel=wasAbsent?"🚫 Ausente":isCancelled?"❌ Cancelada":"Programada";
                   rightBg="#E8F5E9";rightColor="#2E7D32";rightLabel="Pagada";
                 } else {
                   leftBg=wasAbsent?"#FFF3E0":isCancelled?"#F3E5F5":"#FFF3E0";
                   leftColor=wasAbsent?"#E65100":isCancelled?"#7B1FA2":"#E65100";
-                  leftLabel=wasAbsent?"🚫 Ausente":isCancelled?"❌ Cancelada":"Clase No Dada";
+                  leftLabel=wasAbsent?"🚫 Ausente":isCancelled?"❌ Cancelada":"Programada";
                   rightBg="#FFF3E0";rightColor="#E65100";rightLabel="No Pagada";
                 }
                 return (
@@ -2416,9 +2543,17 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   return (
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
       <div style={{background:"#FFFFFF",borderRadius:"24px 24px 0 0",width:"100%",maxHeight:"94%",overflowY:"auto",boxSizing:"border-box"}}>
-        <div style={{padding:"24px 20px 16px"}}>
-          <div style={{fontWeight:900,fontSize:20,color:"#1A237E",marginBottom:4}}>Actualizar Pago</div>
-          <div style={{fontSize:13,color:"#5C7A9F",marginBottom:16}}>{s.name}</div>
+        <div style={{padding:"20px 20px 16px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:16,paddingBottom:14,borderBottom:"1px solid "+C.border}}>
+            {s.photo
+              ?<img src={s.photo} style={{width:52,height:52,borderRadius:"50%",objectFit:"cover",flexShrink:0}}/>
+              :<div style={{width:52,height:52,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,fontWeight:800,color:"#fff",flexShrink:0}}>{s.avatar}</div>
+            }
+            <div style={{flex:1}}>
+              <div style={{fontWeight:900,fontSize:22,color:"#1A237E",lineHeight:1.1}}>{s.name}</div>
+              <div style={{fontSize:12,color:"#5C7A9F",marginTop:3}}>Actualizar Pagos</div>
+            </div>
+          </div>
 
 
           {/* Due date banner for mensual */}
@@ -2430,56 +2565,49 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             </div>
           )}
 
-          {/* Estado de cuenta + Detalles */}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
-            <div style={{background:C.blueL,borderRadius:12,padding:"12px",textAlign:"center"}}>
-              <div style={{fontSize:11,fontWeight:700,color:C.blue2,marginBottom:4}}>Estado de Cuenta</div>
-              {pagoTipo==="mensual"?(()=>{
-                const lastDate=lastCombo?.payDate||lastCombo?.date||TODAY;
-                const lastPay=new Date(lastDate+"T12:00:00");
-                const today=new Date(TODAY+"T12:00:00");
-                const isPaidM=lastCombo?.paid===true;
-                const nextDue=isPaidM
-                  ?new Date(lastPay.getFullYear(),lastPay.getMonth()+1,lastPay.getDate())
-                  :lastPay;
-                const diffDays=Math.floor((today-nextDue)/(1000*60*60*24));
-                const isOverdue=diffDays>0;
-                return (
-                  <>
-                    <div style={{fontSize:40,fontWeight:900,lineHeight:1,color:isOverdue?"#C62828":C.blue2}}>{isOverdue?diffDays:0}</div>
-                    <div style={{fontSize:10,color:isOverdue?"#C62828":"#5C7A9F",fontWeight:700,marginTop:4}}>{isOverdue?"días vencido":"Al día"}</div>
-                  </>
-                );
-              })():(()=>{
-                // Only use last combo for display
-                const lastC=allCombos.filter(c=>c.total).slice(-1)[0];
-                const effectiveTot=lastC?getEffectiveTotal(s,lastC,classes):0;
-                const paid=lastC?(lastC.paidCount!==undefined?lastC.paidCount:(lastC.paid?lastC.total:0)):0;
-                const unpaid=lastC?Math.max(0,effectiveTot-paid):0;
-                const given=lastC?Math.max(0,(lastC.used||0)):0;
-                const remainingUnpaid=Math.max(0,unpaid-(parseInt(localClasses)||0));
-                const paidRemaining=Math.max(0,paid-given);
-                const isRed=remainingUnpaid>0;
-                const displayNum=isRed?remainingUnpaid:paidRemaining;
-                return (
-                  <>
-                    <div style={{fontSize:40,fontWeight:900,lineHeight:1,color:isRed?"#C62828":displayNum===0?"#43A047":C.blue2}}>{displayNum}</div>
-                    <div style={{fontSize:11,fontWeight:700,color:isRed?"#C62828":displayNum===0?"#43A047":C.blue2,marginTop:4}}>{isRed?"A cobrar":displayNum===0?"Al día":"Por dar"}</div>
-                  </>
-                );
-              })()}
-            </div>
-            <div style={{background:C.blueL,borderRadius:12,padding:"12px"}}>
-              <div style={{fontSize:11,fontWeight:700,color:C.blue2,marginBottom:6}}>Detalles de Clases</div>
-              {classDays.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:4}}>
-                {classDays.map(d=><span key={d} style={{fontSize:10,padding:"2px 6px",borderRadius:20,background:"rgba(25,118,210,0.15)",color:C.blue2,fontWeight:600}}>{d}</span>)}
-              </div>}
-              {classTime&&<div style={{fontSize:11,color:"#5C7A9F",marginBottom:8}}>{classTime}{classCourt?" · "+classCourt:""}</div>}
-              <button onClick={()=>setShowRecordatorioPago(true)} style={{width:"100%",padding:"8px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:"#fff",fontSize:11,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
-                Enviar Recordatorio
-              </button>
-            </div>
+          {/* Estado de cuenta - 4 column live summary */}
+          {pagoTipo==="clases"&&allDates.length>0&&(()=>{
+            const qty=parseInt(localClasses)||0;
+            let unpaidCount=0;
+            const cols4={noPagada:0,pagada:0,programada:0,realizada:0};
+            allDates.forEach((d,i)=>{
+              if(d.isCancelled) return;
+              const alreadyPaid=d.status==="adar"||d.status==="dada";
+              const isUnpaid=d.status==="pendiente"||d.status==="dada_unpaid";
+              const paidNow=alreadyPaid||(isUnpaid&&unpaidCount<qty);
+              if(isUnpaid&&!alreadyPaid){
+                if(unpaidCount<qty) unpaidCount++;
+              }
+              const isPaid=paidNow;
+              if(!isPaid) cols4.noPagada++;
+              else cols4.pagada++;
+              if(d.isGiven) cols4.realizada++;
+              else if(!d.isPast&&d.date>=TODAY_DATE) cols4.programada++;
+            });
+            const cols=[
+              {n:cols4.noPagada,label:"No Pagada",color:"#C62828",bg:"#FFEBEE"},
+              {n:cols4.pagada,label:"Pagada",color:"#2E7D32",bg:"#EDFBEC"},
+              {n:cols4.programada,label:"Programada",color:C.blue2,bg:C.blueL},
+              {n:cols4.realizada,label:"Realizada",color:"#555",bg:"#F5F5F5"},
+            ];
+            return (
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:16}}>
+                {cols.map((col,i)=>(
+                  <div key={i} style={{background:col.bg,borderRadius:12,padding:"10px 4px",textAlign:"center"}}>
+                    <div style={{fontSize:24,fontWeight:900,color:col.color,lineHeight:1}}>{col.n}</div>
+                    <div style={{fontSize:9,fontWeight:700,color:col.color,marginTop:3,lineHeight:1.2}}>{col.label}</div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+
+          {/* Enviar recordatorio */}
+          <div style={{marginBottom:16}}>
+            <button onClick={()=>setShowRecordatorioPago(true)} style={{width:"100%",padding:"10px",borderRadius:10,border:"1.5px solid #65CE5A",background:C.white,color:"#2E7D32",fontSize:12,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#2E7D32" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+              Enviar Recordatorio
+            </button>
           </div>
 
           {/* Fields */}
@@ -2503,13 +2631,13 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               </div>
               <div>
                 <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>Monto (₲)</div>
-                <input type="text" inputMode="numeric" pattern="[0-9]*" value={localAmount||""} placeholder="0" onChange={e=>setLocalAmount(e.target.value)} inputMode="numeric" pattern="[0-9]*" style={iSp}/>
+                <MoneyInput value={parseInt(localAmount)||0} onChange={v=>setLocalAmount(v)} placeholder="0" style={iSp}/>
               </div>
             </div>
           ):(
             <div style={{marginBottom:10}}>
               <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>Monto (₲)</div>
-              <input type="text" inputMode="numeric" pattern="[0-9]*" value={localAmount||""} placeholder="0" onChange={e=>setLocalAmount(e.target.value)} inputMode="numeric" pattern="[0-9]*" style={iSp}/>
+              <MoneyInput value={parseInt(localAmount)||0} onChange={v=>setLocalAmount(v)} placeholder="0" style={iSp}/>
             </div>
           )}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
@@ -2586,8 +2714,8 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               else if(wasAusenteReprog){leftBg="#E8EAF6";leftColor="#3949AB";leftLabel="↩ A Reprogramar";}
               else if(wasAusenteDada){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="🚫 Ausente (Dada)";}
               else if(wasAbsent){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="🚫 Ausente";}
-              else if(isGiven){leftBg=C.blueL;leftColor=C.blue2;leftLabel="Clase Dada";}
-              else{leftBg="#FFF3E0";leftColor="#E65100";leftLabel="Clase No Dada";}
+              else if(isGiven){leftBg=C.blueL;leftColor=C.blue2;leftLabel="Realizada";}
+              else{leftBg="#FFF3E0";leftColor="#E65100";leftLabel="Programada";}
               // Payment badge — hide for cancelled (no payment until rescheduled)
               const rightBg=isPaid?"#E8F5E9":"#FFEBEE";
               const rightColor=isPaid?"#2E7D32":"#C62828";
@@ -2668,7 +2796,7 @@ function RecordatorioModal({ student:s, onClose, sendNotification, getRem, getCo
   );
 }
 
-function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sendNotification }) {
+function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance }) {
   const combo=getCombo(s);
   const rem=getRem(s,classes);
   const isExpired=rem!==null&&rem<=0;
@@ -2676,7 +2804,12 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
   const [showPago,setShowPago]=useState(false);
   const [showHistory,setShowHistory]=useState(false);
   const [showAtt,setShowAtt]=useState(false);
-  const [suspended,setSuspended]=useState(false);
+  const [suspended,setSuspended]=useState(s.suspended||false);
+  const toggleSuspended=()=>{
+    const newVal=!suspended;
+    setSuspended(newVal);
+    onUpdate({...s,suspended:newVal});
+  };
   const [histTab,setHistTab]=useState(0);
   const [showComprobante,setShowComprobante]=useState(null);
   const [showRecordatorio,setShowRecordatorio]=useState(false);
@@ -2691,12 +2824,23 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
 
   const attLogs=[];
   classes.forEach(cls=>{
-    if(!cls.students.includes(s.id)) return;
-    (cls.attendanceLog||[]).forEach(entry=>{
-      if(!entry.present.includes(s.id)) return;
+    if(!cls.students||!cls.students.includes(s.id)) return;
+    // Show classes with explicit attendance
+    const logged=(cls.attendanceLog||[]).filter(entry=>
+      entry.present&&entry.present.includes(s.id)||
+      entry.ausente_dada&&entry.ausente_dada.includes(s.id)
+    );
+    logged.forEach(entry=>{
       const d=new Date(entry.date+"T12:00:00");
-      attLogs.push({date:entry.date,day:entry.day,month:MONTHS[d.getMonth()],year:d.getFullYear(),dayNum:d.getDate(),className:cls.title,time:cls.time});
+      const isAusenteDada=entry.ausente_dada&&entry.ausente_dada.includes(s.id);
+      attLogs.push({date:entry.date,day:entry.day||"",month:MONTHS[d.getMonth()],year:d.getFullYear(),dayNum:d.getDate(),className:cls.title,time:cls.time,status:isAusenteDada?"ausente_dada":"presente"});
     });
+    // Also include past classes with NO attendance record (default = present)
+    if(cls.date<TODAY_DATE&&!(cls.attendanceLog||[]).find(e=>e.date===cls.date)){
+      const d=new Date(cls.date+"T12:00:00");
+      const wD=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+      attLogs.push({date:cls.date,day:wD[d.getDay()],month:MONTHS[d.getMonth()],year:d.getFullYear(),dayNum:d.getDate(),className:cls.title,time:cls.time,status:"presente"});
+    }
   });
   attLogs.sort((a,b)=>b.date.localeCompare(a.date));
   const byMonth={};
@@ -2704,12 +2848,18 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
 
   return (
     <>
-      <WhiteCard style={{marginBottom:12,opacity:suspended?0.6:1}}>
-        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
-          <div style={{width:44,height:44,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white,flexShrink:0}}>{s.avatar}</div>
+      <WhiteCard style={{marginBottom:12,opacity:suspended?0.7:1,border:suspended?"1.5px solid #FFB74D":undefined}}>
+        {suspended&&<div style={{background:"#FFF3E0",borderRadius:8,padding:"4px 10px",marginBottom:8,fontSize:11,fontWeight:700,color:"#E65100"}}>⏸ Alumno suspendido — no aparece en mora</div>}
+        <div style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:10}}>
+          <div style={{width:48,height:48,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,color:C.white,flexShrink:0}}>{s.avatar}</div>
           <div style={{flex:1}}>
-            <div style={{fontWeight:800,fontSize:14,color:C.text}}>{s.name}</div>
-            <div style={{fontSize:12,color:C.mutedDark}}>{s.sport}</div>
+            <div style={{fontWeight:900,fontSize:18,color:C.text,lineHeight:1.1}}>{s.name}</div>
+            {(classDays.length>0||classTime)&&(
+              <div style={{display:"flex",alignItems:"center",gap:6,marginTop:4,flexWrap:"wrap"}}>
+                {classDays.map(d=><span key={d} style={{fontSize:11,padding:"2px 7px",borderRadius:20,background:C.blueL,color:C.blue2,fontWeight:600}}>{d}</span>)}
+                {classTime&&<span style={{fontSize:12,color:C.mutedDark}}>{classTime}{classCourt?" · "+classCourt:""}</span>}
+              </div>
+            )}
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:5}}>
             <button onClick={()=>setShowHistory(true)} style={{background:C.blueL,border:"none",borderRadius:8,padding:"4px 10px",cursor:"pointer",fontSize:11,color:C.blue2,fontWeight:600}}>Historial</button>
@@ -2721,89 +2871,165 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
           <span style={{fontSize:12,padding:"4px 12px",borderRadius:20,background:combo?.total?C.blueL:combo?.packType==="individual"?C.blueL:combo?.packType==="combo"?C.blueL:C.greenL,color:combo?.total?C.blue2:combo?.packType&&combo.packType!=="mensual"?C.blue2:C.green,fontWeight:700}}>
             {combo?.total?"📦 "+combo.total+" clases":combo?.packType==="individual"?"🎯 Individual":combo?.packType==="combo"?"📦 Combo":"📅 Mensual"}
           </span>
-        </div>
-        {/* Class schedule or upcoming dates */}
-        {(()=>{
-          // Get upcoming dates from last paid combo
-          const lastCombo=s.combos&&s.combos.length>0?s.combos[s.combos.length-1]:null;
-          const upcomingDates=lastCombo?.dates?lastCombo.dates.filter(d=>d>=TODAY_DATE):[];
-          const mN=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
-          if(upcomingDates.length>0){
-            return (
-              <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8,alignItems:"center"}}>
-                <span style={{fontSize:10,color:C.mutedDark,fontWeight:600,marginRight:2}}>Próximas:</span>
-                {upcomingDates.slice(0,4).map((d,i)=>{
-                  const dt=new Date(d+"T12:00:00");
-                  return <span key={i} style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:C.blueL,color:C.blue2,fontWeight:700}}>{dt.getDate()+" "+mN[dt.getMonth()]}</span>;
-                })}
-                {upcomingDates.length>4&&<span style={{fontSize:10,color:C.mutedDark}}>+{upcomingDates.length-4}</span>}
-              </div>
-            );
-          }
-          if(classDays.length>0){
-            return (
-              <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8,alignItems:"center"}}>
-                {classDays.map(d=><span key={d} style={{fontSize:10,padding:"2px 6px",borderRadius:20,background:C.blueL,color:C.blue2,fontWeight:600}}>{d}</span>)}
-                {classTime&&<span style={{fontSize:11,color:C.mutedDark,marginLeft:4}}>{classTime}{classCourt?" · "+classCourt:""}</span>}
-              </div>
-            );
-          }
-          return null;
-        })()}
-        <div style={{display:"flex",gap:10,marginBottom:12}}>
-          {/* Single big number */}
-          <div style={{background:C.blueL,borderRadius:12,padding:"12px 16px",minWidth:90,textAlign:"center"}}>
-            <div style={{fontSize:11,fontWeight:700,color:C.blue2,marginBottom:2}}>Estado de Cuentas</div>
-            {!combo?(
-              <>
-                <div style={{fontSize:22,fontWeight:900,color:C.mutedDark,lineHeight:1}}>—</div>
-                <div style={{fontSize:10,fontWeight:700,color:C.mutedDark,marginTop:2}}>Sin registro</div>
-              </>
-            ):rem===null?(()=>{
-              const lastDate=combo?.payDate||combo?.date||TODAY_DATE;
+          {(()=>{
+            // Next payment date
+            if(!combo) return null;
+            const mN=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+            if(combo.total===null&&combo.packType!=="individual"){
+              // Mensual: next due = payDate + 1 month
+              const lastDate=combo.payDate||combo.date;
+              if(!lastDate) return null;
               const lastPay=new Date(lastDate+"T12:00:00");
+              const nextDue=new Date(lastPay.getFullYear(),lastPay.getMonth()+1,lastPay.getDate());
               const today=new Date(TODAY_DATE+"T12:00:00");
-              // If paid: next due = payDate + 1 month. If not paid: due = payDate itself
-              const isPaid=combo?.paid===true;
-              const nextDue=isPaid
-                ?new Date(lastPay.getFullYear(),lastPay.getMonth()+1,lastPay.getDate())
-                :lastPay; // if unpaid, due from payDate itself
-              const diffDays=Math.floor((today-nextDue)/(1000*60*60*24))+1; // +1 so day 0 = 1 day overdue
-              const overdue=!isPaid||diffDays>0;
-              return overdue?(
-                <>
-                  <div style={{fontSize:40,fontWeight:900,color:"#C62828",lineHeight:1}}>{diffDays}</div>
-                  <div style={{fontSize:11,fontWeight:700,color:"#C62828",marginTop:2}}>días vencido</div>
-                </>
-              ):(
-                <>
-                  <div style={{fontSize:12,fontWeight:900,color:"#43A047",lineHeight:1.3,textAlign:"center"}}>Pago</div>
-                  <div style={{fontSize:12,fontWeight:900,color:"#43A047",lineHeight:1.3,textAlign:"center"}}>al Día ✓</div>
-                </>
-              );
-            })():(
-              <>
-                <div style={{fontSize:40,fontWeight:900,color:!combo?.paid?"#C62828":rem<=0?"#43A047":C.blue2,lineHeight:1}}>{Math.abs(rem)}</div>
-                <div style={{fontSize:11,fontWeight:700,color:!combo?.paid?"#C62828":rem<=0?"#43A047":C.blue2,marginTop:2}}>{!combo?.paid?"A cobrar":rem<=0?"Al día":"Por dar"}</div>
-              </>
-            )}
-          </div>
-          {/* Action buttons */}
-          <div style={{flex:1,display:"flex",flexDirection:"column",gap:6}}>
-            {!combo?(
-              <button onClick={()=>setShowPago(true)} style={{flex:1,padding:"10px",borderRadius:12,border:"2px dashed "+C.blue2,background:C.blueL,color:C.blue2,fontSize:13,cursor:"pointer",fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                Asignar paquete
-              </button>
-            ):(
-              <button onClick={()=>setShowPago(true)} style={{flex:1,padding:"10px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:"#fff",fontSize:13,cursor:"pointer",fontWeight:800}}>Actualizar Pagos</button>
-            )}
-            <div style={{display:"flex",gap:6}}>
-              <button onClick={()=>setShowRecordatorio(true)} style={{flex:1,padding:"8px 6px",borderRadius:10,border:"none",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",color:"#fff",fontSize:11,cursor:"pointer",fontWeight:700,lineHeight:1.3,textAlign:"center"}}>{"Enviar\nRecordatorio"}</button>
-              <button onClick={()=>setSuspended(v=>!v)} style={{flex:1,padding:"8px 6px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:"#fff",fontSize:11,cursor:"pointer",fontWeight:700}}>{suspended?"Activar":"Suspender"}</button>
+              const diffDays=Math.floor((nextDue-today)/(1000*60*60*24));
+              const isOverdue=diffDays<0;
+              const label=isOverdue?`Vencido hace ${Math.abs(diffDays)}d`:`Próximo: ${nextDue.getDate()} ${mN[nextDue.getMonth()]}`;
+              return <span style={{fontSize:11,padding:"4px 10px",borderRadius:20,background:isOverdue?"#FFEBEE":"#EDFBEC",color:isOverdue?"#C62828":"#2E7D32",fontWeight:700}}>📅 {label}</span>;
+            }
+            return null;
+          })()}
+        </div>
+
+
+
+        {/* ESTADO DE CUENTAS - 4 columns */}
+        {combo&&rem!==null&&(()=>{
+          const allDatesForStudent=s.combos.filter(c=>c.total>0||(c.packType&&c.packType!=="mensual")).flatMap(c=>{
+            const dates=c.dates||[];
+            return dates.map(d=>{
+              const attEntry=myClassesH.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===d);
+              const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
+              const idx=dates.indexOf(d);
+              const isPaid=idx<paidCount;
+              const isPast=d<TODAY_DATE;
+              const isGiven=attEntry?(attEntry.present||[]).includes(s.id)||(attEntry.ausente_dada||[]).includes(s.id):isPast;
+              return {date:d,isPaid,isGiven,isPast};
+            });
+          });
+          const noPagadas=allDatesForStudent.filter(d=>!d.isPaid).length;
+          const pagadas=allDatesForStudent.filter(d=>d.isPaid).length;
+          const programadas=allDatesForStudent.filter(d=>!d.isGiven&&!d.isPast).length;
+          const realizadas=allDatesForStudent.filter(d=>d.isGiven).length;
+          const cols=[
+            {n:noPagadas,label:"No Pagada",color:"#C62828",bg:"#FFEBEE"},
+            {n:pagadas,label:"Pagada",color:"#2E7D32",bg:"#EDFBEC"},
+            {n:programadas,label:"Programada",color:C.blue2,bg:C.blueL},
+            {n:realizadas,label:"Realizada",color:"#555",bg:"#F5F5F5"},
+          ];
+          const reprogCount=allDatesForStudent.filter(d=>{
+            const attEntry=myClassesH.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===d.date);
+            return attEntry&&(attEntry.ausente_reprog||[]).includes(s.id);
+          }).length;
+          const cancelledCount=s.combos.filter(c=>c.total>0||(c.packType&&c.packType!=="mensual")).flatMap(c=>c.dates||[]).filter(d=>{
+            const cls=myClassesH.find(c=>c.date===d);
+            return cls?.cancelled&&!cls?.rescheduled;
+          }).length;
+          return (
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:11,fontWeight:800,color:C.blue2,letterSpacing:1,marginBottom:8}}>ESTADO DE CUENTAS</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:reprogCount||cancelledCount?8:0}}>
+                {cols.map((col,i)=>(
+                  <div key={i} style={{background:col.bg,borderRadius:12,padding:"10px 4px",textAlign:"center"}}>
+                    <div style={{fontSize:26,fontWeight:900,color:col.color,lineHeight:1}}>{col.n}</div>
+                    <div style={{fontSize:9,fontWeight:700,color:col.color,marginTop:3,lineHeight:1.2}}>{col.label}</div>
+                  </div>
+                ))}
+              </div>
+              {(reprogCount>0||cancelledCount>0)&&(
+                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  {reprogCount>0&&<span style={{display:"flex",alignItems:"center",gap:4,fontSize:11,color:"#3949AB",fontWeight:700}}><span style={{fontSize:13,fontWeight:900}}>{reprogCount}</span><span style={{background:"#E8EAF6",borderRadius:20,padding:"2px 8px"}}>↩ A Reprogramar</span></span>}
+                  {cancelledCount>0&&<span style={{display:"flex",alignItems:"center",gap:4,fontSize:11,color:"#7B1FA2",fontWeight:700}}><span style={{fontSize:13,fontWeight:900}}>{cancelledCount}</span><span style={{background:"#F3E5F5",borderRadius:20,padding:"2px 8px"}}>❌ Cancelada</span></span>}
+                </div>
+              )}
             </div>
+          );
+        })()}
+
+        {/* Mensual estado */}
+        {combo&&rem===null&&(()=>{
+          const lastDate=combo?.payDate||combo?.date||TODAY_DATE;
+          const lastPay=new Date(lastDate+"T12:00:00");
+          const today=new Date(TODAY_DATE+"T12:00:00");
+          const isPaid=combo?.paid===true;
+          const nextDue=isPaid?new Date(lastPay.getFullYear(),lastPay.getMonth()+1,lastPay.getDate()):lastPay;
+          const diffDays=Math.floor((today-nextDue)/(1000*60*60*24))+1;
+          const overdue=!isPaid||diffDays>0;
+          return (
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:11,fontWeight:800,color:C.blue2,letterSpacing:1,marginBottom:8}}>ESTADO DE CUENTAS</div>
+              <div style={{background:overdue?"#FFEBEE":"#EDFBEC",borderRadius:12,padding:"12px 16px",textAlign:"center"}}>
+                {overdue?<><div style={{fontSize:36,fontWeight:900,color:"#C62828",lineHeight:1}}>{diffDays}</div><div style={{fontSize:12,fontWeight:700,color:"#C62828",marginTop:2}}>días vencido</div></>
+                :<><div style={{fontSize:16,fontWeight:900,color:"#43A047"}}>Pago al Día ✓</div></>}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Action buttons - horizontal */}
+        {(()=>{
+          // Check if renewal button should show
+          const classCombos=(s.combos||[]).filter(c=>c.total>0||(c.packType&&c.packType!=="mensual"&&c.packType!=="individual"));
+          const lastComboS=classCombos.slice(-1)[0];
+          const showRenewal=lastComboS&&(()=>{
+            const paidCount=lastComboS.paidCount!==undefined?lastComboS.paidCount:(lastComboS.paid?lastComboS.total:0);
+            const fullyPaid=paidCount>=(lastComboS.total||1);
+            if(!fullyPaid) return false; // don't show if unpaid classes remain
+            const remaining=(lastComboS.dates||[]).filter(d=>d>=TODAY_DATE).length;
+            return remaining<=2&&remaining>0;
+          })();
+          // Mensual renewal
+          const isMensualCombo=combo&&(combo.total===null&&combo.packType!=="individual")||(combo?.packType==="mensual");
+          const showMensualRenewal=isMensualCombo&&combo?.paid===true&&(()=>{
+            const lastDate=combo?.payDate||combo?.date||TODAY_DATE;
+            const lastPay=new Date(lastDate+"T12:00:00");
+            const nextDue=new Date(lastPay.getFullYear(),lastPay.getMonth()+1,lastPay.getDate());
+            const today=new Date(TODAY_DATE+"T12:00:00");
+            const daysLeft=Math.floor((nextDue-today)/(1000*60*60*24));
+            return daysLeft>=0&&daysLeft<=5;
+          })();
+          const handleRenew=()=>{
+            if(lastComboS){
+              // Generate next dates after last combo date
+              const lastDate=lastComboS.dates&&lastComboS.dates.length>0?lastComboS.dates[lastComboS.dates.length-1]:TODAY_DATE;
+              const clsDays=myClassesH.length>0?myClassesH[0].days:[];
+              const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+              const dowSet=new Set(clsDays.map(d=>DAY_MAP[d]));
+              const nextDates=[];
+              let cur=new Date(lastDate+"T12:00:00");
+              cur.setDate(cur.getDate()+1);
+              while(nextDates.length<lastComboS.total){
+                if(dowSet.size===0||dowSet.has(cur.getDay())){
+                  nextDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+                }
+                cur.setDate(cur.getDate()+1);
+              }
+              const newCombo={id:(s.combos||[]).length+1,total:lastComboS.total,packType:lastComboS.packType||"combo",used:0,paid:false,paidCount:0,date:nextDates[0]||TODAY_DATE,amount:lastComboS.amount,dates:nextDates,payments:[]};
+              onUpdate({...s,combos:[...(s.combos||[]),newCombo]});
+            }
+          };
+          return (
+        <div style={{display:"flex",gap:8,flexDirection:"column"}}>
+          {(showRenewal||showMensualRenewal)&&(
+            <button onClick={handleRenew} style={{padding:"11px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#1565C0,#1976D2)",color:"#fff",fontSize:13,cursor:"pointer",fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+              🔄 Renovar combo
+            </button>
+          )}
+          {!combo?(
+            <button onClick={()=>setShowPago(true)} style={{padding:"12px",borderRadius:12,border:"2px dashed "+C.blue2,background:C.blueL,color:C.blue2,fontSize:13,cursor:"pointer",fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Asignar paquete
+            </button>
+          ):(
+            <button onClick={()=>setShowPago(true)} style={{padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:"#fff",fontSize:14,cursor:"pointer",fontWeight:800}}>Actualizar Pagos</button>
+          )}
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>setShowRecordatorio(true)} style={{flex:1,padding:"10px",borderRadius:10,border:"1.5px solid #65CE5A",background:C.white,color:"#2E7D32",fontSize:12,cursor:"pointer",fontWeight:700}}>Enviar Recordatorio</button>
+            <button onClick={toggleSuspended} style={{flex:1,padding:"10px",borderRadius:10,border:"1.5px solid #65CE5A",background:C.white,color:"#2E7D32",fontSize:12,cursor:"pointer",fontWeight:700}}>{suspended?"▶ Activar":"⏸ Suspender"}</button>
           </div>
         </div>
+          );
+        })()}
       </WhiteCard>
 
       {showPago&&<PagoModal s={s} combo={combo} newClasses={newClasses} setNewClasses={setNewClasses} newAmount={newAmount} setNewAmount={setNewAmount} newDate={newDate} setNewDate={setNewDate} onClose={()=>setShowPago(false)} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification}/>}
@@ -3047,6 +3273,55 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
           <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
             <button onClick={()=>setShowAtt(false)} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
             <div style={{flex:1}}><div style={{fontWeight:800,fontSize:16,color:C.white}}>Registro de Asistencia</div><div style={{fontSize:12,color:C.muted}}>{s.name}</div></div>
+            <button onClick={async()=>{
+              const mN=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+              const rowH=44; const headerH=130; const footerH=40;
+              const canvas=document.createElement("canvas");
+              canvas.width=600; canvas.height=headerH+attLogs.length*rowH+footerH+20;
+              const ctx=canvas.getContext("2d");
+              ctx.fillStyle="#fff"; ctx.fillRect(0,0,canvas.width,canvas.height);
+              // Header
+              const grad=ctx.createLinearGradient(0,0,600,headerH);
+              grad.addColorStop(0,"#0D1B4B"); grad.addColorStop(1,"#1A3DB5");
+              ctx.fillStyle=grad; ctx.fillRect(0,0,600,headerH);
+              ctx.fillStyle="#fff"; ctx.font="bold 22px Arial"; ctx.textAlign="left";
+              ctx.fillText(s.name,30,45);
+              ctx.fillStyle="rgba(255,255,255,0.7)"; ctx.font="14px Arial";
+              ctx.fillText("Registro de Asistencia · izicoach",30,70);
+              ctx.fillStyle="rgba(255,255,255,0.5)"; ctx.font="12px Arial";
+              ctx.fillText("Total: "+attLogs.length+" clases asistidas",30,95);
+              // Column headers
+              ctx.fillStyle="#EEF2FF"; ctx.fillRect(0,headerH,600,28);
+              ctx.fillStyle="#0D1B4B"; ctx.font="bold 11px Arial"; ctx.textAlign="left";
+              ctx.fillText("FECHA",30,headerH+19);
+              ctx.fillText("DÍA",160,headerH+19);
+              ctx.fillText("CLASE",260,headerH+19);
+              ctx.fillText("ESTADO",440,headerH+19);
+              // Rows
+              attLogs.forEach((e,i)=>{
+                const y=headerH+28+i*rowH;
+                ctx.fillStyle=i%2===0?"#F8F9FF":"#fff"; ctx.fillRect(0,y,600,rowH);
+                const d=new Date(e.date+"T12:00:00");
+                ctx.fillStyle="#0D1B4B"; ctx.font="13px Arial"; ctx.textAlign="left";
+                ctx.fillText(d.getDate()+" "+mN[d.getMonth()]+" "+d.getFullYear(),30,y+26);
+                ctx.fillText(e.day||"",160,y+26);
+                ctx.fillText((e.className||"").slice(0,22),260,y+26);
+                ctx.fillStyle=e.status==="ausente_dada"?"#E65100":"#2E7D32";
+                ctx.font="bold 11px Arial";
+                ctx.fillText(e.status==="ausente_dada"?"Ausente":"✓ Presente",440,y+26);
+                ctx.strokeStyle="#EEF2FF"; ctx.lineWidth=1;
+                ctx.beginPath(); ctx.moveTo(0,y+rowH); ctx.lineTo(600,y+rowH); ctx.stroke();
+              });
+              // Footer
+              ctx.fillStyle="#9BACCB"; ctx.font="11px Arial"; ctx.textAlign="center";
+              ctx.fillText("izicoach · Generado el "+TODAY_DATE,300,canvas.height-12);
+              const a=document.createElement("a");
+              a.href=canvas.toDataURL("image/png");
+              a.download="asistencia-"+s.name+".png";
+              a.click();
+            }} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:36,height:36,cursor:"pointer",color:C.white,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            </button>
           </div>
           <div style={{flex:1,overflowY:"auto",padding:16}}>
             {attLogs.length===0?(
@@ -3076,7 +3351,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
                           </div>
                           <div style={{textAlign:"right"}}>
                             <div style={{fontSize:12,fontWeight:600,color:C.blue2}}>{e.time}</div>
-                            <div style={{width:8,height:8,borderRadius:"50%",background:C.green,margin:"4px auto 0"}}></div>
+                            <span style={{fontSize:10,padding:"2px 6px",borderRadius:10,background:e.status==="ausente_dada"?"#FFF3E0":"#EDFBEC",color:e.status==="ausente_dada"?"#E65100":"#2E7D32",fontWeight:700}}>{e.status==="ausente_dada"?"Ausente":"✓"}</span>
                           </div>
                         </div>
                       </WhiteCard>
@@ -3092,17 +3367,26 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
   );
 }
 
-function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], sendNotification }) {
+function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance }) {
   const [search,setSearch]=useState("");
   const [filter,setFilter]=useState("none");
-  // Only show students that have at least one class assigned
-  let list=students.filter(s=>classes.some(c=>c.students&&c.students.includes(s.id)));
+  const allList=students.filter(s=>classes.some(c=>c.students&&c.students.includes(s.id)));
+  let list=[...allList];
   if(search.trim()) list=list.filter(s=>s.name.toLowerCase().includes(search.toLowerCase()));
+  list=list.sort((a,b)=>{
+    const ra=getRem(a,classes);
+    const rb=getRem(b,classes);
+    const scoreA=ra===null?1:ra<0?-1:ra>0?0:1;
+    const scoreB=rb===null?1:rb<0?-1:rb>0?0:1;
+    if(scoreA!==scoreB) return scoreA-scoreB;
+    if(ra!==null&&rb!==null) return ra-rb;
+    return a.name.localeCompare(b.name);
+  });
   if(filter==="mora") list=list.filter(s=>{
+    if(s.suspended) return false;
     const r=getRem(s,classes);
     const combo=getCombo(s);
-    if(r!==null) return r<0; // clases: negative = unpaid
-    // mensual: check if overdue
+    if(r!==null) return r<0;
     if(!combo) return false;
     const lastDate=combo.payDate||combo.date||TODAY_DATE;
     const lastPay=new Date(lastDate+"T12:00:00");
@@ -3112,10 +3396,30 @@ function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], send
     const diffDays=Math.floor((today-nextDue)/(1000*60*60*24))+1;
     return !isPaid||diffDays>0;
   });
+  // Summary
+  const enMora=allList.filter(s=>{if(s.suspended)return false;const r=getRem(s,classes);return r!==null&&r<0;});
+  const programadas=allList.filter(s=>{const r=getRem(s,classes);return r!==null&&r>0;}).length;
+  const alDia=allList.length-enMora.length-programadas;
   return (
-    <div>
+    <div style={{flex:1,overflowY:"auto",padding:"0 16px",paddingBottom:"calc(120px + env(safe-area-inset-bottom, 34px))"}}>
+      {allList.length>0&&(
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:16,marginTop:8}}>
+          <div style={{background:"#FFEBEE",borderRadius:14,padding:"12px 10px",textAlign:"center"}}>
+            <div style={{fontSize:22,fontWeight:900,color:"#C62828"}}>{enMora.length}</div>
+            <div style={{fontSize:10,fontWeight:700,color:"#C62828",marginTop:2}}>EN MORA</div>
+          </div>
+          <div style={{background:C.blueL,borderRadius:14,padding:"12px 10px",textAlign:"center"}}>
+            <div style={{fontSize:22,fontWeight:900,color:C.blue2}}>{programadas}</div>
+            <div style={{fontSize:10,fontWeight:700,color:C.blue2,marginTop:2}}>PROGRAMADAS</div>
+          </div>
+          <div style={{background:"#EDFBEC",borderRadius:14,padding:"12px 10px",textAlign:"center"}}>
+            <div style={{fontSize:22,fontWeight:900,color:"#2E7D32"}}>{alDia}</div>
+            <div style={{fontSize:10,fontWeight:700,color:"#2E7D32",marginTop:2}}>AL DÍA</div>
+          </div>
+        </div>
+      )}
       <div style={{position:"relative",marginBottom:12}}>
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar alumno..." style={{width:"100%",padding:"11px 14px 11px 14px",borderRadius:12,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",background:C.white,color:C.text,outline:"none"}}/>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar alumno..." style={{width:"100%",padding:"11px 14px",borderRadius:12,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",background:C.white,color:C.text,outline:"none"}}/>
         {search&&<button onClick={()=>setSearch("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:C.mutedDark,fontSize:18}}>×</button>}
       </div>
       <div style={{display:"flex",gap:8,marginBottom:16}}>
@@ -3133,12 +3437,12 @@ function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], send
           </button>
         </div>
       )}
-      {list.map(s=><PaymentCard key={s.id} student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification}/>)}
+      {list.map(s=><PaymentCard key={s.id} student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance}/>)}
     </div>
   );
 }
 
-function Finances({ students, classes, initialTab="payments", onUpdate, expenses=[], setExpenses, addIncome, packages=[], sendNotification }) {
+function Finances({ students, classes, initialTab="payments", onUpdate, expenses=[], setExpenses, addIncome, packages=[], sendNotification, onAttendance }) {
   const [tab,setTab]=useState(initialTab);
   const [selMonth,setSelMonth]=useState((()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");})());
   const [showMovModal,setShowMovModal]=useState(null);
@@ -3166,7 +3470,7 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
         <div style={{fontSize:13,color:C.muted,marginTop:4}}>{initialTab==="payments"?"Estado de cobros por alumno":"Resumen financiero del mes"}</div>
       </div>
       <div style={{padding:"16px",marginTop:-8}}>
-        {tab==="payments"&&<PaymentsTab students={students} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification}/>}
+        {tab==="payments"&&<PaymentsTab students={students} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance}/>}
         {tab==="expenses"&&(
           <div>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:C.white,borderRadius:14,padding:"12px 16px",marginBottom:14,border:"1px solid "+C.border}}>
@@ -3418,7 +3722,7 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
             </div>
             <div style={{marginBottom:14}}>
               <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Monto (₲)</label>
-              <input type="text" inputMode="numeric" pattern="[0-9]*" value={movAmount} onChange={e=>setMovAmount(e.target.value)} placeholder="200000" style={{width:"100%",padding:"13px 16px",borderRadius:12,border:"none",fontSize:15,fontWeight:700,boxSizing:"border-box",background:C.blueL,color:C.text,outline:"none"}}/>
+              <MoneyInput value={parseInt(movAmount)||0} onChange={v=>setMovAmount(v)} placeholder="200000" style={{width:"100%",padding:"13px 16px",borderRadius:12,border:"none",fontSize:15,fontWeight:700,boxSizing:"border-box",background:C.blueL,color:C.text,outline:"none"}}/>
             </div>
             <div style={{marginBottom:24}}>
               <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Fecha</label>
@@ -3907,7 +4211,7 @@ function OnboardingFlow({ onComplete }) {
           <div style={{display:"flex",gap:8,marginBottom:20,alignItems:"flex-end"}}>
             <div style={{flex:1}}>
               <label style={lS}>PRECIO ({selectedCountry?.currency||getCUR()})</label>
-              <input value={pPrice} onChange={e=>setPPrice(e.target.value)} placeholder={"Ej: 400000"} type="text" inputMode="numeric" pattern="[0-9]*" style={iS}/>
+              <MoneyInput value={parseInt(pPrice)||0} onChange={v=>setPPrice(v)} placeholder="400000" style={iS}/>
             </div>
             <button onClick={()=>{
               if(!pNameOnboard||!pNameOnboard.trim()){setPNameOnboard(null);return;}
@@ -4152,8 +4456,26 @@ export default function App() {
   const handleDeleteClass=(id)=>{
     const cls=classes.find(c=>c.id===id);
     if(!cls) return;
-    // Delete all instances of the same class (same title + time + days = same series)
+    // Get all instances of this series
+    const seriesClasses=classes.filter(c=>c.title===cls.title&&c.time===cls.time&&JSON.stringify(c.days)===JSON.stringify(cls.days));
+    const allDatesInSeries=new Set(seriesClasses.map(c=>c.date));
+    // Delete all instances
     setClasses(p=>p.filter(c=>!(c.title===cls.title&&c.time===cls.time&&JSON.stringify(c.days)===JSON.stringify(cls.days))));
+    // Remove combos from students that were created for this class
+    setStudents(p=>p.map(s=>{
+      if(!(cls.students||[]).includes(s.id)) return s;
+      // Remove combos whose dates overlap with this series
+      const cleanedCombos=s.combos.filter(combo=>{
+        if(!combo.dates||combo.dates.length===0){
+          // Check if combo date matches series
+          return !allDatesInSeries.has(combo.date);
+        }
+        // Remove if all dates are in this series
+        const hasOverlap=combo.dates.some(d=>allDatesInSeries.has(d));
+        return !hasOverlap;
+      });
+      return {...s,combos:cleanedCombos};
+    }));
   };
 
   const handleSaveClass=(cd,isEdit=false)=>{
@@ -4202,31 +4524,53 @@ export default function App() {
         const pkg=packages.find(p=>String(p.id)===String(sd.pack));
         const isIndividual=sd.pack==="individual"||pkg?.type==="individual";
         const isMensual=sd.pack==="mensual"||pkg?.type==="mensual";
-        const pn=isMensual?null:isIndividual?1:pkg?.qty||parseInt(sd.pack)||null;
+        // For individual: total = number of occurrences, dates = all occurrence dates
+        const pn=isMensual?null:isIndividual?dates.length:pkg?.qty||parseInt(sd.pack)||null;
         const packType=isMensual?"mensual":isIndividual?"individual":"combo";
-        const projectedClassDates=[];
-        if(pn){
-          if(cd.days&&cd.days.length>0){            const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+        // For individual: use all occurrence dates directly
+        const projectedClassDates=isIndividual?[...dates]:(()=>{
+          const ds=[];
+          if(!pn) return ds;
+          if(cd.days&&cd.days.length>0){
+            const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
             const dowSet=new Set(cd.days.map(d=>DAY_MAP[d]));
             let cur=new Date((cd.date||TODAY_DATE)+"T12:00:00");
-            while(projectedClassDates.length<pn){
+            while(ds.length<pn){
               if(dowSet.has(cur.getDay())){
-                projectedClassDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+                ds.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
               }
               cur.setDate(cur.getDate()+1);
             }
           } else {
-            // No recurring days — use class date(s) directly
             let cur=new Date((cd.date||TODAY_DATE)+"T12:00:00");
             for(let i=0;i<pn;i++){
-              projectedClassDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+              ds.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
               cur.setDate(cur.getDate()+1);
             }
           }
-        }
+          return ds;
+        })();
         const amount=parseInt(sd.amount)||0;
-        // Create payment entry if paid
         const paymentEntry=sd.paid&&amount>0?[{id:Date.now(),qty:pn||0,amount,method:"efectivo",date:cd.date||TODAY_DATE,dates:projectedClassDates}]:[];
+        // For individual classes: merge into existing active individual combo if exists
+        const existingIndividualIdx=s.combos.findIndex(c=>
+          (c.packType==="individual"||c.total===1)&&
+          c.paid===sd.paid&&
+          c.amount===(parseInt(sd.amount)||0)&&
+          !(c.dates&&c.dates.some(d=>d<TODAY_DATE&&(c.used||0)>=(c.total||1))) // not fully consumed
+        );
+        if(isIndividual&&existingIndividualIdx>=0){
+          // Add this class date to existing combo
+          const existing=s.combos[existingIndividualIdx];
+          const newDates=[...new Set([...(existing.dates||[]),...projectedClassDates])].sort();
+          const newTotal=(existing.total||1)+1;
+          const newPaidCount=sd.paid?(existing.paidCount||0)+1:(existing.paidCount||0);
+          const updatedCombos=s.combos.map((c,idx)=>idx===existingIndividualIdx?{
+            ...c,total:newTotal,paidCount:newPaidCount,dates:newDates,
+            payments:sd.paid&&amount>0?[...(c.payments||[]),{id:Date.now(),qty:1,amount,method:"efectivo",date:cd.date||TODAY_DATE,dates:projectedClassDates}]:(c.payments||[])
+          }:c);
+          return {...s,combos:updatedCombos};
+        }
         return {...s,combos:[...s.combos,{
           id:s.combos.length+1,
           total:pn,
@@ -4245,9 +4589,12 @@ export default function App() {
       cd.studentData.forEach(sd=>{
         const shouldSave=sd.savePay===undefined?true:sd.savePay;
         if(shouldSave&&sd.paid&&parseInt(sd.amount)>0){
-          const pn=packages.find(p=>String(p.id)===String(sd.pack));
-          const detail=sd.pack==="mensual"?"Plan Mensual":pn?.qty?(pn.qty===1?"1 clase":pn.qty+" clases"):pn?.name||"";
-          addIncome(parseInt(sd.amount), cd.date||TODAY_DATE, sd.name||"Alumno", detail);
+          const pkg=packages.find(p=>String(p.id)===String(sd.pack));
+          const studentName=students.find(s=>String(s.id)===String(sd.id))?.name||"Alumno";
+          const detail=sd.pack==="mensual"||pkg?.type==="mensual"?"Plan Mensual":
+            sd.pack==="individual"||pkg?.type==="individual"?"Clase Individual":
+            pkg?.qty?(pkg.qty+" clases"):pkg?.name||"";
+          addIncome(parseInt(sd.amount), cd.date||TODAY_DATE, studentName, detail);
         }
       });
     }
@@ -4276,8 +4623,44 @@ export default function App() {
       if(!wasGiven) return s;
       const combos=[...s.combos];
       if(combos.length===0) return s;
-      const last=combos[combos.length-1];
-      combos[combos.length-1]={...last,used:(last.used||0)+1};
+      const lastIdx=combos.length-1;
+      const last=combos[lastIdx];
+      const newUsed=(last.used||0)+1;
+      combos[lastIdx]={...last,used:newUsed};
+      // Check if combo is now complete (all paid + all given)
+      const effectiveTotal=last.total||0;
+      const paidCount=last.paidCount!==undefined?last.paidCount:(last.paid?effectiveTotal:0);
+      const allGiven=newUsed>=paidCount&&paidCount>=effectiveTotal&&effectiveTotal>0;
+      if(allGiven&&last.dates&&last.dates.length>0){
+        // Generate next combo dates starting from day after last date
+        const myClsForStudent=classes.filter(c=>c.students&&c.students.includes(s.id));
+        const classDays=myClsForStudent.length>0?myClsForStudent[0].days:[];
+        const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+        const dowSet=new Set(classDays.map(d=>DAY_MAP[d]));
+        const lastDate=last.dates[last.dates.length-1];
+        let cur=new Date(lastDate+"T12:00:00");
+        cur.setDate(cur.getDate()+1);
+        const nextDates=[];
+        while(nextDates.length<effectiveTotal){
+          if(dowSet.size===0||dowSet.has(cur.getDay())){
+            nextDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+          }
+          cur.setDate(cur.getDate()+1);
+        }
+        // Add new unpaid combo
+        combos.push({
+          id:combos.length+1,
+          total:effectiveTotal,
+          packType:last.packType||"combo",
+          used:0,
+          paid:false,
+          paidCount:0,
+          date:nextDates[0]||lastDate,
+          amount:last.amount,
+          dates:nextDates,
+          payments:[],
+        });
+      }
       return {...s,combos};
     }));
     // For ausente_reprog: mark their combo date as needing reschedule
@@ -4335,7 +4718,7 @@ export default function App() {
         {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={classes} onInvite={()=>setShowInvite(true)}/>}
         {tab==="agenda"&&<Agenda students={students} classes={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)}/>}
         {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification}/>}
-        {tab==="cobros"&&<Finances students={students} classes={classes} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification}/>}
+        {tab==="cobros"&&<Finances students={students} classes={classes} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance}/>}
         {tab==="finanzas"&&<Finances students={students} classes={classes} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages}/>}
         {showNewClass&&<NewClassModal onClose={()=>{setShowNewClass(false);if(classes.length===0)setTab("agenda");}} onSave={handleSaveClass} students={students} dateLabel="Nueva clase" onCreateStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])}/>}
         {showNewStudent&&<NewStudentModal onClose={()=>setShowNewStudent(false)} onSave={(d)=>setStudents(p=>[...p,{id:Date.now(),...d}])}/>}
