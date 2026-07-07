@@ -882,7 +882,7 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
                 <div style={{fontSize:13,fontWeight:800,color:C.white}}>{c.time}</div>
               </div>
               <div style={{flex:1}}>
-                <div style={{fontWeight:700,fontSize:14,color:C.text}}>{c.title}{c.cancelled?" (Cancelada)":""}</div>
+                <div style={{fontWeight:700,fontSize:14,color:C.text}}>{c.title}{c.cancelled?" (Cancelada)":c.rescheduled?" (Reprogramada)":""}</div>
                 <div style={{fontSize:12,color:C.mutedDark}}>{c.court+" · "+c.students.length+" alumno"+(c.students.length>1?"s":"")}</div>
               </div>
               <div style={{display:"flex",flexWrap:"wrap",gap:3,maxWidth:80,justifyContent:"flex-end"}}>
@@ -969,7 +969,7 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
   );
 }
 
-function Students({ students, onAdd, onUpdate, onChat, classes=[], onInvite }) {
+function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onInvite }) {
   const [f,setF]=useState("all");
   const [editS,setEditS]=useState(null);
   const [search,setSearch]=useState("");
@@ -1120,7 +1120,7 @@ function Students({ students, onAdd, onUpdate, onChat, classes=[], onInvite }) {
               </div>
             </div>
             <button onClick={()=>{if(!editS.name.trim())return;onUpdate(editS);setEditS(null);}} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:10}}>Guardar cambios</button>
-            <button style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"#FFF0F0",color:"#D32F2F",fontSize:15,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:20}}>🗑 Eliminar alumno</button>
+            <button onClick={()=>{if(window.confirm("¿Eliminar a "+editS.name+"? Esta acción no se puede deshacer.")){onDelete(editS.id);setEditS(null);}}} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"#FFF0F0",color:"#D32F2F",fontSize:15,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:20}}>🗑 Eliminar alumno</button>
           </div>
         </div>
       )}
@@ -1583,7 +1583,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
     return (
     <WhiteCard style={{marginBottom:12}}>
       <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
-        <div><div style={{fontWeight:800,fontSize:15,color:C.text}}>{c.title}{c.cancelled?" (Cancelada)":""}</div><div style={{fontSize:12,color:C.mutedDark}}>{c.time+" · "+c.court}</div></div>
+        <div><div style={{fontWeight:800,fontSize:15,color:C.text}}>{c.title}{c.cancelled?" (Cancelada)":c.rescheduled?" (Reprogramada)":""}</div><div style={{fontSize:12,color:C.mutedDark}}>{c.time+" · "+c.court}</div></div>
         <span style={{background:C.blueL,color:C.blue2,fontSize:11,padding:"4px 10px",borderRadius:20,fontWeight:600,height:"fit-content"}}>{c.days.join(" · ")}</span>
       </div>
       <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:(dadaCount||reprogCount)?6:12}}>
@@ -1692,11 +1692,11 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
                 <div style={{fontSize:12,marginTop:4}}>Tocá + para agregar</div>
               </div>
             ):dayC.map(c=>(
-              <div key={c.id} onClick={()=>setHighlightCls(c.id===highlightCls?null:c.id)} style={{background:c.cancelled?"#FFF3E0":isNextComboPending(c,students)?"#F5F5F5":C.white,borderRadius:16,padding:"12px 14px",marginBottom:10,boxShadow:"0 2px 10px rgba(44,94,247,0.07)",border:"1.5px solid "+(highlightCls===c.id?C.blue2:isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:"pointer",opacity:isNextComboPending(c,students)?0.75:1}}>
+              <div key={c.id} onClick={()=>setHighlightCls(c.id===highlightCls?null:c.id)} style={{background:c.cancelled?"#FFF3E0":c.rescheduled?"#E3F2FD":isNextComboPending(c,students)?"#F5F5F5":C.white,borderRadius:16,padding:"12px 14px",marginBottom:10,boxShadow:"0 2px 10px rgba(44,94,247,0.07)",border:"1.5px solid "+(highlightCls===c.id?C.blue2:isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:"pointer",opacity:isNextComboPending(c,students)?0.75:1}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
                   <div style={{flex:1}}>
                     <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                      <div style={{fontWeight:800,fontSize:15,color:c.cancelled?"#C62828":isNextComboPending(c,students)?"#9E9E9E":C.text}}>{c.title}{c.cancelled?" (Cancelada)":""}</div>
+                      <div style={{fontWeight:800,fontSize:15,color:c.cancelled?"#C62828":isNextComboPending(c,students)?"#9E9E9E":C.text}}>{c.title}{c.cancelled?" (Cancelada)":c.rescheduled?" (Reprogramada)":""}</div>
                       {isNextComboPending(c,students)&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#EEEEEE",color:"#757575",fontWeight:700}}>Sin pagar</span>}
                       {(()=>{const log=(c.attendanceLog||[]).find(e=>e.date===c.date);if(!log)return null;const dC=(log.ausente_dada||[]).length;const nC=(log.ausente_reprog||[]).length;if(!dC&&!nC)return null;return(<>{dC>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700,flexShrink:0}}>✗ Ausente-Dada</span>}{nC>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF8E1",color:"#F57F17",fontWeight:700,flexShrink:0}}>↩ A Reprogramar</span>}</>);})()}
                     </div>
@@ -1841,9 +1841,9 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
                     const colL=`calc(${LEFT}px + (100% - ${LEFT}px - ${RIGHT}px) / ${c.totalCols} * ${c.col} + ${c.col*2}px)`;
                     return (
                       <div key={c.id} onClick={()=>setHighlightCls(c.id===highlightCls?null:c.id)}
-                        style={{position:"absolute",top:topPx,left:colL,width:colW,height:heightPx,background:c.cancelled?"#FFF3E0":isNextComboPending(c,students)?"#F5F5F5":C.white,borderRadius:12,padding:"6px 10px",border:"1.5px solid "+(highlightCls===c.id?C.blue2:isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:"pointer",boxShadow:"0 2px 8px rgba(44,94,247,0.10)",overflow:"hidden",borderLeft:"4px solid "+(c.cancelled?"#E65100":isNextComboPending(c,students)?"#BDBDBD":C.blue2),zIndex:2,opacity:isNextComboPending(c,students)?0.7:1}}>
+                        style={{position:"absolute",top:topPx,left:colL,width:colW,height:heightPx,background:c.cancelled?"#FFF3E0":c.rescheduled?"#E3F2FD":isNextComboPending(c,students)?"#F5F5F5":C.white,borderRadius:12,padding:"6px 10px",border:"1.5px solid "+(highlightCls===c.id?C.blue2:isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:"pointer",boxShadow:"0 2px 8px rgba(44,94,247,0.10)",overflow:"hidden",borderLeft:"4px solid "+(c.cancelled?"#E65100":c.rescheduled?"#1565C0":isNextComboPending(c,students)?"#BDBDBD":C.blue2),zIndex:2,opacity:isNextComboPending(c,students)?0.7:1}}>
                         <div style={{display:"flex",alignItems:"center",gap:4,overflow:"hidden"}}>
-                          <div style={{fontSize:13,fontWeight:800,color:c.cancelled?"#C62828":isNextComboPending(c,students)?"#9E9E9E":C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",flex:1}}>{c.title}{c.cancelled?" (Cancelada)":""}</div>
+                          <div style={{fontSize:13,fontWeight:800,color:c.cancelled?"#C62828":isNextComboPending(c,students)?"#9E9E9E":C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",flex:1}}>{c.title}{c.cancelled?" (Cancelada)":c.rescheduled?" (Reprogramada)":""}</div>
                           {isNextComboPending(c,students)&&<span style={{fontSize:9,padding:"2px 5px",borderRadius:8,background:"#EEEEEE",color:"#757575",fontWeight:700,flexShrink:0}}>Sin pagar</span>}
                         </div>
                         <div style={{fontSize:11,color:C.mutedDark,marginTop:1}}>{c.time+(c.timeEnd?" – "+c.timeEnd:"")} · {c.court}</div>
@@ -2660,8 +2660,8 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               const rightLabel=isPaid?"✓ Pagada":"No Pagada";
               return (
                 <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid #E3F2FD"}}>
-                  <div style={{width:28,height:28,borderRadius:"50%",background:isCancelled?"#F3E5F5":C.blueL,border:"2px solid "+(isCancelled?"#7B1FA2":"#1976D2"),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                    <span style={{fontSize:11,fontWeight:800,color:isCancelled?"#7B1FA2":C.blue2}}>{i+1}</span>
+                  <div style={{width:28,height:28,borderRadius:"50%",background:isCancelled?"#F3E5F5":isRescheduled?"#E3F2FD":C.blueL,border:"2px solid "+(isCancelled?"#7B1FA2":isRescheduled?"#1565C0":"#1976D2"),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <span style={{fontSize:11,fontWeight:800,color:isCancelled?"#7B1FA2":isRescheduled?"#1565C0":C.blue2}}>{i+1}</span>
                   </div>
                   <div style={{flex:1,fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(item.date)}</div>
                   <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:leftBg,color:leftColor,fontWeight:700,flexShrink:0}}>{leftLabel}</span>
@@ -4313,22 +4313,24 @@ export default function App() {
   const [expenses,setExpensesRaw]=useState(()=>ls("izi_expenses",[]));
 
   // Sync helpers - store all data as JSON blob per coach
-  const syncToSupabase=async(table, data, userId)=>{
+  const syncAll=async(newStudents, newClasses, newExpenses, newCourts, newPackages)=>{
+    const userId=window._iziUserId;
     if(!userId) return;
     try {
-      const {data:existing}=await supabase.from("coach_data").select("*").eq("coach_id",userId).single();
-      const row={
+      await supabase.from("coach_data").upsert({
         coach_id:userId,
-        students:existing?.students||'[]',
-        classes:existing?.classes||'[]',
-        expenses:existing?.expenses||'[]',
-        courts:existing?.courts||'[]',
-        packages:existing?.packages||'[]',
-        [table]:JSON.stringify(data),
+        students:JSON.stringify(newStudents||[]),
+        classes:JSON.stringify(newClasses||[]),
+        expenses:JSON.stringify(newExpenses||[]),
+        courts:JSON.stringify(newCourts||[]),
+        packages:JSON.stringify(newPackages||[]),
         updated_at:new Date().toISOString(),
-      };
-      await supabase.from("coach_data").upsert(row,{onConflict:"coach_id"});
-    } catch(e){ console.error("Sync error:",table,e); }
+      },{onConflict:"coach_id"});
+    } catch(e){ console.error("Sync error:",e); }
+  };
+
+  const syncToSupabase=(table,data,userId)=>{
+    // No-op - we use useEffect to sync all state at once
   };
 
   const loadData=async(userId)=>{
@@ -4354,6 +4356,15 @@ export default function App() {
 
   const setModeP=(v)=>{setMode(v);lsSet("izi_mode",v);};
   const setOnboardedP=(v)=>{setOnboarded(v);lsSet("izi_onboarded",v);};
+
+  // Sync all data to Supabase when anything changes (debounced 1s)
+  useEffect(()=>{
+    if(!window._iziUserId||loadingAuth||checkingProfile) return;
+    const timer=setTimeout(()=>{
+      syncAll(students,classes,expenses,courts,packages);
+    },1000);
+    return ()=>clearTimeout(timer);
+  },[students,classes,expenses,courts,packages]);
 
   useEffect(()=>{
     supabase.auth.getSession().then(async({data:{session}})=>{
@@ -4479,26 +4490,36 @@ export default function App() {
   const handleDeleteClass=(id)=>{
     const cls=classes.find(c=>c.id===id);
     if(!cls) return;
-    // Get all instances of this series
     const seriesClasses=classes.filter(c=>c.title===cls.title&&c.time===cls.time&&JSON.stringify(c.days)===JSON.stringify(cls.days));
     const allDatesInSeries=new Set(seriesClasses.map(c=>c.date));
-    // Delete all instances
-    setClasses(p=>p.filter(c=>!(c.title===cls.title&&c.time===cls.time&&JSON.stringify(c.days)===JSON.stringify(cls.days))));
-    // Remove combos from students that were created for this class
-    setStudents(p=>p.map(s=>{
+    // Calculate new classes and students together
+    const newClasses=classes.filter(c=>!(c.title===cls.title&&c.time===cls.time&&JSON.stringify(c.days)===JSON.stringify(cls.days)));
+    const newStudents=students.map(s=>{
       if(!(cls.students||[]).includes(s.id)) return s;
-      // Remove combos whose dates overlap with this series
       const cleanedCombos=s.combos.filter(combo=>{
-        if(!combo.dates||combo.dates.length===0){
-          // Check if combo date matches series
-          return !allDatesInSeries.has(combo.date);
-        }
-        // Remove if all dates are in this series
-        const hasOverlap=combo.dates.some(d=>allDatesInSeries.has(d));
-        return !hasOverlap;
+        if(!combo.dates||combo.dates.length===0) return !allDatesInSeries.has(combo.date);
+        return !combo.dates.some(d=>allDatesInSeries.has(d));
       });
       return {...s,combos:cleanedCombos};
-    }));
+    });
+    // Update state and sync both together
+    setClassesRaw(newClasses);lsSet("izi_classes",newClasses);
+    setStudentsRaw(newStudents);lsSet("izi_students",newStudents);
+    if(window._iziUserId){
+      const userId=window._iziUserId;
+      supabase.from("coach_data").select("*").eq("coach_id",userId).single().then(({data:existing})=>{
+        const row={
+          coach_id:userId,
+          students:JSON.stringify(newStudents),
+          classes:JSON.stringify(newClasses),
+          expenses:existing?.expenses||'[]',
+          courts:existing?.courts||'[]',
+          packages:existing?.packages||'[]',
+          updated_at:new Date().toISOString(),
+        };
+        supabase.from("coach_data").upsert(row,{onConflict:"coach_id"});
+      });
+    }
   };
 
   const handleSaveClass=(cd,isEdit=false)=>{
@@ -4753,7 +4774,7 @@ export default function App() {
       <div key={"cur-"+currency} style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",position:"relative",overflow:"hidden",paddingBottom:"calc(64px + env(safe-area-inset-bottom, 34px))"}}>
         {tab==="dashboard"&&isFirstTime&&<EmptyDashboard onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)}/>}
         {tab==="dashboard"&&!isFirstTime&&<Dashboard students={students} classes={classes} onNavigate={handleNavigate} onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)} expenses={expenses} coachProfile={coachProfile}/>}
-        {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={classes} onInvite={()=>setShowInvite(true)}/>}
+        {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={classes} onInvite={()=>setShowInvite(true)}/>}
         {tab==="agenda"&&<Agenda students={students} classes={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)}/>}
         {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification}/>}
         {tab==="cobros"&&<Finances students={students} classes={classes} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance}/>}
