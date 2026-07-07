@@ -78,11 +78,49 @@ const ALL_DAYS = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"];
 const DAY_LABELS = ["L","M","M","J","V","S","D"];
 const MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 
-const INIT_STUDENTS = [];
-const INIT_CLASSES = [];
+const INIT_STUDENTS = [
+  {id:1,name:"Martina López",sport:"Tenis",status:"active",avatar:"ML",phone:"0981 123 456",email:"",createdAt:"2026-06-01",
+   combos:[{id:1,total:8,used:8,paid:true,date:"2026-06-01",amount:400000,
+     dates:["2026-06-01","2026-05-04","2026-05-06","2026-05-08","2026-05-11","2026-05-13","2026-05-15","2026-05-18"]}]},
+  {id:2,name:"Diego Fernández",sport:"Fútbol",status:"active",avatar:"DF",phone:"0982 234 567",email:"",createdAt:"2026-06-01",
+   combos:[{id:1,total:null,used:2,paid:true,date:"2026-06-01",amount:300000}]},
+  {id:3,name:"Valeria Torres",sport:"Pádel",status:"active",avatar:"VT",phone:"0983 345 678",email:"",createdAt:"2026-06-01",
+   combos:[{id:1,total:8,used:4,paid:true,date:"2026-06-01",amount:500000,
+     dates:["2026-05-04","2026-05-06","2026-05-11","2026-05-13","2026-05-18","2026-05-20","2026-05-25","2026-05-27"]}]},
+  {id:4,name:"Rodrigo Méndez",sport:"Natación",status:"inactive",avatar:"RM",phone:"0984 456 789",email:"",createdAt:"2026-06-01",
+   combos:[{id:1,total:8,used:0,paid:false,date:"2026-06-01",amount:400000,
+     dates:["2026-06-01","2026-06-04","2026-06-06","2026-06-09","2026-06-11","2026-06-13","2026-06-16","2026-06-18"]}]},
+  {id:5,name:"Sofía Ramírez",sport:"Tenis",status:"active",avatar:"SR",phone:"0985 567 890",email:"",createdAt:"2026-06-01",
+   combos:[{id:1,total:4,used:0,paid:false,date:"2026-06-01",amount:200000,
+     dates:["2026-06-01","2026-06-04","2026-06-06","2026-06-09"]}]},
+];
+
+const INIT_CLASSES = [
+  {id:1,title:"Tenis - Mañana",students:[1,5],date:"2026-05-19",time:"08:00",timeEnd:"09:00",court:"Cancha A",days:["Lun","Mié","Vie"],
+   attendanceLog:[
+     {date:"2026-06-01",day:"Viernes",present:[1,5]},
+     {date:"2026-05-04",day:"Lunes",present:[1,5]},
+     {date:"2026-05-06",day:"Miércoles",present:[1]},
+     {date:"2026-05-08",day:"Viernes",present:[1,5]},
+     {date:"2026-05-11",day:"Lunes",present:[1,5]},
+     {date:"2026-05-13",day:"Miércoles",present:[5]},
+     {date:"2026-05-15",day:"Viernes",present:[1,5]},
+     {date:"2026-05-18",day:"Lunes",present:[1,5]},
+     {date:"2026-05-19",day:"Martes",present:[1]},
+     {date:"2026-05-21",day:"Miércoles",present:[1]},
+   ]},
+  {id:2,title:"Fútbol - Tarde",students:[2],date:"2026-05-19",time:"17:00",timeEnd:"18:00",court:"Cancha B",days:["Mar","Jue"],attendanceLog:[]},
+  {id:3,title:"Pádel - Tarde",students:[3],date:"2026-05-20",time:"18:30",timeEnd:"19:30",court:"Cancha C",days:["Lun","Mié"],attendanceLog:[]},
+];
 
 const _nowM=(()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");})();
-const EXPENSES = [];
+const EXPENSES = [
+  {id:1,category:"Canchas",amount:450000,type:"gasto",date:_nowM+"-05"},
+  {id:2,category:"Equipamiento",amount:180000,type:"gasto",date:_nowM+"-08"},
+  {id:3,category:"Cobros clases",amount:1200000,type:"ingreso",date:_nowM+"-10"},
+  {id:4,category:"Transporte",amount:80000,type:"gasto",date:_nowM+"-12"},
+  {id:5,category:"Cobros clases",amount:600000,type:"ingreso",date:_nowM+"-15"},
+];
 
 function getCombo(s) {
   const combos=s.combos||[];
