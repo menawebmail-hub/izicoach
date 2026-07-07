@@ -4301,16 +4301,16 @@ export default function App() {
   const [showInvite,setShowInvite]=useState(false);
   const [tab,setTab]=useState("dashboard");
   const [financeTab,setFinanceTab]=useState("payments");
-  const [students,setStudentsRaw]=useState([]);
-  const [classes,setClassesRaw]=useState([]);
+  const [students,setStudentsRaw]=useState(()=>ls("izi_students",[]));
+  const [classes,setClassesRaw]=useState(()=>ls("izi_classes",[]));
   const [showNewClass,setShowNewClass]=useState(false);
   const [showNewStudent,setShowNewStudent]=useState(false);
   const [chatTarget,setChatTarget]=useState(null);
   const [showConfig,setShowConfig]=useState(false);
-  const [courts,setCourtsRaw]=useState([]);
-  const [packages,setPackagesRaw]=useState([]);
+  const [courts,setCourtsRaw]=useState(()=>ls("izi_courts",[]));
+  const [packages,setPackagesRaw]=useState(()=>ls("izi_packages",[]));
   const [coachProfile,setCoachProfileRaw]=useState(()=>ls("izi_profile",{name:"Coach",sport:"",photo:null}));
-  const [expenses,setExpensesRaw]=useState([]);
+  const [expenses,setExpensesRaw]=useState(()=>ls("izi_expenses",EXPENSES));
 
   // Sync helpers - store all data as JSON blob per coach
   const syncToSupabase=async(table, data, userId)=>{
@@ -4361,12 +4361,8 @@ export default function App() {
       if(session?.user){
         setUserWithRef(session.user);setCheckingProfile(true);
         const {data}=await supabase.from("coaches").select("name,currency").eq("id",session.user.id).single();
-        if(data?.name){
-          setModeP("coach");setOnboardedP(true);if(data.currency)setCUR(data.currency);
-          try{await loadData(session.user.id);}catch(e){console.error(e);}
-        } else {
-          setModeP("coach_new");setOnboardedP(false);
-        }
+        if(data?.name){setModeP("coach");setOnboardedP(true);if(data.currency)setCUR(data.currency);try{await loadData(session.user.id);}catch(e){console.error(e);}}
+        else{setModeP("coach_new");setOnboardedP(false);}
         setCheckingProfile(false);
       }
       setLoadingAuth(false);
@@ -4398,10 +4394,6 @@ export default function App() {
   const handleLogout=async()=>{
     await supabase.auth.signOut();
     setUserWithRef(null);
-    window._iziUserId=null;
-    setStudentsRaw([]);setClassesRaw([]);setCourtsRaw([]);setPackagesRaw([]);
-    setCoachProfileRaw({name:"Coach",sport:"",photo:null});setExpensesRaw([]);
-    setMode(null);setOnboarded(false);
     localStorage.clear();
     setModeP(null);setOnboardedP(false);setStudentsRaw([]);setClassesRaw([]);setCourtsRaw([]);setPackagesRaw([]);setCoachProfileRaw({name:"Coach",sport:"",photo:null});setExpensesRaw(EXPENSES);
   };
@@ -4719,12 +4711,8 @@ export default function App() {
       <AuthFlow onLogin={async(u)=>{
         setUserWithRef(u);setCheckingProfile(true);
         const {data}=await supabase.from("coaches").select("name,currency").eq("id",u.id).single();
-        if(data?.name){
-          setModeP("coach");setOnboardedP(true);if(data.currency)setCUR(data.currency);
-          try{await loadData(u.id);}catch(e){console.error(e);}
-        } else {
-          setModeP("coach_new");setOnboardedP(false);
-        }
+        if(data?.name){setModeP("coach");setOnboardedP(true);if(data.currency)setCUR(data.currency);try{await loadData(session.user.id);}catch(e){console.error(e);}}
+        else{setModeP("coach_new");setOnboardedP(false);}
         setCheckingProfile(false);
       }}/>
     </div>

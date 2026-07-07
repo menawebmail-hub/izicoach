@@ -4361,12 +4361,8 @@ export default function App() {
       if(session?.user){
         setUserWithRef(session.user);setCheckingProfile(true);
         const {data}=await supabase.from("coaches").select("name,currency").eq("id",session.user.id).single();
-        if(data?.name){
-          setModeP("coach");setOnboardedP(true);if(data.currency)setCUR(data.currency);
-          try{await loadData(session.user.id);}catch(e){console.error(e);}
-        } else {
-          setModeP("coach_new");setOnboardedP(false);
-        }
+        if(data?.name){setModeP("coach");setOnboardedP(true);if(data.currency)setCUR(data.currency);try{await loadData(session.user.id);}catch(e){console.error(e);}}
+        else{setModeP("coach_new");setOnboardedP(false);}
         setCheckingProfile(false);
       }
       setLoadingAuth(false);
@@ -4719,12 +4715,8 @@ export default function App() {
       <AuthFlow onLogin={async(u)=>{
         setUserWithRef(u);setCheckingProfile(true);
         const {data}=await supabase.from("coaches").select("name,currency").eq("id",u.id).single();
-        if(data?.name){
-          setModeP("coach");setOnboardedP(true);if(data.currency)setCUR(data.currency);
-          try{await loadData(u.id);}catch(e){console.error(e);}
-        } else {
-          setModeP("coach_new");setOnboardedP(false);
-        }
+        if(data?.name){setModeP("coach");setOnboardedP(true);if(data.currency)setCUR(data.currency);try{await loadData(session.user.id);}catch(e){console.error(e);}}
+        else{setModeP("coach_new");setOnboardedP(false);}
         setCheckingProfile(false);
       }}/>
     </div>

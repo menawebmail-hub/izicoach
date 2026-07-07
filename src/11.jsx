@@ -4292,7 +4292,6 @@ export default function App() {
   const ls=(key,def)=>{try{const v=localStorage.getItem(key);return v?JSON.parse(v):def;}catch{return def;}};
   const lsSet=(key,val)=>{try{localStorage.setItem(key,JSON.stringify(val));}catch{}};
   const [user,setUser]=useState(null);
-  const setUserWithRef=(u)=>{setUser(u);window._iziUserId=u?.id||null;};
   const [loadingAuth,setLoadingAuth]=useState(true);
   const [checkingProfile,setCheckingProfile]=useState(false);
 
@@ -4301,57 +4300,53 @@ export default function App() {
   const [showInvite,setShowInvite]=useState(false);
   const [tab,setTab]=useState("dashboard");
   const [financeTab,setFinanceTab]=useState("payments");
-  const [students,setStudentsRaw]=useState([]);
-  const [classes,setClassesRaw]=useState([]);
+  const [students,setStudentsRaw]=useState(()=>ls("izi_students",[]));
+  const [classes,setClassesRaw]=useState(()=>ls("izi_classes",[]));
   const [showNewClass,setShowNewClass]=useState(false);
   const [showNewStudent,setShowNewStudent]=useState(false);
   const [chatTarget,setChatTarget]=useState(null);
   const [showConfig,setShowConfig]=useState(false);
-  const [courts,setCourtsRaw]=useState([]);
-  const [packages,setPackagesRaw]=useState([]);
+  const [courts,setCourtsRaw]=useState(()=>ls("izi_courts",[]));
+  const [packages,setPackagesRaw]=useState(()=>ls("izi_packages",[]));
   const [coachProfile,setCoachProfileRaw]=useState(()=>ls("izi_profile",{name:"Coach",sport:"",photo:null}));
-  const [expenses,setExpensesRaw]=useState([]);
+  const [expenses,setExpensesRaw]=useState(()=>ls("izi_expenses",EXPENSES));
 
-  // Sync helpers - store all data as JSON blob per coach
+  // Sync helpers
   const syncToSupabase=async(table, data, userId)=>{
-    if(!userId) return;
-    console.log("Syncing to Supabase:", table, "userId:", userId, "data length:", data?.length);
+    if(!userId||!data?.length) return;
     try {
-      const {data:existing,error:fetchError}=await supabase.from("coach_data").select("*").eq("coach_id",userId).single();
-      console.log("Existing row:", existing, "fetchError:", fetchError);
-      const row={
-        coach_id:userId,
-        students:existing?.students||'[]',
-        classes:existing?.classes||'[]',
-        expenses:existing?.expenses||'[]',
-        [table]:JSON.stringify(data),
-        updated_at:new Date().toISOString(),
-      };
-      const {error}=await supabase.from("coach_data").upsert(row,{onConflict:"coach_id"});
-      console.log("Upsert error:", error);
+      // Delete existing and re-insert (simple approach)
+      await supabase.from(table).delete().eq("coach_id",userId);
+      const rows=data.map(item=>({...item,coach_id:userId}));
+      await supabase.from(table).insert(rows);
     } catch(e){ console.error("Sync error:",table,e); }
   };
 
-  const loadData=async(userId)=>{
-    console.log("Loading data for userId:", userId);
-    try {
-      const {data,error}=await supabase.from("coach_data").select("*").eq("coach_id",userId).single();
-      console.log("Loaded data:", data, "error:", error);
-      if(data){
-        if(data.students){const d=JSON.parse(data.students);console.log("Students loaded:",d.length);setStudentsRaw(d);lsSet("izi_students",d);}
-        if(data.classes){const d=JSON.parse(data.classes);console.log("Classes loaded:",d.length);setClassesRaw(d);lsSet("izi_classes",d);}
-        if(data.expenses){const d=JSON.parse(data.expenses);console.log("Expenses loaded:",d.length);setExpensesRaw(d);lsSet("izi_expenses",d);}
-      }
-    } catch(e){ console.error("Load error:",e); }
-  };
-
   // Wrapped setters that persist to localStorage AND Supabase
-  const setStudents=(v)=>{const next=typeof v==="function"?v(students):v;setStudentsRaw(next);lsSet("izi_students",next);if(window._iziUserId)syncToSupabase("students",next,window._iziUserId);};
-  const setClasses=(v)=>{const next=typeof v==="function"?v(classes):v;setClassesRaw(next);lsSet("izi_classes",next);if(window._iziUserId)syncToSupabase("classes",next,window._iziUserId);};
+  const setStudents=(v)=>{const next=typeof v==="function"?v(students):v;setStudentsRaw(next);lsSet("izi_students",next);if(user)syncToSupabase("students",next,user.id);};
+  const setClasses=(v)=>{const next=typeof v==="function"?v(classes):v;setClassesRaw(next);lsSet("izi_classes",next);if(user)syncToSupabase("classes",next,user.id);};
   const setCourts=(v)=>{const next=typeof v==="function"?v(courts):v;setCourtsRaw(next);lsSet("izi_courts",next);};
   const setPackages=(v)=>{const next=typeof v==="function"?v(packages):v;setPackagesRaw(next);lsSet("izi_packages",next);};
-  const setCoachProfile=(v)=>{const next=typeof v==="function"?v(coachProfile):v;setCoachProfileRaw(next);lsSet("izi_profile",next);if(window._iziUserId)supabase.from("coaches").upsert({id:window._iziUserId,...next}).then(()=>{});};
-  const setExpenses=(v)=>{const next=typeof v==="function"?v(expenses):v;setExpensesRaw(next);lsSet("izi_expenses",next);if(window._iziUserId)syncToSupabase("expenses",next,window._iziUserId);};
+  const setCoachProfile=(v)=>{const next=typeof v==="function"?v(coachProfile):v;setCoachProfileRaw(next);lsSet("izi_profile",next);if(user)supabase.from("coaches").upsert({id:user.id,...next}).then(()=>{});};
+  const setExpenses=(v)=>{const next=typeof v==="function"?v(expenses):v;setExpensesRaw(next);lsSet("izi_expenses",next);if(user)syncToSupabase("expenses",next,user.id);};
+
+  // Load all data from Supabase
+  const loadData=async(userId)=>{
+    try {
+      const [studRes,clsRes,expRes,crtRes,pkgRes]=await Promise.all([
+        supabase.from("students").select("*").eq("coach_id",userId),
+        supabase.from("classes").select("*").eq("coach_id",userId),
+        supabase.from("expenses").select("*").eq("coach_id",userId),
+        supabase.from("courts").select("*").eq("coach_id",userId),
+        supabase.from("packages").select("*").eq("coach_id",userId),
+      ]);
+      if(studRes.data?.length){setStudentsRaw(studRes.data);lsSet("izi_students",studRes.data);}
+      if(clsRes.data?.length){setClassesRaw(clsRes.data);lsSet("izi_classes",clsRes.data);}
+      if(expRes.data?.length){setExpensesRaw(expRes.data);lsSet("izi_expenses",expRes.data);}
+      if(crtRes.data?.length){const c=crtRes.data.map(x=>x.name||x);setCourtsRaw(c);lsSet("izi_courts",c);}
+      if(pkgRes.data?.length){setPackagesRaw(pkgRes.data);lsSet("izi_packages",pkgRes.data);}
+    } catch(e){ console.error("Load error:",e); }
+  };
 
   const setModeP=(v)=>{setMode(v);lsSet("izi_mode",v);};
   const setOnboardedP=(v)=>{setOnboarded(v);lsSet("izi_onboarded",v);};
@@ -4359,19 +4354,15 @@ export default function App() {
   useEffect(()=>{
     supabase.auth.getSession().then(async({data:{session}})=>{
       if(session?.user){
-        setUserWithRef(session.user);setCheckingProfile(true);
+        setUser(session.user);setCheckingProfile(true);
         const {data}=await supabase.from("coaches").select("name,currency").eq("id",session.user.id).single();
-        if(data?.name){
-          setModeP("coach");setOnboardedP(true);if(data.currency)setCUR(data.currency);
-          try{await loadData(session.user.id);}catch(e){console.error(e);}
-        } else {
-          setModeP("coach_new");setOnboardedP(false);
-        }
+        if(data?.name){setModeP("coach");setOnboardedP(true);if(data.currency)setCUR(data.currency);await loadData(session.user.id);}
+        else{setModeP("coach_new");setOnboardedP(false);}
         setCheckingProfile(false);
       }
       setLoadingAuth(false);
     });
-    const {data:{subscription}}=supabase.auth.onAuthStateChange((_,session)=>{setUserWithRef(session?.user||null);});
+    const {data:{subscription}}=supabase.auth.onAuthStateChange((_,session)=>{setUser(session?.user||null);});
     return ()=>subscription.unsubscribe();
   },[]);
 
@@ -4397,11 +4388,7 @@ export default function App() {
 
   const handleLogout=async()=>{
     await supabase.auth.signOut();
-    setUserWithRef(null);
-    window._iziUserId=null;
-    setStudentsRaw([]);setClassesRaw([]);setCourtsRaw([]);setPackagesRaw([]);
-    setCoachProfileRaw({name:"Coach",sport:"",photo:null});setExpensesRaw([]);
-    setMode(null);setOnboarded(false);
+    setUser(null);
     localStorage.clear();
     setModeP(null);setOnboardedP(false);setStudentsRaw([]);setClassesRaw([]);setCourtsRaw([]);setPackagesRaw([]);setCoachProfileRaw({name:"Coach",sport:"",photo:null});setExpensesRaw(EXPENSES);
   };
@@ -4717,14 +4704,10 @@ export default function App() {
   if(!user&&!mode) return (
     <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column"}}>
       <AuthFlow onLogin={async(u)=>{
-        setUserWithRef(u);setCheckingProfile(true);
+        setUser(u);setCheckingProfile(true);
         const {data}=await supabase.from("coaches").select("name,currency").eq("id",u.id).single();
-        if(data?.name){
-          setModeP("coach");setOnboardedP(true);if(data.currency)setCUR(data.currency);
-          try{await loadData(u.id);}catch(e){console.error(e);}
-        } else {
-          setModeP("coach_new");setOnboardedP(false);
-        }
+        if(data?.name){setModeP("coach");setOnboardedP(true);if(data.currency)setCUR(data.currency);await loadData(session.user.id);}
+        else{setModeP("coach_new");setOnboardedP(false);}
         setCheckingProfile(false);
       }}/>
     </div>
