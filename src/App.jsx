@@ -4315,32 +4315,31 @@ export default function App() {
   // Sync helpers - store all data as JSON blob per coach
   const syncToSupabase=async(table, data, userId)=>{
     if(!userId) return;
-    console.log("Syncing to Supabase:", table, "userId:", userId, "data length:", data?.length);
     try {
-      const {data:existing,error:fetchError}=await supabase.from("coach_data").select("*").eq("coach_id",userId).single();
-      console.log("Existing row:", existing, "fetchError:", fetchError);
+      const {data:existing}=await supabase.from("coach_data").select("*").eq("coach_id",userId).single();
       const row={
         coach_id:userId,
         students:existing?.students||'[]',
         classes:existing?.classes||'[]',
         expenses:existing?.expenses||'[]',
+        courts:existing?.courts||'[]',
+        packages:existing?.packages||'[]',
         [table]:JSON.stringify(data),
         updated_at:new Date().toISOString(),
       };
-      const {error}=await supabase.from("coach_data").upsert(row,{onConflict:"coach_id"});
-      console.log("Upsert error:", error);
+      await supabase.from("coach_data").upsert(row,{onConflict:"coach_id"});
     } catch(e){ console.error("Sync error:",table,e); }
   };
 
   const loadData=async(userId)=>{
-    console.log("Loading data for userId:", userId);
     try {
-      const {data,error}=await supabase.from("coach_data").select("*").eq("coach_id",userId).single();
-      console.log("Loaded data:", data, "error:", error);
+      const {data}=await supabase.from("coach_data").select("*").eq("coach_id",userId).single();
       if(data){
-        if(data.students){const d=JSON.parse(data.students);console.log("Students loaded:",d.length);setStudentsRaw(d);lsSet("izi_students",d);}
-        if(data.classes){const d=JSON.parse(data.classes);console.log("Classes loaded:",d.length);setClassesRaw(d);lsSet("izi_classes",d);}
-        if(data.expenses){const d=JSON.parse(data.expenses);console.log("Expenses loaded:",d.length);setExpensesRaw(d);lsSet("izi_expenses",d);}
+        if(data.students){const d=JSON.parse(data.students);setStudentsRaw(d);lsSet("izi_students",d);}
+        if(data.classes){const d=JSON.parse(data.classes);setClassesRaw(d);lsSet("izi_classes",d);}
+        if(data.expenses){const d=JSON.parse(data.expenses);setExpensesRaw(d);lsSet("izi_expenses",d);}
+        if(data.courts){const d=JSON.parse(data.courts);setCourtsRaw(d);lsSet("izi_courts",d);}
+        if(data.packages){const d=JSON.parse(data.packages);setPackagesRaw(d);lsSet("izi_packages",d);}
       }
     } catch(e){ console.error("Load error:",e); }
   };
@@ -4348,8 +4347,8 @@ export default function App() {
   // Wrapped setters that persist to localStorage AND Supabase
   const setStudents=(v)=>{const next=typeof v==="function"?v(students):v;setStudentsRaw(next);lsSet("izi_students",next);if(window._iziUserId)syncToSupabase("students",next,window._iziUserId);};
   const setClasses=(v)=>{const next=typeof v==="function"?v(classes):v;setClassesRaw(next);lsSet("izi_classes",next);if(window._iziUserId)syncToSupabase("classes",next,window._iziUserId);};
-  const setCourts=(v)=>{const next=typeof v==="function"?v(courts):v;setCourtsRaw(next);lsSet("izi_courts",next);};
-  const setPackages=(v)=>{const next=typeof v==="function"?v(packages):v;setPackagesRaw(next);lsSet("izi_packages",next);};
+  const setCourts=(v)=>{const next=typeof v==="function"?v(courts):v;setCourtsRaw(next);lsSet("izi_courts",next);if(window._iziUserId)syncToSupabase("courts",next,window._iziUserId);};
+  const setPackages=(v)=>{const next=typeof v==="function"?v(packages):v;setPackagesRaw(next);lsSet("izi_packages",next);if(window._iziUserId)syncToSupabase("packages",next,window._iziUserId);};
   const setCoachProfile=(v)=>{const next=typeof v==="function"?v(coachProfile):v;setCoachProfileRaw(next);lsSet("izi_profile",next);if(window._iziUserId)supabase.from("coaches").upsert({id:window._iziUserId,...next}).then(()=>{});};
   const setExpenses=(v)=>{const next=typeof v==="function"?v(expenses):v;setExpensesRaw(next);lsSet("izi_expenses",next);if(window._iziUserId)syncToSupabase("expenses",next,window._iziUserId);};
 
