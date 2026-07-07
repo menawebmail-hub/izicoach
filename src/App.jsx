@@ -4301,8 +4301,8 @@ export default function App() {
   const [showInvite,setShowInvite]=useState(false);
   const [tab,setTab]=useState("dashboard");
   const [financeTab,setFinanceTab]=useState("payments");
-  const [students,setStudentsRaw]=useState([]);
-  const [classes,setClassesRaw]=useState([]);
+  const [students,setStudentsRaw]=useState(()=>ls("izi_students",[]));
+  const [classes,setClassesRaw]=useState(()=>ls("izi_classes",[]));
   const [showNewClass,setShowNewClass]=useState(false);
   const [showNewStudent,setShowNewStudent]=useState(false);
   const [chatTarget,setChatTarget]=useState(null);
@@ -4310,7 +4310,7 @@ export default function App() {
   const [courts,setCourtsRaw]=useState([]);
   const [packages,setPackagesRaw]=useState([]);
   const [coachProfile,setCoachProfileRaw]=useState(()=>ls("izi_profile",{name:"Coach",sport:"",photo:null}));
-  const [expenses,setExpensesRaw]=useState([]);
+  const [expenses,setExpensesRaw]=useState(()=>ls("izi_expenses",[]));
 
   // Sync helpers - store all data as JSON blob per coach
   const syncToSupabase=async(table, data, userId)=>{
