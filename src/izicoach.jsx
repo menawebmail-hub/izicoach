@@ -109,15 +109,12 @@ function isNextComboPending(cls, students) {
   return clsStudents.some(s=>{
     const combos=(s.combos||[]).filter(c=>c.total>0||(c.packType&&c.packType!=="mensual"));
     if(combos.length===0) return false;
-    // Check if this class date is covered by ANY combo's dates
-    const coveredDates=new Set(combos.flatMap(c=>c.dates||[]));
-    if(coveredDates.has(cls.date)) return false; // covered
-    // Check if date is beyond last combo's last date
-    const allDates=combos.flatMap(c=>c.dates||[]).sort();
-    const lastDate=allDates[allDates.length-1]||"";
+    const lastCombo=combos[combos.length-1];
+    if(!lastCombo) return false;
+    const lastDate=lastCombo.dates&&lastCombo.dates.length>0?lastCombo.dates[lastCombo.dates.length-1]:"";
     if(!lastDate) return false;
-    // Gray if date is beyond all combo dates
-    return cls.date>lastDate||(!coveredDates.has(cls.date)&&cls.date>allDates[0]);
+    // Gray = class date is beyond ALL combo dates (no combo covers this date)
+    return cls.date>lastDate;
   });
 }
 function getRem(s, classes=[]) {
@@ -3127,6 +3124,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             a.href=url; a.download="comprobante-"+p.studentName+".png"; a.click();
           }catch(e){
             alert("No se pudo compartir. Intentá de nuevo.");
+            console.log(e);
           }
         };
         return (
@@ -4536,30 +4534,27 @@ export default function App() {
       }
       // If studentPacks changed, update student combos
       if(cd.studentPacks){
-        try {
-
+        console.log("studentPacks received:", cd.studentPacks);
         const editedClass=classes.find(c=>c.id===cd.id)||cd;
         setStudents(p=>p.map(s=>{
           const sp=cd.studentPacks[s.id]||cd.studentPacks[String(s.id)];
+          console.log("Student:", s.id, "sp:", sp);
           if(!sp||!sp.pack) return s;
           const pkg=packages.find(pk=>String(pk.id)===String(sp.pack));
           const isMensual=sp.pack==="mensual"||pkg?.type==="mensual";
           const isIndividual=sp.pack==="individual"||pkg?.type==="individual";
-          // If pkg not found, sp.pack might be a qty number directly
-          const qty=isMensual?null:isIndividual?1:pkg?.qty||(!isNaN(parseInt(sp.pack))&&parseInt(sp.pack)<100?parseInt(sp.pack):null)||8;
+          const qty=isMensual?null:isIndividual?1:pkg?.qty||parseInt(sp.pack)||null;
           const packType=isMensual?"mensual":isIndividual?"individual":"combo";
           const combos=[...s.combos];
-          const lastCombo=combos.length>0?combos[combos.length-1]:null;
+          const lastCombo=combos[combos.length-1];
           const lastDate=lastCombo?.dates?.slice(-1)[0]||"";
-          const today=new Date().toISOString().slice(0,10);
-          const lastComboFullyUsed=!lastDate||(lastDate<today);
-          // Create NEW combo when last combo is expired (last date is in the past)
-          if(!lastDate||lastComboFullyUsed){
-            const startDate=cd.date||today;
+          // If class is gray (date beyond last combo), create NEW combo
+          if(!lastDate||editedClass.date>lastDate){
+            // Generate dates from this class date
             const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
             const dowSet=new Set((editedClass.days||[]).map(d=>DAY_MAP[d]));
             const newDates=[];
-            let cur=new Date(startDate+"T12:00:00");
+            let cur=new Date(editedClass.date+"T12:00:00");
             const total=qty||8;
             while(newDates.length<total){
               if(dowSet.size===0||dowSet.has(cur.getDay())){
@@ -4574,7 +4569,7 @@ export default function App() {
               used:0,
               paid:false,
               paidCount:0,
-              date:newDates[0]||startDate,
+              date:newDates[0]||editedClass.date,
               amount:parseInt(sp.amount)||0,
               dates:newDates,
               payments:[],
@@ -4587,7 +4582,6 @@ export default function App() {
           }
           return {...s,combos};
         }));
-        } catch(err){ console.error("studentPacks error:", err); }
       }
       return;
     }
