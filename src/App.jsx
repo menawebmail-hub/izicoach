@@ -576,9 +576,11 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
   // Generate all class occurrences between startDate and endDate
   const generateOccurrences=()=>{
     if(!startDate) return [];
-    // No end date = always single class
-    if(!endDate) return [];
+    // No days selected = single class
     if(days.length===0) return [];
+    // No end date = single class (individual or one-time)
+    if(!endDate) return [];
+    // With days and end date: generate occurrences
     const dowSet=new Set(days.map(d=>DAY_MAP[d]));
     const result=[];
     let cur=new Date(startDate+"T12:00:00");
@@ -598,8 +600,28 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
   const handleSave=()=>{
     if(!title||sel.length===0){alert("Agregá título y al menos un alumno.");return;}
     if(!startDate){alert("Agregá una fecha de inicio.");return;}
-    const firstDate=occurrences.length>0?occurrences[0]:startDate||TODAY_DATE;
-    onSave({title,court,studentData:sel,students:sel.map(x=>x.id),date:firstDate,time:t1,timeEnd:t2,days,startDate,endDate,occurrences});
+    // Check if any student has a non-individual pack
+    const hasCombo=sel.some(x=>{
+      const pkg=packages.find(p=>String(p.id)===String(x.pack));
+      return x.pack!=="individual"&&pkg?.type!=="individual"&&x.pack!=="";
+    });
+    // If combo/mensual without endDate, generate 6 months of occurrences
+    let finalOccurrences=occurrences;
+    if(hasCombo&&!endDate&&days.length>0&&occurrences.length===0){
+      const dowSet=new Set(days.map(d=>DAY_MAP[d]));
+      const result=[];
+      let cur=new Date(startDate+"T12:00:00");
+      const end=new Date(new Date(startDate+"T12:00:00").setMonth(new Date(startDate+"T12:00:00").getMonth()+6));
+      while(cur<=end&&result.length<200){
+        if(dowSet.has(cur.getDay())){
+          result.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+        }
+        cur.setDate(cur.getDate()+1);
+      }
+      finalOccurrences=result;
+    }
+    const firstDate=finalOccurrences.length>0?finalOccurrences[0]:startDate||TODAY_DATE;
+    onSave({title,court,studentData:sel,students:sel.map(x=>x.id),date:firstDate,time:t1,timeEnd:t2,days,startDate,endDate,occurrences:finalOccurrences});
     onClose();
   };
 
@@ -1757,6 +1779,41 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
                       </button>
                     ))}
                   </div>
+                  {/* Renovar Combo button for gray classes */}
+                  {(()=>{
+                    // Use selDay (the currently selected date) to check if this is a gray class
+                    const clsForCheck={...c,date:selDay};
+                    const needsRenewal=isNextComboPending(clsForCheck,students);
+                    if(!needsRenewal) return null;
+                    const handleRenovar=()=>{
+                      const DAY_MAP2={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+                      onUpdateStudent&&(c.students||[]).forEach(sid=>{
+                        const st=students.find(s=>s.id===sid);
+                        if(!st) return;
+                        const combos=st.combos||[];
+                        const classCombos=combos.filter(x=>x.total>0&&x.packType!=="mensual"&&x.packType!=="individual");
+                        const lastCombo=classCombos[classCombos.length-1];
+                        if(!lastCombo) return;
+                        const dowSet=new Set((c.days||[]).map(d=>DAY_MAP2[d]));
+                        const newDates=[];
+                        let cur=new Date(selDay+"T12:00:00");
+                        while(newDates.length<lastCombo.total){
+                          if(dowSet.size===0||dowSet.has(cur.getDay())){
+                            newDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+                          }
+                          cur.setDate(cur.getDate()+1);
+                        }
+                        const newCombo={id:combos.length+1,total:lastCombo.total,packType:lastCombo.packType||"combo",used:0,paid:false,paidCount:0,date:newDates[0]||selDay,amount:lastCombo.amount,dates:newDates,payments:[]};
+                        onUpdateStudent({...st,combos:[...combos,newCombo]});
+                      });
+                      setHighlightCls(null);
+                    };
+                    return (
+                      <button onClick={handleRenovar} style={{width:"100%",marginTop:8,padding:"13px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#1565C0,#1976D2)",color:"#fff",fontSize:14,cursor:"pointer",fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                        🔄 Renovar Combo desde esta fecha
+                      </button>
+                    );
+                  })()}
                 </div>
               </div>
             );
@@ -2367,17 +2424,44 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
     setTimeout(()=>onClose(), allGiven?1500:2200);
   };
 
-  if(step==="success") return (
+  if(step==="success") {
+    const updatedCombos=s.combos||[];
+    const lastC=updatedCombos[updatedCombos.length-1];
+    const isComplete=lastC&&(lastC.paidCount||0)>=(lastC.total||1)&&(lastC.used||0)>=(lastC.total||1)&&lastC.total>0;
+    return (
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center"}}>
-      <div style={{background:"#fff",borderRadius:24,padding:"40px 32px",textAlign:"center",width:"80%",maxWidth:300}}>
+      <div style={{background:"#fff",borderRadius:24,padding:"40px 32px",textAlign:"center",width:"80%",maxWidth:320}}>
         <div style={{width:72,height:72,borderRadius:"50%",background:"linear-gradient(135deg,#52C048,#65CE5A)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}>
           <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
         </div>
         <div style={{fontSize:20,fontWeight:900,color:"#1A237E",marginBottom:6}}>¡Pago registrado!</div>
-        <div style={{fontSize:14,color:"#5C7A9F"}}>{s.name}</div>
+        <div style={{fontSize:14,color:"#5C7A9F",marginBottom:isComplete?20:0}}>{s.name}</div>
+        {isComplete&&(
+          <button onClick={()=>{
+            const DAY_MAP2={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+            const clsDays=myClasses.length>0?myClasses[0].days:[];
+            const dowSet=new Set(clsDays.map(d=>DAY_MAP2[d]));
+            const lastDate=lastC.dates&&lastC.dates.length>0?lastC.dates[lastC.dates.length-1]:"";
+            const newDates=[];
+            let cur=new Date((lastDate||TODAY)+"T12:00:00");
+            cur.setDate(cur.getDate()+1);
+            while(newDates.length<lastC.total){
+              if(dowSet.size===0||dowSet.has(cur.getDay())){
+                newDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+              }
+              cur.setDate(cur.getDate()+1);
+            }
+            const newCombo={id:updatedCombos.length+1,total:lastC.total,packType:lastC.packType||"combo",used:0,paid:false,paidCount:0,date:newDates[0]||TODAY,amount:lastC.amount,dates:newDates,payments:[]};
+            onUpdate({...s,combos:[...updatedCombos,newCombo]});
+            onClose();
+          }} style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#1565C0,#1976D2)",color:"#fff",fontSize:14,cursor:"pointer",fontWeight:800}}>
+            🔄 Renovar Combo
+          </button>
+        )}
       </div>
     </div>
-  );
+    );
+  }
 
   if(step==="review"){
     const qty=parseInt(localClasses)||0;
