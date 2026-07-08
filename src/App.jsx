@@ -575,16 +575,15 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
 
   // Generate all class occurrences between startDate and endDate
   const generateOccurrences=()=>{
-    if(!startDate||days.length===0) return [];
+    if(!startDate) return [];
+    // No end date = always single class
+    if(!endDate) return [];
+    if(days.length===0) return [];
     const dowSet=new Set(days.map(d=>DAY_MAP[d]));
     const result=[];
     let cur=new Date(startDate+"T12:00:00");
-    // If no end date, generate 1 year of occurrences
-    const end=endDate
-      ?new Date(endDate+"T12:00:00")
-      :new Date(new Date(startDate+"T12:00:00").setFullYear(new Date(startDate+"T12:00:00").getFullYear()+1));
-    const maxOccurrences=endDate?200:365;
-    while(cur<=end&&result.length<maxOccurrences){
+    const end=new Date(endDate+"T12:00:00");
+    while(cur<=end&&result.length<200){
       if(dowSet.has(cur.getDay())){
         const ds=cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0");
         result.push(ds);
