@@ -4617,6 +4617,23 @@ export default function App() {
       } else {
         setClasses(p=>p.map(c=>c.id===cd.id?{...c,...cd}:c));
       }
+      // Clean combos for students removed from the class
+      if(cd.students){
+        const originalClass=classes.find(c=>c.id===cd.id);
+        const removedStudentIds=(originalClass?.students||[]).filter(id=>!(cd.students||[]).includes(id));
+        if(removedStudentIds.length>0){
+          const classDate=originalClass?.date;
+          setStudents(p=>p.map(s=>{
+            if(!removedStudentIds.includes(s.id)) return s;
+            // Remove combos that were created for this class
+            const cleanedCombos=s.combos.filter(combo=>{
+              if(!combo.dates||combo.dates.length===0) return combo.date!==classDate;
+              return !combo.dates.includes(classDate);
+            });
+            return {...s,combos:cleanedCombos};
+          }));
+        }
+      }
       // If studentPacks changed, update student combos
       if(cd.studentPacks){
         try {
@@ -4628,7 +4645,6 @@ export default function App() {
           const pkg=packages.find(pk=>String(pk.id)===String(sp.pack));
           const isMensual=sp.pack==="mensual"||pkg?.type==="mensual";
           const isIndividual=sp.pack==="individual"||pkg?.type==="individual";
-          // If pkg not found, sp.pack might be a qty number directly
           const qty=isMensual?null:isIndividual?1:pkg?.qty||(!isNaN(parseInt(sp.pack))&&parseInt(sp.pack)<100?parseInt(sp.pack):null)||8;
           const packType=isMensual?"mensual":isIndividual?"individual":"combo";
           const combos=[...s.combos];
@@ -4636,6 +4652,10 @@ export default function App() {
           const lastDate=lastCombo?.dates?.slice(-1)[0]||"";
           const today=new Date().toISOString().slice(0,10);
           const lastComboFullyUsed=!lastDate||(lastDate<today);
+          // Only create new combo if student has no active combo OR last combo is expired
+          // Don't create if student already has an active combo covering future dates
+          const hasActiveFutureCombo=lastCombo&&lastDate&&lastDate>=today;
+          if(hasActiveFutureCombo) return s; // don't modify - just editing the class
           // Create NEW combo when last combo is expired (last date is in the past)
           if(!lastDate||lastComboFullyUsed){
             const startDate=cd.date||today;
