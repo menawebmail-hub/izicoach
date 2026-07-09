@@ -462,6 +462,25 @@ function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, coach
   );
 }
 
+function TimePicker({value, onChange, style}) {
+  const parts=(value||"08:00").split(":");
+  const [h,setH]=useState(parts[0]||"08");
+  const [m,setM]=useState(["00","15","30","45"].includes(parts[1])?parts[1]:"00");
+  const hours=Array.from({length:24},(_,i)=>String(i).padStart(2,"0"));
+  const mins=["00","15","30","45"];
+  const update=(nh,nm)=>{setH(nh);setM(nm);onChange(nh+":"+nm);};
+  return (
+    <div style={{display:"flex",gap:4}}>
+      <select value={h} onChange={e=>update(e.target.value,m)} style={{...style,flex:1}}>
+        {hours.map(hh=><option key={hh} value={hh}>{hh}</option>)}
+      </select>
+      <select value={m} onChange={e=>update(h,e.target.value)} style={{...style,flex:1}}>
+        {mins.map(mm=><option key={mm} value={mm}>{mm}</option>)}
+      </select>
+    </div>
+  );
+}
+
 function AuthFlow({ onLogin }) {
   const [screen,setScreen]=useState("login");
   const [email,setEmail]=useState(""); const [pass,setPass]=useState(""); const [name,setName]=useState("");
@@ -663,8 +682,8 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
         </div>
 
         <div style={{display:"flex",gap:12,marginBottom:14}}>
-          <div style={{flex:1}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Desde</label><input type="time" value={t1} onChange={e=>setT1(e.target.value)} style={{...iS}}/></div>
-          <div style={{flex:1}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Hasta</label><input type="time" value={t2} onChange={e=>setT2(e.target.value)} style={{...iS}}/></div>
+          <div style={{flex:1}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Desde</label><TimePicker value={t1} onChange={setT1} style={{...iS,padding:"10px 8px"}}/></div>
+          <div style={{flex:1}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Hasta</label><TimePicker value={t2} onChange={setT2} style={{...iS,padding:"10px 8px"}}/></div>
         </div>
 
         {/* Cancha */}
@@ -1240,8 +1259,8 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
         <div style={{marginBottom:14}}><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Local / Cancha</label><input value={court} onChange={e=>setCourt(e.target.value)} style={iS}/></div>
         <div style={{marginBottom:14}}><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:8}}>Días</label><DayPicker value={days} onChange={setDays}/></div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
-          <div><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Hora inicio</label><input type="time" value={t1} onChange={e=>setT1(e.target.value)} style={iS}/></div>
-          <div><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Hora fin</label><input type="time" value={t2} onChange={e=>setT2(e.target.value)} style={iS}/></div>
+          <div><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Hora inicio</label><TimePicker value={t1} onChange={setT1} style={{...iS,padding:"10px 8px"}}/></div>
+          <div><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Hora fin</label><TimePicker value={t2} onChange={setT2} style={{...iS,padding:"10px 8px"}}/></div>
         </div>
         <div style={{marginBottom:20}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
@@ -1263,12 +1282,12 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
                   <div style={{fontSize:10,fontWeight:700,color:C.mutedDark,marginBottom:4}}>PAQUETE</div>
                   <select value={studentPacks[sid]?.pack||""} onChange={e=>{
                     const val=e.target.value;
-                    const pkg=packages.find(p=>String(p.qty)===val||(val==="mensual"&&p.type==="mensual")||(val==="individual"&&p.type==="individual"));
+                    const pkg=packages.find(p=>String(p.id)===val);
                     setStudentPacks(p=>({...p,[sid]:{pack:val,amount:pkg?pkg.price:(p[sid]?.amount||0)}}));
                   }} style={{...iS,padding:"8px 10px",fontSize:12}}>
                     <option value="">Elegir...</option>
                     {packages.length>0?packages.map(p=>(
-                      <option key={p.id} value={p.type==="mensual"?"mensual":p.type==="individual"?"individual":String(p.qty)}>{p.name}</option>
+                      <option key={p.id} value={String(p.id)}>{p.name}</option>
                     )):<><option value="mensual">📅 Mensual</option><option value="8">📦 8 clases</option></>}
                     <option value="otro">✏️ Otro</option>
                   </select>
@@ -1278,7 +1297,7 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
                 </div>
                 <div>
                   <div style={{fontSize:10,fontWeight:700,color:C.mutedDark,marginBottom:4}}>MONTO ({getCUR()})</div>
-                  <input type="text" inputMode="numeric" pattern="[0-9]*" value={studentPacks[sid]?.amount||""} placeholder="0" onChange={e=>setStudentPacks(p=>({...p,[sid]:{...p[sid],amount:parseInt(e.target.value)||0}}))} style={{...iS,padding:"8px 10px",fontSize:12}}/>
+                  <MoneyInput value={studentPacks[sid]?.amount||0} onChange={v=>setStudentPacks(p=>({...p,[sid]:{...p[sid],amount:v}}))} style={{...iS,padding:"8px 10px",fontSize:12}}/>
                 </div>
                 <div style={{gridColumn:"1/-1"}}>
                   <label style={{fontSize:11,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>PAGO EFECTUADO</label>
@@ -1712,18 +1731,24 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
                 <div style={{fontSize:12,marginTop:4}}>Tocá + para agregar</div>
               </div>
             ):dayC.map(c=>(
-              <div key={c.id} onClick={()=>setHighlightCls(c.id===highlightCls?null:c.id)} style={{background:c.cancelled?"#FFF3E0":c.rescheduled?"#E3F2FD":isNextComboPending(c,students)?"#F5F5F5":C.white,borderRadius:16,padding:"12px 14px",marginBottom:10,boxShadow:"0 2px 10px rgba(44,94,247,0.07)",border:"1.5px solid "+(highlightCls===c.id?C.blue2:isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:"pointer",opacity:isNextComboPending(c,students)?0.75:1}}>
+              <div key={c.id} onClick={()=>setHighlightCls(c.id===highlightCls?null:c.id)} style={{background:c.cancelled?"#FFF3E0":c.rescheduled?"#E3F2FD":isNextComboPending(c,students)?"#F5F5F5":C.white,borderRadius:16,padding:"12px 14px",marginBottom:10,boxShadow:highlightCls===c.id?"0 4px 16px rgba(44,94,247,0.18)":"0 2px 10px rgba(44,94,247,0.07)",border:"1.5px solid "+(highlightCls===c.id?C.blue2:isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:"pointer",opacity:isNextComboPending(c,students)?0.75:1,transition:"box-shadow 0.15s,border 0.15s"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
-                  <div style={{flex:1}}>
-                    <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:4}}>
                       <div style={{fontWeight:800,fontSize:15,color:c.cancelled?"#C62828":isNextComboPending(c,students)?"#9E9E9E":C.text}}>{c.title}{c.cancelled?" (Cancelada)":c.rescheduled?" (Reprogramada)":""}</div>
                       {isNextComboPending(c,students)&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#EEEEEE",color:"#757575",fontWeight:700}}>Sin pagar</span>}
-                      {(()=>{const log=(c.attendanceLog||[]).find(e=>e.date===c.date);if(!log)return null;const dC=(log.ausente_dada||[]).length;const nC=(log.ausente_reprog||[]).length;if(!dC&&!nC)return null;return(<>{dC>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700,flexShrink:0}}>✗ Ausente-Dada</span>}{nC>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF8E1",color:"#F57F17",fontWeight:700,flexShrink:0}}>↩ A Reprogramar</span>}</>);})()}
+                      {(()=>{const log=(c.attendanceLog||[]).find(e=>e.date===c.date);if(!log)return null;const dC=(log.ausente_dada||[]).length;const nC=(log.ausente_reprog||[]).length;if(!dC&&!nC)return null;return(<>{dC>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ Ausente-Dada</span>}{nC>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF8E1",color:"#F57F17",fontWeight:700}}>↩ A Reprogramar</span>}</>);})()}
                     </div>
-                    <div style={{fontSize:12,color:C.mutedDark,marginTop:2}}>{c.time+(c.timeEnd?" - "+c.timeEnd:"")} · {c.court}</div>
+                    <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                      {(c.days||[]).map(d=><span key={d} style={{fontSize:11,padding:"2px 7px",borderRadius:20,background:C.blueL,color:C.blue2,fontWeight:600}}>{d}</span>)}
+                      <span style={{fontSize:12,color:C.mutedDark}}>{c.time+(c.timeEnd?" - "+c.timeEnd:"")} · {c.court}</span>
+                    </div>
                   </div>
-                  <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
-                    <span style={{fontSize:11,padding:"3px 8px",borderRadius:20,background:C.blueL,color:C.blue2,fontWeight:600}}>{(c.days||[]).join(" · ")}</span>
+                  <div style={{flexShrink:0}}>
+                    <div style={{display:"flex",alignItems:"center",gap:4,background:highlightCls===c.id?C.blue2:"#F0F2FF",borderRadius:20,padding:"5px 10px"}}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill={highlightCls===c.id?"#fff":C.blue2}><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+                      <span style={{fontSize:10,fontWeight:700,color:highlightCls===c.id?"#fff":C.blue2}}>{highlightCls===c.id?"Cerrar":"Opciones"}</span>
+                    </div>
                   </div>
                 </div>
                 <div style={{display:"flex",gap:4,marginTop:8,flexWrap:"wrap"}}>
@@ -2021,7 +2046,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
         </div>
       )}
       {reprog&&<ReprogModal cls={reprog} onClose={()=>setReprog(null)} onSave={(updated,_,addNew)=>{onSaveClass(updated,true);if(addNew)onSaveClass(addNew,false);setReprog(null);}} students={students} onUpdateStudent={onUpdateStudent}/>}
-      {showNew&&<NewClassModal onClose={()=>{setShowNew(false);setGridNewTime(null);setWeekOffset(0);}} onSave={onSaveClass} students={students} dateLabel={viewMode==="month"?selLabel:weekLabel()} onCreateStudent={onAddStudent} prefill={gridNewTime} courts={courts} packages={packages} onAddPackage={(pkg)=>{packages.push(pkg);}}/>}
+      {showNew&&<NewClassModal onClose={()=>{setShowNew(false);setGridNewTime(null);setWeekOffset(0);}} onSave={onSaveClass} students={students} dateLabel={viewMode==="month"?selLabel:weekLabel()} onCreateStudent={onAddStudent} prefill={gridNewTime||(viewMode==="month"?{date:selDay}:null)} courts={courts} packages={packages} onAddPackage={(pkg)=>{packages.push(pkg);}}/>}
       {att&&<AttModal att={att} students={students} onAttendance={onAttendance} onClose={()=>setAtt(null)}/>}
     </div>
   );
@@ -3373,8 +3398,15 @@ function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], send
   const [search,setSearch]=useState("");
   const [filter,setFilter]=useState("none");
   const allList=students.filter(s=>classes.some(c=>c.students&&c.students.includes(s.id)));
+  const uniqueClasses=[...new Set(classes.map(c=>c.title))].sort();
   let list=[...allList];
-  if(search.trim()) list=list.filter(s=>s.name.toLowerCase().includes(search.toLowerCase()));
+  if(search.trim()){
+    const q=search.toLowerCase();
+    list=list.filter(s=>
+      s.name.toLowerCase().includes(q)||
+      classes.some(c=>(c.students||[]).includes(s.id)&&c.title.toLowerCase().includes(q))
+    );
+  }
   list=list.sort((a,b)=>{
     const ra=getRem(a,classes);
     const rb=getRem(b,classes);
@@ -4581,7 +4613,9 @@ export default function App() {
         if(!combo.dates||combo.dates.length===0) return !allDatesInSeries.has(combo.date);
         return !combo.dates.some(d=>allDatesInSeries.has(d));
       });
-      return {...s,combos:cleanedCombos};
+      // If student has no more classes after deletion, clear all combos
+      const hasOtherClasses=newClasses.some(c=>(c.students||[]).includes(s.id));
+      return {...s,combos:hasOtherClasses?cleanedCombos:[]};
     });
     // Update state and sync both together
     setClassesRaw(newClasses);lsSet("izi_classes",newClasses);
