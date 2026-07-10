@@ -2320,7 +2320,12 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   // Always start at 0 so coach explicitly enters the amount
   const [localClasses,setLocalClasses]=useState(0);
   const [localAmount,setLocalAmount]=useState(0);
-  const [localDate,setLocalDate]=useState(newDate||"");
+  const [localDate,setLocalDate]=useState(newDate||combo?.payDate||combo?.date||"");
+  const [localPayDate,setLocalPayDate]=useState(TODAY_DATE);
+  const [localPayMonth,setLocalPayMonth]=useState(()=>{
+    const d=new Date();
+    return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
+  });
 
   const iSp={width:"100%",padding:"11px 14px",borderRadius:12,border:"none",fontSize:14,boxSizing:"border-box",background:C.blueL,color:"#1A237E",outline:"none"};
   const payMethodLabel={"efectivo":"💵 Efectivo","transferencia":"🏦 Transferencia","tarjeta":"💳 Tarjeta"};
@@ -2535,14 +2540,15 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
       updatedCombos.push({id:s.combos.length+1,total:qty,used:0,paid:true,paidCount:qty,date:localDate||TODAY,amount:parseInt(localAmount)||0,method:payMethod,dates:newDates,payments:[payment]});
     } else {
       // Mensual
-      updatedCombos.push({id:s.combos.length+1,total:null,used:0,paid:true,date:localDate||TODAY,payDate:localDate||TODAY,amount:parseInt(localAmount)||0,method:payMethod});
+      const mensualPayment={id:Date.now(),qty:1,amount:parseInt(localAmount)||0,method:payMethod,date:localPayDate||TODAY,payMonth:localPayMonth,dates:[]};
+      updatedCombos.push({id:s.combos.length+1,total:null,packType:"mensual",used:0,paid:true,date:localDate||TODAY,payDate:localPayDate||TODAY,amount:parseInt(localAmount)||0,method:payMethod,payments:[mensualPayment]});
     }
 
     onUpdate({...s,combos:updatedCombos});
     if(addIncome&&parseInt(localAmount)>0){
       const qty=parseInt(localClasses)||0;
       const detail=pagoTipo==="mensual"?"Plan Mensual":qty===1?"1 clase":qty+" clases";
-      addIncome(parseInt(localAmount), localDate||TODAY, s.name, detail);
+      addIncome(parseInt(localAmount), localPayDate||TODAY, s.name, detail);
     }
     setStep("success");
     // If all classes given (closed cycle), close faster
@@ -2695,9 +2701,9 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               ?<img src={s.photo} style={{width:52,height:52,borderRadius:"50%",objectFit:"cover",flexShrink:0}}/>
               :<div style={{width:52,height:52,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,fontWeight:800,color:"#fff",flexShrink:0}}>{s.avatar}</div>
             }
-            <div style={{flex:1}}>
-              <div style={{fontWeight:900,fontSize:22,color:"#1A237E",lineHeight:1.1}}>{s.name}</div>
-              <div style={{fontSize:12,color:"#5C7A9F",marginTop:3}}>Actualizar Pagos</div>
+            <div style={{flex:1,textAlign:"left",minWidth:0}}>
+              <div style={{fontWeight:900,fontSize:22,color:"#1A237E",lineHeight:1.1,textAlign:"left"}}>{s.name}</div>
+              <div style={{fontSize:12,color:"#5C7A9F",marginTop:3,textAlign:"left"}}>Actualizar Pagos</div>
             </div>
           </div>
 
@@ -2795,9 +2801,27 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
                 <div style={{fontSize:11,color:C.mutedDark,marginTop:4}}>Se usa para calcular días de atraso en Cobros</div>
               </div>
             )}
+            {pagoTipo==="mensual"&&(
+              <div style={{gridColumn:"1/-1"}}>
+                <div style={{fontSize:12,fontWeight:700,color:C.blue2,marginBottom:6}}>📆 ¿Por qué mes es este pago?</div>
+                <select value={localPayMonth||""} onChange={e=>setLocalPayMonth(e.target.value)} style={{...iSp,cursor:"pointer",width:"100%",boxSizing:"border-box"}}>
+                  {(()=>{
+                    const mN=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+                    const opts=[];
+                    const now=new Date();
+                    for(let i=-2;i<=2;i++){
+                      const d=new Date(now.getFullYear(),now.getMonth()+i,1);
+                      const val=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
+                      opts.push(<option key={val} value={val}>{mN[d.getMonth()]+" "+d.getFullYear()}</option>);
+                    }
+                    return opts;
+                  })()}
+                </select>
+              </div>
+            )}
             <div>
               <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>{pagoTipo==="mensual"?"Fecha de pago":"Fecha de pago"}</div>
-              <input type="date" value={localDate||TODAY_DATE} onChange={e=>setLocalDate(e.target.value)} style={{...iSp,cursor:"pointer"}}/>
+              <input type="date" value={localPayDate||TODAY_DATE} onChange={e=>setLocalPayDate(e.target.value)} style={{...iSp,cursor:"pointer"}}/>
             </div>
             <div>
               <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>Forma de pago</div>
@@ -2999,18 +3023,18 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
         {suspended&&<div style={{background:"#FFF3E0",borderRadius:8,padding:"4px 10px",marginBottom:8,fontSize:11,fontWeight:700,color:"#E65100"}}>⏸ Alumno suspendido — no aparece en mora</div>}
         <div style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:10}}>
           <div style={{width:48,height:48,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,color:C.white,flexShrink:0}}>{s.avatar}</div>
-          <div style={{flex:1}}>
-            <div style={{fontWeight:900,fontSize:18,color:C.text,lineHeight:1.1}}>{s.name}</div>
+          <div style={{flex:1,textAlign:"left"}}>
+            <div style={{fontWeight:900,fontSize:18,color:C.text,lineHeight:1.1,textAlign:"left"}}>{s.name}</div>
             {(classDays.length>0||classTime)&&(
-              <div style={{display:"flex",alignItems:"center",gap:6,marginTop:4,flexWrap:"wrap"}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginTop:4,flexWrap:"wrap",justifyContent:"flex-start"}}>
                 {classDays.map(d=><span key={d} style={{fontSize:11,padding:"2px 7px",borderRadius:20,background:C.blueL,color:C.blue2,fontWeight:600}}>{d}</span>)}
                 {classTime&&<span style={{fontSize:12,color:C.mutedDark}}>{classTime}{classCourt?" · "+classCourt:""}</span>}
               </div>
             )}
           </div>
-          <div style={{display:"flex",flexDirection:"column",gap:5}}>
-            <button onClick={()=>setShowHistory(true)} style={{background:C.blueL,border:"none",borderRadius:8,padding:"4px 10px",cursor:"pointer",fontSize:11,color:C.blue2,fontWeight:600}}>Historial</button>
-            <button onClick={()=>setShowAtt(true)} style={{background:C.blueL,border:"none",borderRadius:8,padding:"4px 10px",cursor:"pointer",fontSize:11,color:C.blue2,fontWeight:600}}>Asistencia</button>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            <button onClick={()=>setShowHistory(true)} style={{background:C.blueL,border:"none",borderRadius:10,padding:"8px 14px",cursor:"pointer",fontSize:13,color:C.blue2,fontWeight:700,minWidth:90}}>Historial</button>
+            <button onClick={()=>setShowAtt(true)} style={{background:C.blueL,border:"none",borderRadius:10,padding:"8px 14px",cursor:"pointer",fontSize:13,color:C.blue2,fontWeight:700,minWidth:90}}>Asistencia</button>
           </div>
         </div>
         <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
@@ -3193,7 +3217,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
                   return (
                     <div key={idx} onClick={()=>setHistTab(idx)} style={{padding:"12px 10px",borderBottom:"1px solid "+C.border,cursor:"pointer",background:isActive?"linear-gradient(135deg,#0D1B4B,#1A3DB5)":C.white,borderLeft:isActive?"3px solid "+C.blue2:"3px solid transparent"}}>
                       <div style={{fontSize:11,fontWeight:800,color:isActive?C.white:C.text}}>{d.getDate()+" "+mN[d.getMonth()]}</div>
-                      <div style={{fontSize:10,color:isActive?"rgba(255,255,255,0.8)":C.mutedDark,marginTop:2}}>{p.qty+" clase"+(p.qty>1?"s":"")}</div>
+                      <div style={{fontSize:10,color:isActive?"rgba(255,255,255,0.8)":C.mutedDark,marginTop:2}}>{p.comboTotal===null?(p.payMonth?(["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"][parseInt(p.payMonth?.split("-")[1])-1]+" "+p.payMonth?.split("-")[0]):"Mensual"):p.qty+" clase"+(p.qty>1?"s":"")}</div>
                       <div style={{marginTop:4,width:8,height:8,borderRadius:"50%",background:"#43A047"}}></div>
                     </div>
                   );
