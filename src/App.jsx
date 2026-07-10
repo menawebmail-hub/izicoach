@@ -648,7 +648,7 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
   const handleCreateStudent=(data)=>{
     const newS={id:Date.now(),...data};
     setAllStudents(prev=>[...prev,newS]);
-    setSel(prev=>[...prev,{id:newS.id,pack:"",amount:"",paid:true}]);
+    setSel(prev=>[...prev,{id:newS.id,pack:"",amount:"",paid:false}]);
     onCreateStudent&&onCreateStudent(newS);
     setShowCreateStudent(false);
   };
@@ -700,7 +700,7 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
             <label style={{fontSize:13,color:C.blue,fontWeight:700}}>Alumnos</label>
             <button onClick={()=>setShowCreateStudent(true)} style={{padding:"6px 12px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:11,cursor:"pointer",fontWeight:800,letterSpacing:0.3}}>+ CREAR ALUMNO</button>
           </div>
-          <StudentSearch students={allStudents} selected={sel} onAdd={(s)=>setSel(prev=>[...prev,{id:s.id,pack:"",packId:"",amount:"",paid:true}])}/>
+          <StudentSearch students={allStudents} selected={sel} onAdd={(s)=>setSel(prev=>[...prev,{id:s.id,pack:"",packId:"",amount:"",paid:false}])}/>
           {sel.map(sd=>{
             const s=allStudents.find(x=>x.id===sd.id); if(!s) return null;
             return (
@@ -885,12 +885,33 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
         <div style={{background:C.whiteA,borderRadius:16,padding:"16px"}}>
           <div style={{fontSize:12,color:C.muted,marginBottom:4}}>Balance del mes · {mN[curMonth]+" "+curYear}</div>
           <div style={{fontSize:28,fontWeight:800,color:C.white,marginBottom:12}}>{fmtMoneyShort(income-exp)}</div>
-          <div style={{display:"flex",gap:16}}>
+          <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
             <div><div style={{fontSize:11,color:C.muted}}>INGRESOS</div><div style={{fontSize:15,fontWeight:700,color:"#A5D6A7"}}>{income>0?fmtMoneyShort(income):"—"}</div></div>
             <div style={{width:1,background:C.whiteB}}></div>
             <div><div style={{fontSize:11,color:C.muted}}>GASTOS</div><div style={{fontSize:15,fontWeight:700,color:"#EF9A9A"}}>{exp>0?fmtMoneyShort(exp):"—"}</div></div>
             <div style={{width:1,background:C.whiteB}}></div>
             <div><div style={{fontSize:11,color:C.muted}}>A COBRAR</div><div style={{fontSize:15,fontWeight:700,color:"#FFF59D"}}>{cobrosAlerts.length>0?cobrosAlerts.length+" alumnos":"✓ Al día"}</div></div>
+            <div style={{width:1,background:C.whiteB}}></div>
+            <div><div style={{fontSize:11,color:C.muted}}>CLASES DADAS</div><div style={{fontSize:15,fontWeight:700,color:"#90CAF9"}}>{(()=>{
+              const monthStr=String(curYear)+"-"+String(curMonth+1).padStart(2,"0");
+              const doneDates=new Set();
+              classes.forEach(cls=>{
+                // Past classes default = realizada
+                if(cls.date&&cls.date.startsWith(monthStr)&&cls.date<=TODAY_DATE&&!cls.cancelled){
+                  // Check if marked as ausente_reprog (not given)
+                  const log=(cls.attendanceLog||[]).find(e=>e.date===cls.date);
+                  const allReprog=log&&(cls.students||[]).every(sid=>(log.ausente_reprog||[]).includes(sid));
+                  if(!allReprog) doneDates.add(cls.date+"|"+cls.id);
+                }
+                // Also count attendance log entries from this month
+                (cls.attendanceLog||[]).forEach(e=>{
+                  if(e.date&&e.date.startsWith(monthStr)&&e.date<=TODAY_DATE&&((e.present||[]).length>0||(e.ausente_dada||[]).length>0)){
+                    doneDates.add(e.date+"|"+cls.id);
+                  }
+                });
+              });
+              return doneDates.size+" clases";
+            })()}</div></div>
           </div>
         </div>
       </div>
