@@ -1075,11 +1075,13 @@ function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onI
                 const statusColor=noData?"#9BACCB":rem===null?C.blue2:isRed?"#C62828":rem===0?"#43A047":C.blue2;
                 const statusLabel=noData?"Sin registro":rem===null?"Mensual":isRed?"A cobrar":rem===0?"Al día":"Programadas";
                 // Mini 4-column summary
-                const allDatesS=(s.combos||[]).filter(c=>c.total>0||(c.packType&&c.packType!=="mensual")).flatMap(c=>(c.dates||[]).map((d,i)=>({
+                const allDatesSRaw=(s.combos||[]).filter(c=>c.total>0||(c.packType&&c.packType!=="mensual")).flatMap(c=>(c.dates||[]).map((d,i)=>({
                   date:d,
                   isPaid:(c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0))>i,
                   isGiven:(()=>{const att=myClasses.flatMap(cl=>cl.attendanceLog||[]).find(e=>e.date===d);return att?(att.present||[]).includes(s.id)||(att.ausente_dada||[]).includes(s.id):d<TODAY_DATE;})(),
                 })));
+                const seenDS=new Set();
+                const allDatesS=allDatesSRaw.filter(d=>{if(seenDS.has(d.date))return false;seenDS.add(d.date);return true;});
                 return (
                   <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid "+C.border}}>
                     {/* Classes */}
@@ -1231,8 +1233,23 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
     cls.students.forEach(sid=>{
       const st=initialStudents.find(s=>s.id===sid);
       const combo=st?.combos?.[st.combos.length-1];
-      // Pack value should match select options: "mensual", "8", "12", etc.
-      const packVal=!combo?"":combo.total===null?"mensual":String(combo.total);
+      if(!combo){init[sid]={pack:"",amount:0,paid:false};return;}
+      // Find matching package - first try packId, then qty+amount, then qty
+      let packVal="";
+      if(combo.packId){
+        packVal=combo.packId;
+      } else if(combo.total===null||combo.packType==="mensual"){
+        const pkg=packages.find(p=>p.type==="mensual");
+        packVal=pkg?String(pkg.id):"mensual";
+      } else if(combo.packType==="individual"){
+        const pkg=packages.find(p=>p.type==="individual"&&p.price===combo.amount)||
+                  packages.find(p=>p.type==="individual");
+        packVal=pkg?String(pkg.id):"individual";
+      } else {
+        const pkg=packages.find(p=>p.qty===combo.total&&p.price===combo.amount)||
+                  packages.find(p=>p.qty===combo.total);
+        packVal=pkg?String(pkg.id):String(combo.total);
+      }
       init[sid]={pack:packVal,amount:combo?.amount||0,paid:combo?.paid||false};
     });
     return init;
@@ -1302,12 +1319,16 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
                 <div style={{gridColumn:"1/-1"}}>
                   <label style={{fontSize:11,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>PAGO EFECTUADO</label>
                   <div style={{display:"flex",gap:12}}>
-                    {[true,false].map(v=>(
+                    {[true,false].map(v=>{
+                      const isPaidVal=studentPacks[sid]?.paid===true;
+                      const isSelected=v===true?isPaidVal:!isPaidVal;
+                      return (
                       <div key={String(v)} onClick={()=>setStudentPacks(p=>({...p,[sid]:{...p[sid],paid:v}}))} style={{display:"flex",alignItems:"center",gap:5,cursor:"pointer"}}>
-                        <div style={{width:20,height:20,borderRadius:"50%",background:studentPacks[sid]?.paid===v?"linear-gradient(135deg,#0D1B4B,#1A3DB5)":C.blueL,border:"2px solid "+(studentPacks[sid]?.paid===v?C.blue2:C.border),display:"flex",alignItems:"center",justifyContent:"center"}}>{studentPacks[sid]?.paid===v&&<div style={{width:7,height:7,borderRadius:"50%",background:C.white}}></div>}</div>
-                        <span style={{fontSize:12,fontWeight:studentPacks[sid]?.paid===v?700:500,color:studentPacks[sid]?.paid===v?C.blue2:C.mutedDark}}>{v?"✓ Sí":"✗ No"}</span>
+                        <div style={{width:20,height:20,borderRadius:"50%",background:isSelected?"linear-gradient(135deg,#0D1B4B,#1A3DB5)":C.blueL,border:"2px solid "+(isSelected?C.blue2:C.border),display:"flex",alignItems:"center",justifyContent:"center"}}>{isSelected&&<div style={{width:7,height:7,borderRadius:"50%",background:C.white}}></div>}</div>
+                        <span style={{fontSize:12,fontWeight:isSelected?700:500,color:isSelected?C.blue2:C.mutedDark}}>{v?"✓ Sí":"✗ No"}</span>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               </div>
@@ -2307,7 +2328,14 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         result.push({date:ds,status,comboId:c.id,isGiven,wasPresent,wasAbsent,wasAusenteDada,wasAusenteReprog,isCancelled,isRescheduled});
       });
     });
-    return result.sort((a,b)=>a.date.localeCompare(b.date));
+    // Deduplicate by date - keep first occurrence
+    const seen=new Set();
+    const deduped=result.filter(r=>{
+      if(seen.has(r.date)) return false;
+      seen.add(r.date);
+      return true;
+    });
+    return deduped.sort((a,b)=>a.date.localeCompare(b.date));
   };
 
   const allDates=buildAllDates();
@@ -2923,7 +2951,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
         </div>
         {/* ESTADO DE CUENTAS - 4 columns */}
         {combo&&rem!==null&&(()=>{
-          const allDatesForStudent=s.combos.filter(c=>c.total>0||(c.packType&&c.packType!=="mensual")).flatMap(c=>{
+          const allDatesForStudentRaw=s.combos.filter(c=>c.total>0||(c.packType&&c.packType!=="mensual")).flatMap(c=>{
             const dates=c.dates||[];
             return dates.map(d=>{
               const attEntry=myClassesH.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===d);
@@ -2934,6 +2962,13 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
               const isGiven=attEntry?(attEntry.present||[]).includes(s.id)||(attEntry.ausente_dada||[]).includes(s.id):isPast;
               return {date:d,isPaid,isGiven,isPast};
             });
+          });
+          // Deduplicate by date
+          const seenDates=new Set();
+          const allDatesForStudent=allDatesForStudentRaw.filter(d=>{
+            if(seenDates.has(d.date)) return false;
+            seenDates.add(d.date);
+            return true;
           });
           const noPagadas=allDatesForStudent.filter(d=>!d.isPaid).length;
           const pagadas=allDatesForStudent.filter(d=>d.isPaid).length;
@@ -4429,6 +4464,8 @@ export default function App() {
   const syncAll=async(newStudents, newClasses, newExpenses, newCourts, newPackages)=>{
     const userId=window._iziUserId;
     if(!userId) return;
+    // Validate data before saving - must be arrays
+    if(!Array.isArray(newStudents)||!Array.isArray(newClasses)) return;
     try {
       await supabase.from("coach_data").upsert({
         coach_id:userId,
@@ -4450,11 +4487,19 @@ export default function App() {
     try {
       const {data}=await supabase.from("coach_data").select("*").eq("coach_id",userId).single();
       if(data){
-        if(data.students){const d=JSON.parse(data.students);setStudentsRaw(d);lsSet("izi_students",d);}
-        if(data.classes){const d=JSON.parse(data.classes);setClassesRaw(d);lsSet("izi_classes",d);}
-        if(data.expenses){const d=JSON.parse(data.expenses);setExpensesRaw(d);lsSet("izi_expenses",d);}
-        if(data.courts){const d=JSON.parse(data.courts);setCourtsRaw(d);lsSet("izi_courts",d);}
-        if(data.packages){const d=JSON.parse(data.packages);setPackagesRaw(d);lsSet("izi_packages",d);}
+        const tryParse=(str,fallback=[])=>{
+          try{const p=JSON.parse(str);return Array.isArray(p)?p:fallback;}catch{return fallback;}
+        };
+        const students=tryParse(data.students);
+        const classes=tryParse(data.classes);
+        const expenses=tryParse(data.expenses);
+        const courts=tryParse(data.courts);
+        const packages=tryParse(data.packages);
+        if(students.length>0){setStudentsRaw(students);lsSet("izi_students",students);}
+        if(classes.length>0){setClassesRaw(classes);lsSet("izi_classes",classes);}
+        if(expenses.length>0){setExpensesRaw(expenses);lsSet("izi_expenses",expenses);}
+        if(courts.length>0){setCourtsRaw(courts);lsSet("izi_courts",courts);}
+        if(packages.length>0){setPackagesRaw(packages);lsSet("izi_packages",packages);}
       }
     } catch(e){ console.error("Load error:",e); }
   };
@@ -4795,6 +4840,7 @@ export default function App() {
           id:s.combos.length+1,
           total:pn,
           packType,
+          packId:sd.packId||sd.pack||"",
           used:0,
           paid:sd.paid,
           paidCount:sd.paid?(pn||0):0,
