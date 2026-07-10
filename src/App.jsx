@@ -4983,10 +4983,26 @@ export default function App() {
   ];
 
   if(loadingAuth||checkingProfile) return (
-    <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)"}}>
+    <div style={{width:"100vw",height:"100vh",position:"fixed",top:0,left:0,display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",zIndex:9999}}>
       <div style={{textAlign:"center",color:"#fff"}}>
-        <div style={{fontSize:32,fontWeight:900,marginBottom:8}}>izi<span style={{color:"#65CE5A"}}>coach</span></div>
-        <div style={{fontSize:14,opacity:0.7}}>Cargando...</div>
+        <style>{`
+          @keyframes iziBounce {
+            0%,100%{transform:scale(1);opacity:1}
+            50%{transform:scale(1.12);opacity:0.85}
+          }
+          @keyframes iziDot {
+            0%,80%,100%{transform:scale(0.4);opacity:0.3}
+            40%{transform:scale(1);opacity:1}
+          }
+        `}</style>
+        <div style={{fontSize:42,fontWeight:900,letterSpacing:-2,marginBottom:20,animation:"iziBounce 1.5s ease-in-out infinite"}}>
+          izi<span style={{color:"#65CE5A"}}>coach</span>
+        </div>
+        <div style={{display:"flex",gap:8,justifyContent:"center"}}>
+          {[0,1,2].map(i=>(
+            <div key={i} style={{width:10,height:10,borderRadius:"50%",background:"#65CE5A",animation:`iziDot 1.2s ease-in-out ${i*0.2}s infinite`}}/>
+          ))}
+        </div>
       </div>
     </div>
   );
