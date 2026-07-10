@@ -463,7 +463,7 @@ function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, coach
 }
 
 function TimePicker({value, onChange, style}) {
-  const parts=(value||"08:00").split(":");
+  const parts=((value||"08:00")).split(":");
   const [h,setH]=useState(parts[0]||"08");
   const [m,setM]=useState(["00","15","30","45"].includes(parts[1])?parts[1]:"00");
   const hours=Array.from({length:24},(_,i)=>String(i).padStart(2,"0"));
@@ -1220,10 +1220,12 @@ function MiniCalendar({ year, month, selDay, onSelect, classes=[] }) {
 }
 
 function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCreateStudent, packages=[], onDelete }) {
+  if(!cls) return null;
+  try {
   const [title,setTitle]=useState(cls.title); const [court,setCourt]=useState(cls.court);
   const [days,setDays]=useState([...cls.days]);
   const [t1,setT1]=useState(cls.time); const [t2,setT2]=useState(cls.timeEnd||"09:00");
-  const [clsSt,setClsSt]=useState([...cls.students]);
+  const [clsSt,setClsSt]=useState(()=>(cls.students||[]).filter(sid=>initialStudents.some(s=>s.id===sid)));
   const [query,setQuery]=useState("");
   const [showCreateStudent,setShowCreateStudent]=useState(false);
   const [allStudents,setAllStudents]=useState(initialStudents);
@@ -1232,6 +1234,7 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
     const init={};
     cls.students.forEach(sid=>{
       const st=initialStudents.find(s=>s.id===sid);
+      if(!st){init[sid]={pack:"",amount:0,paid:false};return;}
       const combo=st?.combos?.[st.combos.length-1];
       if(!combo){init[sid]={pack:"",amount:0,paid:false};return;}
       // Find matching package - first try packId, then qty+amount, then qty
@@ -1346,8 +1349,8 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
               {available.length===0
                 ?<div style={{padding:"12px 14px",fontSize:13,color:C.mutedDark}}>No se encontraron alumnos</div>
                 :available.map(s=>(
-                  <div key={s.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderBottom:"1px solid "+C.border,cursor:"pointer"}} onClick={()=>{setClsSt(prev=>[...prev,s.id]);setQuery("");}}>
-                    {s.photo?<img src={s.photo} style={{width:34,height:34,borderRadius:"50%",objectFit:"cover",flexShrink:0}}/>:<div style={{width:34,height:34,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:C.white,flexShrink:0}}>{s.avatar}</div>}
+                  <div key={s.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderBottom:"1px solid "+C.border,cursor:"pointer"}} onClick={()=>{setClsSt(prev=>[...prev,s.id]);setStudentPacks(p=>({...p,[s.id]:{pack:"",amount:0,paid:false}}));setQuery("");}}>
+                    {s.photo?<img src={s.photo} style={{width:34,height:34,borderRadius:"50%",objectFit:"cover",flexShrink:0}}/>:<div style={{width:34,height:34,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:C.white,flexShrink:0}}>{(s.avatar||s.name?.slice(0,2)||"?").slice(0,2)}</div>}
                     <div style={{flex:1}}><div style={{fontWeight:600,fontSize:14,color:C.text}}>{s.name}</div></div>
                     <div style={{background:C.blue2,borderRadius:8,padding:"5px 12px",color:C.white,fontSize:12,fontWeight:700}}>+ Agregar</div>
                   </div>
@@ -1362,6 +1365,13 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
       {showCreateStudent&&<NewStudentModal onClose={()=>setShowCreateStudent(false)} onSave={handleCreateStudent}/>}
     </div>
   );
+  } catch(err) {
+    console.error("EditClassScreen error:", err);
+    return <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:99,background:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16}}>
+      <div style={{fontSize:16,color:"red"}}>Error: {err.message}</div>
+      <button onClick={onClose} style={{padding:"12px 24px",borderRadius:12,border:"none",background:"#0D1B4B",color:"#fff",cursor:"pointer"}}>Cerrar</button>
+    </div>;
+  }
 }
 
 function ReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent }) {
@@ -4662,9 +4672,13 @@ export default function App() {
       const hasOtherClasses=newClasses.some(c=>(c.students||[]).includes(s.id));
       return {...s,combos:hasOtherClasses?cleanedCombos:[]};
     });
+    // Remove expenses related to this class's students
+    const studentNames=(cls.students||[]).map(sid=>students.find(s=>s.id===sid)?.name).filter(Boolean);
+    const newExpenses=expenses.filter(e=>!(e.category==="Cobros clases"&&studentNames.includes(e.note)&&allDatesInSeries.has(e.date)));
     // Update state and sync both together
     setClassesRaw(newClasses);lsSet("izi_classes",newClasses);
     setStudentsRaw(newStudents);lsSet("izi_students",newStudents);
+    setExpensesRaw(newExpenses);lsSet("izi_expenses",newExpenses);
     if(window._iziUserId){
       const userId=window._iziUserId;
       supabase.from("coach_data").select("*").eq("coach_id",userId).single().then(({data:existing})=>{
@@ -4672,7 +4686,7 @@ export default function App() {
           coach_id:userId,
           students:JSON.stringify(newStudents),
           classes:JSON.stringify(newClasses),
-          expenses:existing?.expenses||'[]',
+          expenses:JSON.stringify(newExpenses),
           courts:existing?.courts||'[]',
           packages:existing?.packages||'[]',
           updated_at:new Date().toISOString(),
