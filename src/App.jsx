@@ -619,11 +619,14 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
   const handleSave=()=>{
     if(!title||sel.length===0){alert("Agregá título y al menos un alumno.");return;}
     if(!startDate){alert("Agregá una fecha de inicio.");return;}
-    // Check if any student has a non-individual pack
+    // Check if combo/mensual requires days
     const hasCombo=sel.some(x=>{
       const pkg=packages.find(p=>String(p.id)===String(x.pack));
       return x.pack!=="individual"&&pkg?.type!=="individual"&&x.pack!=="";
     });
+    if(hasCombo&&days.length===0&&!endDate){
+      alert("Para clases con combo, seleccioná al menos un día de la semana o una fecha de expiración.");return;
+    }
     // If combo/mensual without endDate, generate 6 months of occurrences
     let finalOccurrences=occurrences;
     if(hasCombo&&!endDate&&days.length>0&&occurrences.length===0){
@@ -942,7 +945,7 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
                 <div style={{fontSize:13,fontWeight:800,color:C.white}}>{c.time}</div>
               </div>
               <div style={{flex:1}}>
-                <div style={{fontWeight:700,fontSize:14,color:C.text}}>{c.title}{c.cancelled?" (Cancelada)":c.rescheduled?" (Reprogramada)":""}</div>
+                <div style={{fontWeight:700,fontSize:14,color:C.text}}>{c.title}{c.cancelled&&c.cancelType!=="cancelled_reprog"?" (Cancelada)":c.cancelled&&c.cancelType==="cancelled_reprog"?" (Cancelada - Reprog.)":c.rescheduled?" (Reprogramada)":""}</div>
                 <div style={{fontSize:12,color:C.mutedDark}}>{c.court+" · "+c.students.length+" alumno"+(c.students.length>1?"s":"")}</div>
               </div>
               <div style={{display:"flex",flexWrap:"wrap",gap:3,maxWidth:80,justifyContent:"flex-end"}}>
@@ -1380,7 +1383,27 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
             </div>
           )}
         </div>
-        <button onClick={()=>onSave({...cls,title,court,days,time:t1,timeEnd:t2,students:clsSt,studentPacks})} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:10}}>Actualizar Clase</button>
+        <button onClick={()=>{
+          // Regenerate occurrences if days changed
+          let newOccurrences=cls.occurrences||[];
+          if(JSON.stringify(days)!==JSON.stringify(cls.days)&&days.length>0){
+            const DAY_MAP2={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+            const dowSet=new Set(days.map(d=>DAY_MAP2[d]));
+            const result=[];
+            const sd=cls.startDate||cls.date;
+            const ed=cls.endDate;
+            let cur=new Date(sd+"T12:00:00");
+            const end=ed?new Date(ed+"T12:00:00"):new Date(new Date(sd+"T12:00:00").setMonth(new Date(sd+"T12:00:00").getMonth()+6));
+            while(cur<=end&&result.length<200){
+              if(dowSet.has(cur.getDay())){
+                result.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+              }
+              cur.setDate(cur.getDate()+1);
+            }
+            newOccurrences=result;
+          }
+          onSave({...cls,title,court,days,time:t1,timeEnd:t2,students:clsSt,studentPacks,occurrences:newOccurrences});
+        }} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:10}}>Actualizar Clase</button>
         <button onClick={()=>{if(window.confirm("¿Eliminar esta clase? Todas las instancias serán eliminadas del calendario.")) {onDelete&&onDelete(cls.id);onClose();}}} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"#FFF0F0",color:"#D32F2F",fontSize:15,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:20}}>🗑 Eliminar Clase</button>
       </div>
       {showCreateStudent&&<NewStudentModal onClose={()=>setShowCreateStudent(false)} onSave={handleCreateStudent}/>}
@@ -1393,6 +1416,41 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
       <button onClick={onClose} style={{padding:"12px 24px",borderRadius:12,border:"none",background:"#0D1B4B",color:"#fff",cursor:"pointer"}}>Cerrar</button>
     </div>;
   }
+}
+
+function CancelModal({ cls, onClose, onSave, onReprog }) {
+  const opts=[
+    {type:"cancelled",label:"Cancelar clase",desc:"La clase no se dio. No cobra.",icon:"⛔",border:"#FFCDD2",color:"#C62828",bg:"#fff"},
+    {type:"cancelled_reprog",label:"Reprogramar",desc:"No se dio. Se reprograma. Cobra cuando se dé.",icon:"🔄",border:"#90CAF9",color:"#1565C0",bg:"#fff"},
+  ];
+  return (
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.4)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
+      <div style={{background:"#F5F7FF",borderRadius:"24px 24px 0 0",padding:"28px 20px 44px",width:"100%",boxSizing:"border-box"}}>
+        <div style={{width:40,height:4,borderRadius:2,background:"#DDE3F0",margin:"0 auto 20px"}}></div>
+        <div style={{fontWeight:900,fontSize:19,color:"#0D1B4B",marginBottom:4}}>¿Cómo cancelar esta clase?</div>
+        <div style={{fontSize:13,color:"#6B7BAD",marginBottom:20}}>{cls.title} · {cls.date}</div>
+        {opts.map(o=>(
+          <div key={o.type} onClick={()=>{
+            if(o.type==="cancelled_reprog"){
+              onSave({...cls,cancelled:true,cancelType:"cancelled_reprog",applyToAll:false});
+              onClose();
+              onReprog&&onReprog({...cls,cancelled:true,cancelType:"cancelled_reprog"});
+            } else {
+              onSave({...cls,cancelled:true,cancelType:o.type,applyToAll:false});
+              onClose();
+            }
+          }} style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:14,border:"2px solid "+o.border,background:o.bg,marginBottom:10,cursor:"pointer"}}>
+            <span style={{fontSize:22,flexShrink:0}}>{o.icon}</span>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:700,fontSize:14,color:o.color}}>{o.label}</div>
+              <div style={{fontSize:12,color:"#6B7BAD",marginTop:2}}>{o.desc}</div>
+            </div>
+          </div>
+        ))}
+        <button onClick={onClose} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:"#fff",color:"#6B7BAD",fontSize:14,cursor:"pointer",fontWeight:600,marginTop:4}}>Volver</button>
+      </div>
+    </div>
+  );
 }
 
 function ReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent }) {
@@ -1664,6 +1722,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
   const selLabel=wD[sd.getDay()]+" "+sd.getDate()+" de "+mN[sd.getMonth()];
 
   const [reprog,setReprog]=useState(pendingReprog||null);
+  const [showCancel,setShowCancel]=useState(null);
   // Auto-open reprog modal if navigated from dashboard
   useState(()=>{if(pendingReprog){setReprog(pendingReprog);onClearPendingReprog&&onClearPendingReprog();}}); // class to reschedule
 
@@ -1674,7 +1733,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
     return (
     <WhiteCard style={{marginBottom:12}}>
       <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
-        <div><div style={{fontWeight:800,fontSize:15,color:C.text}}>{c.title}{c.cancelled?" (Cancelada)":c.rescheduled?" (Reprogramada)":""}</div><div style={{fontSize:12,color:C.mutedDark}}>{c.time+" · "+c.court}</div></div>
+        <div><div style={{fontWeight:800,fontSize:15,color:C.text}}>{c.title}{c.cancelled&&c.cancelType!=="cancelled_reprog"?" (Cancelada)":c.cancelled&&c.cancelType==="cancelled_reprog"?" (Cancelada - Reprog.)":c.rescheduled?" (Reprogramada)":""}</div><div style={{fontSize:12,color:C.mutedDark}}>{c.time+" · "+c.court}</div></div>
         <span style={{background:C.blueL,color:C.blue2,fontSize:11,padding:"4px 10px",borderRadius:20,fontWeight:600,height:"fit-content"}}>{c.days.join(" · ")}</span>
       </div>
       <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:(dadaCount||reprogCount)?6:12}}>
@@ -1693,7 +1752,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
       </div>
       <div style={{display:"flex",gap:8}}>
         <button onClick={()=>setReprog(c)} style={{flex:1,padding:"9px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>📅 Reprogramar</button>
-        <button onClick={()=>onSaveClass({...c,cancelled:!c.cancelled,applyToAll:false},true)} style={{flex:1,padding:"9px",borderRadius:10,border:"1.5px solid "+(c.cancelled?"#C62828":"#FFB74D"),background:c.cancelled?"#FFEBEE":"#FFF3E0",color:c.cancelled?"#C62828":"#E65100",fontSize:12,cursor:"pointer",fontWeight:700}}>{c.cancelled?"❌ Clase Cancelada":"⛔ Cancelar clase"}</button>
+        <button onClick={()=>{if(c.cancelled){onSaveClass({...c,cancelled:false,cancelType:null,applyToAll:false},true);}else{setShowCancel(c);}}} style={{flex:1,padding:"9px",borderRadius:10,border:"1.5px solid "+(c.cancelled?"#C62828":"#FFB74D"),background:c.cancelled?"#FFEBEE":"#FFF3E0",color:c.cancelled?"#C62828":"#E65100",fontSize:12,cursor:"pointer",fontWeight:700}}>{c.cancelled?"❌ Clase Cancelada":"⛔ Cancelar clase"}</button>
       </div>
     </WhiteCard>
     );
@@ -1787,7 +1846,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:4}}>
-                      <div style={{fontWeight:800,fontSize:15,color:c.cancelled?"#C62828":isNextComboPending(c,students)?"#9E9E9E":C.text}}>{c.title}{c.cancelled?" (Cancelada)":c.rescheduled?" (Reprogramada)":""}</div>
+                      <div style={{fontWeight:800,fontSize:15,color:c.cancelled?"#C62828":isNextComboPending(c,students)?"#9E9E9E":C.text}}>{c.title}{c.cancelled&&c.cancelType!=="cancelled_reprog"?" (Cancelada)":c.cancelled&&c.cancelType==="cancelled_reprog"?" (Cancelada - Reprog.)":c.rescheduled?" (Reprogramada)":""}</div>
                       {isNextComboPending(c,students)&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#EEEEEE",color:"#757575",fontWeight:700}}>Sin pagar</span>}
                       {(()=>{const log=(c.attendanceLog||[]).find(e=>e.date===c.date);if(!log)return null;const dC=(log.ausente_dada||[]).length;const nC=(log.ausente_reprog||[]).length;if(!dC&&!nC)return null;return(<>{dC>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ Ausente-Dada</span>}{nC>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF8E1",color:"#F57F17",fontWeight:700}}>↩ A Reprogramar</span>}</>);})()}
                     </div>
@@ -1849,7 +1908,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
                       {label:"Editar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,action:()=>{setEditCls(c);setHighlightCls(null);},disabled:false},
                       {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt({...c,attendanceLog:c.attendanceLog||[]});setHighlightCls(null);},disabled:isNextComboPending(c,students)},
                       {label:"Reprogramar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14l2 2 4-4"/></svg>,action:()=>{setReprog(c);setHighlightCls(null);},disabled:false},
-                      {label:c.cancelled?"Reactivar":"Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>,action:()=>{onSaveClass({...c,cancelled:!c.cancelled,applyToAll:false},true);setHighlightCls(null);},disabled:false},
+                      {label:c.cancelled?"Reactivar":"Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>,action:()=>{if(c.cancelled){onSaveClass({...c,cancelled:false,cancelType:null,applyToAll:false},true);}else{setShowCancel(c);}setHighlightCls(null);},disabled:false},
                     ].map(btn=>(
                       <button key={btn.label} onClick={btn.disabled?null:btn.action} disabled={btn.disabled} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"13px",borderRadius:14,border:"none",background:btn.disabled?"#E0E0E0":"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)",color:btn.disabled?"#9E9E9E":"#fff",fontSize:14,cursor:btn.disabled?"not-allowed":"pointer",fontWeight:700,boxShadow:btn.disabled?"none":"0 4px 12px rgba(101,206,90,0.3)"}}>
                         {btn.icon}{btn.label}{btn.disabled?" 🔒":""}
@@ -1975,7 +2034,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
                       <div key={c.id} onClick={()=>setHighlightCls(c.id===highlightCls?null:c.id)}
                         style={{position:"absolute",top:topPx,left:colL,width:colW,height:heightPx,background:c.cancelled?"#FFF3E0":c.rescheduled?"#E3F2FD":isNextComboPending(c,students)?"#F5F5F5":C.white,borderRadius:12,padding:"6px 10px",border:"1.5px solid "+(highlightCls===c.id?C.blue2:isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:"pointer",boxShadow:"0 2px 8px rgba(44,94,247,0.10)",overflow:"hidden",borderLeft:"4px solid "+(c.cancelled?"#E65100":c.rescheduled?"#1565C0":isNextComboPending(c,students)?"#BDBDBD":C.blue2),zIndex:2,opacity:isNextComboPending(c,students)?0.7:1}}>
                         <div style={{display:"flex",alignItems:"center",gap:4,overflow:"hidden"}}>
-                          <div style={{fontSize:13,fontWeight:800,color:c.cancelled?"#C62828":isNextComboPending(c,students)?"#9E9E9E":C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",flex:1}}>{c.title}{c.cancelled?" (Cancelada)":c.rescheduled?" (Reprogramada)":""}</div>
+                          <div style={{fontSize:13,fontWeight:800,color:c.cancelled?"#C62828":isNextComboPending(c,students)?"#9E9E9E":C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",flex:1}}>{c.title}{c.cancelled&&c.cancelType!=="cancelled_reprog"?" (Cancelada)":c.cancelled&&c.cancelType==="cancelled_reprog"?" (Cancelada - Reprog.)":c.rescheduled?" (Reprogramada)":""}</div>
                           {isNextComboPending(c,students)&&<span style={{fontSize:9,padding:"2px 5px",borderRadius:8,background:"#EEEEEE",color:"#757575",fontWeight:700,flexShrink:0}}>Sin pagar</span>}
                         </div>
                         <div style={{fontSize:11,color:C.mutedDark,marginTop:1}}>{c.time+(c.timeEnd?" – "+c.timeEnd:"")} · {c.court}</div>
@@ -2029,7 +2088,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
                           {label:"Editar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,action:()=>{setEditCls(c);setHighlightCls(null);}},
                           {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt({...c,attendanceLog:c.attendanceLog||[]});setHighlightCls(null);}},
                           {label:"Reprogramar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14l2 2 4-4"/></svg>,action:()=>{setReprog(c);setHighlightCls(null);}},
-                          {label:c.cancelled?"Reactivar":"Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>,action:()=>{onSaveClass({...c,cancelled:!c.cancelled,applyToAll:false},true);setHighlightCls(null);}},
+                          {label:c.cancelled?"Reactivar":"Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>,action:()=>{if(c.cancelled){onSaveClass({...c,cancelled:false,cancelType:null,applyToAll:false},true);}else{setShowCancel(c);}setHighlightCls(null);}},
                         ].map(btn=>(
                           <button key={btn.label} onClick={btn.action} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"13px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)",color:"#fff",fontSize:14,cursor:"pointer",fontWeight:700,boxShadow:"0 4px 12px rgba(101,206,90,0.3)"}}>
                             {btn.icon}{btn.label}
@@ -2098,6 +2157,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
         </div>
       )}
       {reprog&&<ReprogModal cls={reprog} onClose={()=>setReprog(null)} onSave={(updated,_,addNew)=>{onSaveClass(updated,true);if(addNew)onSaveClass(addNew,false);setReprog(null);}} students={students} onUpdateStudent={onUpdateStudent}/>}
+      {showCancel&&<CancelModal cls={showCancel} onClose={()=>setShowCancel(null)} onSave={(u)=>{onSaveClass(u,true);setShowCancel(null);}} onReprog={(u)=>{setReprog(u);setShowCancel(null);}}/>}
       {showNew&&<NewClassModal onClose={()=>{setShowNew(false);setGridNewTime(null);setWeekOffset(0);}} onSave={onSaveClass} students={students} dateLabel={viewMode==="month"?selLabel:weekLabel()} onCreateStudent={onAddStudent} prefill={gridNewTime||(viewMode==="month"?{date:selDay}:null)} courts={courts} packages={packages} onAddPackage={(pkg)=>{packages.push(pkg);}}/>}
       {att&&<AttModal att={att} students={students} onAttendance={onAttendance} onClose={()=>setAtt(null)}/>}
     </div>
@@ -2440,50 +2500,32 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
       return dates;
     };
 
-    if(pagoTipo==="clases"&&lastCombo&&lastCombo.total>0&&qty>0){
-      const lastIdx=updatedCombos.length-1;
-      const existing=updatedCombos[lastIdx];
-      const comboTotal=existing.total||0;
-      const givenCount=(existing.dates||[]).filter(d=>d<=TODAY).length;
-      const prevPaid=existing.paidCount!==undefined?existing.paidCount:(existing.paid?comboTotal:0);
-      const newPaidCount=Math.min(comboTotal, prevPaid+qty);
-      const fullyPaid=newPaidCount>=comboTotal;
-      // Save this payment as a separate entry
-      const paymentDates=(existing.dates||[]).slice(prevPaid,newPaidCount);
-      const newPayment={
-        id:Date.now(),
-        qty,
-        amount:parseInt(localAmount)||0,
-        method:payMethod,
-        date:localDate||TODAY,
-        dates:paymentDates,
-      };
-      updatedCombos[lastIdx]={
-        ...existing,
-        paid:fullyPaid,
-        paidCount:newPaidCount,
-        used:givenCount,
-        amount:(existing.amount||0)+(parseInt(localAmount)||0),
-        method:payMethod,
-        date:localDate||TODAY,
-        payments:[...(existing.payments||[]),newPayment],
-      };
-      // If fully paid AND all classes already given → auto-create next combo
-      if(fullyPaid&&givenCount>=comboTotal&&comboTotal>0){
-        const lastComboDate=(existing.dates||[]).slice(-1)[0]||TODAY;
-        const nextDates=generateNewDates(comboTotal, lastComboDate);
-        updatedCombos.push({
-          id:updatedCombos.length+1,
-          total:comboTotal,
-          packType:existing.packType||"combo",
-          used:givenCount>=comboTotal?0:0,
-          paid:false,
-          paidCount:0,
-          date:nextDates[0]||TODAY,
-          amount:existing.amount||0,
-          dates:nextDates,
-          payments:[],
-        });
+    if(pagoTipo==="clases"&&qty>0){
+      // Distribute payment across combos from oldest to newest
+      let remaining=qty;
+      updatedCombos=updatedCombos.map(c=>{
+        if(remaining<=0||!c.total||c.total===null) return c;
+        const prevPaid=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
+        if(prevPaid>=c.total) return c; // already fully paid
+        const canPay=Math.min(c.total-prevPaid,remaining);
+        if(canPay<=0) return c;
+        remaining-=canPay;
+        const newPaidCount=prevPaid+canPay;
+        const fullyPaid=newPaidCount>=c.total;
+        const givenCount=(c.dates||[]).filter(d=>d<=TODAY).length;
+        const paymentDates=(c.dates||[]).slice(prevPaid,newPaidCount);
+        const newPayment={id:Date.now()+remaining,qty:canPay,amount:Math.round((parseInt(localAmount)||0)*(canPay/qty)),method:payMethod,date:localDate||TODAY,dates:paymentDates};
+        return {...c,paid:fullyPaid,paidCount:newPaidCount,used:Math.max(c.used||0,givenCount),payments:[...(c.payments||[]),newPayment]};
+      });
+      // Check if last combo is now fully paid and all given → auto-create next
+      const lastC=updatedCombos[updatedCombos.length-1];
+      if(lastC&&lastC.paid&&lastC.total>0){
+        const givenCount=(lastC.dates||[]).filter(d=>d<=TODAY).length;
+        if(givenCount>=lastC.total){
+          const lastComboDate=(lastC.dates||[]).slice(-1)[0]||TODAY;
+          const nextDates=generateNewDates(lastC.total, lastComboDate);
+          updatedCombos.push({id:updatedCombos.length+1,total:lastC.total,packType:lastC.packType||"combo",used:0,paid:false,paidCount:0,date:nextDates[0]||TODAY,amount:lastC.amount||0,dates:nextDates,payments:[]});
+        }
       }
     } else if(pagoTipo==="clases"&&qty>0){
       const allExistingDates=updatedCombos.flatMap(c=>c.dates||[]).sort();
@@ -2720,11 +2762,12 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               <div>
                 <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>¿Cuántas clases pagamos?</div>
                 {(()=>{
-                  const lastC=allCombos.filter(c=>c.total).slice(-1)[0];
-                  const effectiveTotal=lastC?getEffectiveTotal(s,lastC,classes):0;
-                  const paidCount=lastC?(lastC.paidCount!==undefined?lastC.paidCount:(lastC.paid?lastC.total:0)):0;
-                  // For individual/no-total combos, allow up to 20 classes
-                  const maxUnpaid=effectiveTotal>0?Math.max(0,effectiveTotal-paidCount):20;                  return (
+                  // Count total unpaid across ALL combos
+                  const totalUnpaidAll=allCombos.filter(c=>c.total>0).reduce((sum,c)=>{
+                    const pc=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
+                    return sum+Math.max(0,(c.total||0)-pc);
+                  },0);
+                  const maxUnpaid=totalUnpaidAll>0?totalUnpaidAll:20;                  return (
                     <div style={{display:"flex",alignItems:"center",background:C.blueL,borderRadius:12,overflow:"hidden"}}>
                       <button onClick={()=>setLocalClasses(Math.max(0,(parseInt(localClasses)||0)-1))} style={{width:44,height:46,border:"none",background:"#2C5EF7",color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>◀</button>
                       <div style={{flex:1,textAlign:"center",fontSize:22,fontWeight:800,color:"#1A237E"}}>{parseInt(localClasses)||0}</div>
