@@ -1088,6 +1088,9 @@ function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onI
                   <button onClick={()=>onChat&&onChat(s)} style={{background:C.blueL,border:"none",borderRadius:"50%",width:36,height:36,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
                   </button>
+                  <button onClick={()=>onInviteStudent&&onInviteStudent(s)} style={{background:C.blueL,border:"none",borderRadius:"50%",width:36,height:36,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+                  </button>
                 </div>
               </div>
               {/* Info panel */}
@@ -1189,6 +1192,46 @@ function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onI
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function InviteModal({ student, userId, onClose }) {
+  const [code,setCode]=useState("");
+  const [loading,setLoading]=useState(true);
+  const [copied,setCopied]=useState(false);
+  useEffect(()=>{
+    if(!student||!userId) return;
+    supabase.from("invites").select("code").eq("coach_id",userId).eq("student_id",student.id).eq("used",false).single()
+      .then((res)=>{
+        if(res.data&&res.data.code){setCode(res.data.code);setLoading(false);return;}
+        const c=Math.random().toString(36).slice(2,10).toUpperCase();
+        supabase.from("invites").insert({code:c,coach_id:userId,student_id:student.id,used:false})
+          .then(()=>{setCode(c);setLoading(false);});
+      });
+  },[]);
+  const url="https://izicoach.vercel.app?invite="+code;
+  return (
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.5)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
+      <div style={{background:"#fff",borderRadius:"24px 24px 0 0",padding:"28px 20px 44px",width:"100%",boxSizing:"border-box"}}>
+        <div style={{width:40,height:4,borderRadius:2,background:"#DDE3F0",margin:"0 auto 20px"}}></div>
+        <div style={{fontWeight:900,fontSize:18,color:C.text,marginBottom:4}}>Invitar a {student.name}</div>
+        <div style={{fontSize:13,color:C.mutedDark,marginBottom:20}}>Compartí este link para que el alumno se registre.</div>
+        {loading?<div style={{textAlign:"center",padding:20,color:C.mutedDark}}>Generando...</div>:(
+          <div>
+            <div style={{background:C.blueL,borderRadius:12,padding:"14px 16px",marginBottom:12}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.mutedDark,marginBottom:6}}>LINK</div>
+              <div style={{fontSize:13,color:C.blue2,fontWeight:600,wordBreak:"break-all"}}>{url}</div>
+            </div>
+            <div style={{background:"#F5F5F5",borderRadius:12,padding:"14px 16px",marginBottom:16,textAlign:"center"}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.mutedDark,marginBottom:8}}>CÓDIGO</div>
+              <div style={{fontSize:32,fontWeight:900,color:C.text,letterSpacing:6}}>{code}</div>
+            </div>
+            <button onClick={()=>{if(navigator.clipboard){navigator.clipboard.writeText(url);}setCopied(true);setTimeout(()=>setCopied(false),2000);}} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:"#fff",fontSize:14,cursor:"pointer",fontWeight:800,marginBottom:10}}>{copied?"Copiado!":"Copiar link"}</button>
+          </div>
+        )}
+        <button onClick={onClose} style={{width:"100%",padding:"13px",borderRadius:14,border:"none",background:"#F5F5F5",color:C.mutedDark,fontSize:14,cursor:"pointer",fontWeight:600}}>Cerrar</button>
+      </div>
     </div>
   );
 }
@@ -4545,6 +4588,7 @@ export default function App() {
   const [mode,setMode]=useState(null);
   const [onboarded,setOnboarded]=useState(false);
   const [showInvite,setShowInvite]=useState(false);
+  const [inviteTarget,setInviteTarget]=useState(null);
   const [tab,setTab]=useState("dashboard");
   const [financeTab,setFinanceTab]=useState("payments");
   const [students,setStudentsRaw]=useState(()=>ls("izi_students",[]));
