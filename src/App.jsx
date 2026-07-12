@@ -5255,8 +5255,16 @@ export default function App() {
 
   if(mode==="student_portal"){
     const storedStudentId=parseInt(localStorage.getItem("izi_student_id")||"0");
-    console.log("student_portal: storedStudentId=",storedStudentId,"students=",students.map(s=>({id:s.id,name:s.name})));
     const studentData=students.find(s=>s.id===storedStudentId)||students.find(s=>s.email===user?.email)||students[0];
+    if(students.length===0) return (
+      <div style={{width:"100vw",height:"100vh",position:"fixed",top:0,left:0,display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",zIndex:9999}}>
+        <div style={{textAlign:"center",color:"#fff"}}>
+          <style>{`@keyframes iziBounce{0%,100%{transform:scale(1)}50%{transform:scale(1.12)}}@keyframes iziDot{0%,80%,100%{transform:scale(0.4);opacity:0.3}40%{transform:scale(1);opacity:1}}`}</style>
+          <div style={{fontSize:42,fontWeight:900,letterSpacing:-2,marginBottom:20,animation:"iziBounce 1.5s ease-in-out infinite"}}>izi<span style={{color:"#65CE5A"}}>coach</span></div>
+          <div style={{display:"flex",gap:8,justifyContent:"center"}}>{[0,1,2].map(i=>(<div key={i} style={{width:10,height:10,borderRadius:"50%",background:"#65CE5A",animation:`iziDot 1.2s ease-in-out ${i*0.2}s infinite`}}/>))}</div>
+        </div>
+      </div>
+    );
     return (
       <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden"}}>
         <StudentApp student={studentData||{id:0,name:"Alumno",avatar:"A",sport:"",combos:[]}} onExit={async()=>{await supabase.auth.signOut();setUserWithRef(null);setMode(null);localStorage.clear();}} classes={classes} notifications={notifications} sendNotification={sendNotification}/>
