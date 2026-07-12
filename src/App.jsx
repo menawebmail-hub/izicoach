@@ -2362,7 +2362,7 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
     const studentId=active.id;
     // Mark as read
     supabase.from("messages").update({read:true}).eq("coach_id",userId).eq("student_id",studentId).eq("from_coach",false);
-    onMarkRead&&onMarkRead(studentId);
+    onMarkRead&&onMarkRead(String(studentId));
     supabase.from("messages").select("*").eq("coach_id",userId).eq("student_id",studentId).order("created_at",{ascending:true})
       .then(({data})=>{setMsgs(data||[]);setLoading(false);});
     const channel=supabase.channel("chat_"+userId+"_"+studentId)
@@ -2417,7 +2417,7 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
 
   // Sort students — unread first, then by most recent message
   const sortedStudents=[...students].sort((a,b)=>{
-    const ua=unreadChats[a.id]||0, ub=unreadChats[b.id]||0;
+    const ua=unreadChats[String(a.id)]||0, ub=unreadChats[String(b.id)]||0;
     if(ua!==ub) return ub-ua;
     const ta=lastMsgTime[a.id]||"", tb=lastMsgTime[b.id]||"";
     return tb.localeCompare(ta);
@@ -2430,7 +2430,7 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
       <div style={{padding:"12px 12px 80px"}}>
         {sortedStudents.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:C.mutedDark}}>No hay alumnos aún</div>}
         {sortedStudents.map(s=>{
-          const unread=unreadChats[s.id]||0;
+          const unread=unreadChats[String(s.id)]||0;
           return (
             <div key={s.id} onClick={()=>{setActive(s);setView("chat");}} style={{background:C.white,borderRadius:14,padding:"12px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:12,cursor:"pointer",boxShadow:unread?"0 2px 12px rgba(255,71,87,0.15)":"0 2px 8px rgba(44,94,247,0.06)",border:unread?"1.5px solid #FF4757":"1.5px solid transparent"}}>
               <div style={{width:44,height:44,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,color:C.white,flexShrink:0}}>{s.avatar||"?"}</div>
@@ -4756,14 +4756,14 @@ export default function App() {
     supabase.from("messages").select("student_id").eq("coach_id",user.id).eq("read",false).eq("from_coach",false)
       .then(({data})=>{
         const counts={};
-        (data||[]).forEach(m=>{counts[m.student_id]=(counts[m.student_id]||0)+1;});
+        (data||[]).forEach(m=>{const k=String(m.student_id);counts[k]=(counts[k]||0)+1;});
         setUnreadChats(counts);
       });
     // Realtime subscription for new messages
     const channel=supabase.channel("coach_inbox_"+user.id)
       .on("postgres_changes",{event:"INSERT",schema:"public",table:"messages",filter:`coach_id=eq.${user.id}`},(payload)=>{
         if(!payload.new.from_coach){
-          setUnreadChats(p=>({...p,[payload.new.student_id]:(p[payload.new.student_id]||0)+1}));
+          setUnreadChats(p=>({...p,[String(payload.new.student_id)]:(p[String(payload.new.student_id)]||0)+1}));
         }
       }).subscribe();
     return ()=>supabase.removeChannel(channel);
@@ -5398,7 +5398,7 @@ export default function App() {
         {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={classes} onInvite={()=>setShowInvite(true)} userId={user?.id} onInviteStudent={(s)=>setInviteTarget(s)}/>}
         {inviteTarget&&<InviteModal student={inviteTarget} userId={user?.id} onClose={()=>setInviteTarget(null)}/>}
         {tab==="agenda"&&<Agenda students={students} classes={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)}/>}
-        {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification} userId={user?.id} unreadChats={unreadChats} onMarkRead={(sid)=>setUnreadChats(p=>{const n={...p};delete n[sid];return n;})}/>}
+        {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification} userId={user?.id} unreadChats={unreadChats} onMarkRead={(sid)=>setUnreadChats(p=>{const n={...p};delete n[String(sid)];return n;})}/>}
         {tab==="cobros"&&<Finances students={students} classes={classes} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance}/>}
         {tab==="finanzas"&&<Finances students={students} classes={classes} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages}/>}
         {showNewClass&&<NewClassModal onClose={()=>{setShowNewClass(false);if(classes.length===0)setTab("agenda");}} onSave={handleSaveClass} students={students} dateLabel="Nueva clase" onCreateStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])}/>}
@@ -5479,7 +5479,7 @@ export default function App() {
           </div>
         )}
       </div>
-      <NavBar tabs={coachTabs} active={tab} onSelect={(t)=>{setTab(t);if(t==="chat")setUnreadChats({});}} zIdx={100} badges={{chat:Object.values(unreadChats).reduce((a,b)=>a+b,0)||0}}/>
+      <NavBar tabs={coachTabs} active={tab} onSelect={(t)=>{setTab(t);}} zIdx={100} badges={{chat:Object.values(unreadChats).reduce((a,b)=>a+b,0)||0}}/>
     </div>
   );
 }
