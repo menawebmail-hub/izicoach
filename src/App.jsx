@@ -481,12 +481,24 @@ function TimePicker({value, onChange, style}) {
   );
 }
 
-function AuthFlow({ onLogin }) {
-  const [screen,setScreen]=useState("login");
+function AuthFlow({ onLogin, onStudentLogin }) {
+  const inviteCode=new URLSearchParams(window.location.search).get("invite")||"";
+  const [screen,setScreen]=useState(inviteCode?"register_student":"login");
   const [email,setEmail]=useState(""); const [pass,setPass]=useState(""); const [name,setName]=useState("");
   const [err,setErr]=useState(""); const [loading,setLoading]=useState(false);
+  const [inviteInfo,setInviteInfo]=useState(null);
   const iS={width:"100%",padding:"13px 16px",borderRadius:12,border:"1.5px solid rgba(255,255,255,0.3)",fontSize:14,boxSizing:"border-box",background:"rgba(255,255,255,0.15)",color:"#fff",outline:"none",marginBottom:12};
   const lS={fontSize:12,color:"rgba(255,255,255,0.7)",fontWeight:700,display:"block",marginBottom:6};
+
+  useEffect(()=>{
+    if(!inviteCode) return;
+    supabase.from("invites").select("*,coaches(name)").eq("code",inviteCode).eq("used",false).single()
+      .then((res)=>{
+        if(res.data) setInviteInfo(res.data);
+        else setErr("El link de invitación no es válido o ya fue usado.");
+      });
+  },[]);
+
   const handleLogin=async()=>{
     if(!email||!pass){setErr("Completá todos los campos.");return;}
     setLoading(true);setErr("");
@@ -494,6 +506,7 @@ function AuthFlow({ onLogin }) {
     if(error){setErr(error.message);setLoading(false);return;}
     onLogin(data.user);setLoading(false);
   };
+
   const handleRegister=async()=>{
     if(!email||!pass||!name){setErr("Completá todos los campos.");return;}
     if(pass.length<6){setErr("La contraseña debe tener al menos 6 caracteres.");return;}
@@ -506,14 +519,58 @@ function AuthFlow({ onLogin }) {
     }
     onLogin(data.user);setLoading(false);
   };
+
+  const handleStudentRegister=async()=>{
+    if(!email||!pass||!name){setErr("Completá todos los campos.");return;}
+    if(pass.length<6){setErr("La contraseña debe tener al menos 6 caracteres.");return;}
+    if(!inviteInfo){setErr("Link de invitación inválido.");return;}
+    setLoading(true);setErr("");
+    const {data,error}=await supabase.auth.signUp({email,password:pass});
+    console.log("signUp result:", data, error);
+    if(error){setErr(error.message);setLoading(false);return;}
+    if(data.user){
+      console.log("user id:", data.user.id, "inviteInfo:", inviteInfo);
+      const {error:saError}=await supabase.from("student_auth").insert({
+        id:data.user.id,
+        coach_id:inviteInfo.coach_id,
+        student_id:inviteInfo.student_id,
+        email
+      });
+      console.log("student_auth insert error:", saError);
+      if(saError){setErr("Error al vincular: "+saError.message);setLoading(false);return;}
+      await supabase.from("invites").update({used:true}).eq("code",inviteCode);
+      window.history.replaceState({},"",window.location.pathname);
+      onStudentLogin&&onStudentLogin(data.user, inviteInfo);
+    } else {
+      setErr("No se pudo crear la cuenta. Verificá que el email no esté en uso.");
+    }
+    setLoading(false);
+  };
   return (
     <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
       <div style={{marginBottom:32,textAlign:"center"}}>
         <div style={{fontWeight:900,fontSize:36,color:"#fff",letterSpacing:-1}}>izi<span style={{color:"#65CE5A"}}>coach</span></div>
-        <div style={{fontSize:14,color:"rgba(255,255,255,0.7)",marginTop:4}}>Gestión de clases y pagos</div>
+        <div style={{fontSize:14,color:"rgba(255,255,255,0.7)",marginTop:4}}>
+          {screen==="register_student"?"Portal del Alumno":"Gestión de clases y pagos"}
+        </div>
       </div>
       <div style={{width:"100%",maxWidth:380}}>
-        {screen==="login"?(
+        {screen==="register_student"?(
+          <>
+            {inviteInfo&&<div style={{background:"rgba(255,255,255,0.15)",borderRadius:12,padding:"12px 16px",marginBottom:20,textAlign:"center"}}>
+              <div style={{fontSize:12,color:"rgba(255,255,255,0.7)"}}>Invitado por</div>
+              <div style={{fontSize:16,fontWeight:800,color:"#fff"}}>{inviteInfo.coaches?.name||"tu entrenador"}</div>
+            </div>}
+            {err&&<div style={{background:"rgba(229,57,53,0.3)",borderRadius:10,padding:"10px 14px",fontSize:13,color:"#FFCDD2",marginBottom:16}}>{err}</div>}
+            {!err&&<>
+              <div><label style={lS}>TU NOMBRE</label><input value={name} onChange={e=>setName(e.target.value)} placeholder="Ej: Ana García" style={iS}/></div>
+              <div><label style={lS}>CORREO</label><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="tu@correo.com" style={iS}/></div>
+              <div><label style={lS}>CONTRASEÑA</label><input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="Mínimo 6 caracteres" style={iS}/></div>
+              <button onClick={handleStudentRegister} disabled={loading} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:"#65CE5A",color:"#fff",fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:16,opacity:loading?0.7:1}}>{loading?"Registrando...":"Crear cuenta de alumno"}</button>
+            </>}
+            <div style={{textAlign:"center",fontSize:13,color:"rgba(255,255,255,0.7)"}}>¿Ya tenés cuenta?{" "}<button onClick={()=>{setScreen("login");setErr("");}} style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:"#fff",fontWeight:800}}>Iniciar sesión</button></div>
+          </>
+        ):screen==="login"?(
           <>
             <div><label style={lS}>CORREO</label><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="tu@correo.com" style={iS} onKeyDown={e=>e.key==="Enter"&&handleLogin()}/></div>
             <div><label style={lS}>CONTRASEÑA</label><input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="••••••••" style={iS} onKeyDown={e=>e.key==="Enter"&&handleLogin()}/></div>
@@ -1032,7 +1089,7 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
   );
 }
 
-function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onInvite }) {
+function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onInvite, userId, onInviteStudent }) {
   const [f,setF]=useState("all");
   const [editS,setEditS]=useState(null);
   const [search,setSearch]=useState("");
@@ -1227,7 +1284,18 @@ function InviteModal({ student, userId, onClose }) {
               <div style={{fontSize:11,fontWeight:700,color:C.mutedDark,marginBottom:8}}>CÓDIGO</div>
               <div style={{fontSize:32,fontWeight:900,color:C.text,letterSpacing:6}}>{code}</div>
             </div>
-            <button onClick={()=>{if(navigator.clipboard){navigator.clipboard.writeText(url);}setCopied(true);setTimeout(()=>setCopied(false),2000);}} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:"#fff",fontSize:14,cursor:"pointer",fontWeight:800,marginBottom:10}}>{copied?"Copiado!":"Copiar link"}</button>
+            <button onClick={()=>{
+              const doCopy=()=>{
+                if(navigator.clipboard&&navigator.clipboard.writeText){
+                  navigator.clipboard.writeText(url).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);}).catch(()=>{
+                    const el=document.createElement("textarea");el.value=url;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);setCopied(true);setTimeout(()=>setCopied(false),2000);
+                  });
+                } else {
+                  const el=document.createElement("textarea");el.value=url;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);setCopied(true);setTimeout(()=>setCopied(false),2000);
+                }
+              };
+              doCopy();
+            }} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:"#fff",fontSize:14,cursor:"pointer",fontWeight:800,marginBottom:10}}>{copied?"✓ Copiado!":"📋 Copiar link"}</button>
           </div>
         )}
         <button onClick={onClose} style={{width:"100%",padding:"13px",borderRadius:14,border:"none",background:"#F5F5F5",color:C.mutedDark,fontSize:14,cursor:"pointer",fontWeight:600}}>Cerrar</button>
@@ -4670,12 +4738,15 @@ export default function App() {
     supabase.auth.getSession().then(async({data:{session}})=>{
       if(session?.user){
         setUserWithRef(session.user);setCheckingProfile(true);
-        const {data}=await supabase.from("coaches").select("name,currency").eq("id",session.user.id).single();
+        const {data}=await supabase.from("coaches").select("name,currency,sport,photo").eq("id",session.user.id).single();
         if(data?.name){
           setModeP("coach");setOnboardedP(true);if(data.currency)setCUR(data.currency);
+          setCoachProfileRaw({name:data.name,sport:data.sport||"",photo:data.photo||null,currency:data.currency||"₲"});
           try{await loadData(session.user.id);}catch(e){console.error(e);}
         } else {
-          setModeP("coach_new");setOnboardedP(false);
+          const {data:sa}=await supabase.from("student_auth").select("*").eq("id",session.user.id).single();
+          if(sa){try{await loadData(sa.coach_id);}catch(e){}setModeP("student_portal");}
+          else{setModeP("coach_new");setOnboardedP(false);}
         }
         setCheckingProfile(false);
       }
@@ -5122,17 +5193,33 @@ export default function App() {
     <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column"}}>
       <AuthFlow onLogin={async(u)=>{
         setUserWithRef(u);setCheckingProfile(true);
-        const {data}=await supabase.from("coaches").select("name,currency").eq("id",u.id).single();
+        const {data}=await supabase.from("coaches").select("name,currency,sport,photo").eq("id",u.id).single();
         if(data?.name){
           setModeP("coach");setOnboardedP(true);if(data.currency)setCUR(data.currency);
+          setCoachProfileRaw({name:data.name,sport:data.sport||"",photo:data.photo||null,currency:data.currency||"₲"});
           try{await loadData(u.id);}catch(e){console.error(e);}
         } else {
           setModeP("coach_new");setOnboardedP(false);
         }
         setCheckingProfile(false);
+      }} onStudentLogin={async(u,inviteInfo)=>{
+        setUserWithRef(u);setCheckingProfile(true);
+        try{await loadData(inviteInfo.coach_id);}catch(e){}
+        setModeP("student_portal");
+        setCheckingProfile(false);
       }}/>
     </div>
   );
+
+  if(mode==="student_portal"){
+    // Find student data from loaded students
+    const studentData=students.find(s=>s.email===user?.email)||students[0];
+    return (
+      <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden"}}>
+        <StudentApp student={studentData||{id:0,name:"Alumno",avatar:"A",sport:"",combos:[]}} onExit={async()=>{await supabase.auth.signOut();setUserWithRef(null);setMode(null);localStorage.clear();}} classes={classes} notifications={notifications} sendNotification={sendNotification}/>
+      </div>
+    );
+  }
 
   if(mode==="student_new") return (
     <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden"}}>
@@ -5158,7 +5245,8 @@ export default function App() {
       <div key={"cur-"+currency} style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",position:"relative",overflow:"hidden",paddingBottom:"calc(64px + env(safe-area-inset-bottom, 34px))"}}>
         {tab==="dashboard"&&isFirstTime&&<EmptyDashboard onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)}/>}
         {tab==="dashboard"&&!isFirstTime&&<Dashboard students={students} classes={classes} onNavigate={handleNavigate} onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)} expenses={expenses} coachProfile={coachProfile}/>}
-        {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={classes} onInvite={()=>setShowInvite(true)}/>}
+        {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={classes} onInvite={()=>setShowInvite(true)} userId={user?.id} onInviteStudent={(s)=>setInviteTarget(s)}/>}
+        {inviteTarget&&<InviteModal student={inviteTarget} userId={user?.id} onClose={()=>setInviteTarget(null)}/>}
         {tab==="agenda"&&<Agenda students={students} classes={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)}/>}
         {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification}/>}
         {tab==="cobros"&&<Finances students={students} classes={classes} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance}/>}
