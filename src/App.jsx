@@ -2404,8 +2404,25 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
     </div>
   );
 
-  // Sort students — unread first
-  const sortedStudents=[...students].sort((a,b)=>(unreadChats[b.id]||0)-(unreadChats[a.id]||0));
+  const [lastMsgTime,setLastMsgTime]=useState({});
+
+  useEffect(()=>{
+    if(!userId) return;
+    supabase.from("messages").select("student_id,created_at").eq("coach_id",userId).order("created_at",{ascending:false})
+      .then(({data})=>{
+        const times={};
+        (data||[]).forEach(m=>{if(!times[m.student_id])times[m.student_id]=m.created_at;});
+        setLastMsgTime(times);
+      });
+  },[userId]);
+
+  // Sort students — unread first, then by most recent message
+  const sortedStudents=[...students].sort((a,b)=>{
+    const ua=unreadChats[a.id]||0, ub=unreadChats[b.id]||0;
+    if(ua!==ub) return ub-ua;
+    const ta=lastMsgTime[a.id]||"", tb=lastMsgTime[b.id]||"";
+    return tb.localeCompare(ta);
+  });
   return (
     <div style={{flex:1,overflowY:"auto",background:C.bg}}>
       <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"16px 16px 24px"}}>
