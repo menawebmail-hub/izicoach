@@ -2344,6 +2344,17 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
   const [msgs,setMsgs]=useState([]);
   const [isAlert,setIsAlert]=useState(false);
   const [loading,setLoading]=useState(false);
+  const [lastMsgTime,setLastMsgTime]=useState({});
+
+  useEffect(()=>{
+    if(!userId) return;
+    supabase.from("messages").select("student_id,created_at").eq("coach_id",userId).order("created_at",{ascending:false})
+      .then(({data})=>{
+        const times={};
+        (data||[]).forEach(m=>{if(!times[m.student_id])times[m.student_id]=m.created_at;});
+        setLastMsgTime(times);
+      });
+  },[userId]);
 
   useEffect(()=>{
     if(!active||!userId) return;
@@ -2403,18 +2414,6 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
       </div>
     </div>
   );
-
-  const [lastMsgTime,setLastMsgTime]=useState({});
-
-  useEffect(()=>{
-    if(!userId) return;
-    supabase.from("messages").select("student_id,created_at").eq("coach_id",userId).order("created_at",{ascending:false})
-      .then(({data})=>{
-        const times={};
-        (data||[]).forEach(m=>{if(!times[m.student_id])times[m.student_id]=m.created_at;});
-        setLastMsgTime(times);
-      });
-  },[userId]);
 
   // Sort students — unread first, then by most recent message
   const sortedStudents=[...students].sort((a,b)=>{
