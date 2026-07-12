@@ -4791,10 +4791,11 @@ export default function App() {
                 if(s.length>0){setStudentsRaw(s);lsSet("izi_students",s);}
                 if(cl.length>0){setClassesRaw(cl);lsSet("izi_classes",cl);}
               }
-            }catch(e){}
+            }catch(e){console.error("student load error:",e);}
             setModeP("student_portal");
+            setCheckingProfile(false);
           }
-          else{setModeP("coach_new");setOnboardedP(false);}
+          else{setModeP("coach_new");setOnboardedP(false);setCheckingProfile(false);}
         }
         setCheckingProfile(false);
       }
@@ -5212,7 +5213,8 @@ export default function App() {
     {id:"cobros",label:"Cobros"},{id:"finanzas",label:"Finanzas"},
   ];
 
-  if(loadingAuth||checkingProfile) return (
+  if(loadingAuth||checkingProfile){
+    return (
     <div style={{width:"100vw",height:"100vh",position:"fixed",top:0,left:0,display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",zIndex:9999}}>
       <div style={{textAlign:"center",color:"#fff"}}>
         <style>{`
@@ -5236,6 +5238,7 @@ export default function App() {
       </div>
     </div>
   );
+  }
 
   if(!user&&!mode) return (
     <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column"}}>
@@ -5251,10 +5254,9 @@ export default function App() {
         }
         setCheckingProfile(false);
       }} onStudentLogin={async(u,inviteInfo)=>{
-        setUserWithRef(u);setCheckingProfile(true);
+        setUserWithRef(u);setCheckingProfile(true);setLoadingAuth(false);
         lsSet("izi_student_coach_id", inviteInfo.coach_id);
         lsSet("izi_student_id", inviteInfo.student_id);
-        // Load coach data directly from Supabase using coach_id
         try{
           const {data}=await supabase.from("coach_data").select("*").eq("coach_id",inviteInfo.coach_id).single();
           if(data){
@@ -5272,16 +5274,7 @@ export default function App() {
 
   if(mode==="student_portal"){
     const storedStudentId=parseInt(localStorage.getItem("izi_student_id")||"0");
-    const studentData=students.find(s=>s.id===storedStudentId)||students.find(s=>s.email===user?.email)||students[0];
-    if(students.length===0) return (
-      <div style={{width:"100vw",height:"100vh",position:"fixed",top:0,left:0,display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",zIndex:9999}}>
-        <div style={{textAlign:"center",color:"#fff"}}>
-          <style>{`@keyframes iziBounce{0%,100%{transform:scale(1)}50%{transform:scale(1.12)}}@keyframes iziDot{0%,80%,100%{transform:scale(0.4);opacity:0.3}40%{transform:scale(1);opacity:1}}`}</style>
-          <div style={{fontSize:42,fontWeight:900,letterSpacing:-2,marginBottom:20,animation:"iziBounce 1.5s ease-in-out infinite"}}>izi<span style={{color:"#65CE5A"}}>coach</span></div>
-          <div style={{display:"flex",gap:8,justifyContent:"center"}}>{[0,1,2].map(i=>(<div key={i} style={{width:10,height:10,borderRadius:"50%",background:"#65CE5A",animation:`iziDot 1.2s ease-in-out ${i*0.2}s infinite`}}/>))}</div>
-        </div>
-      </div>
-    );
+    const studentData=students.find(s=>s.id===storedStudentId)||students.find(s=>s.email===user?.email)||students[0]||{id:0,name:user?.email||"Alumno",avatar:"A",sport:"",combos:[]};
     return (
       <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden"}}>
         <StudentApp student={studentData||{id:0,name:"Alumno",avatar:"A",sport:"",combos:[]}} onExit={async()=>{await supabase.auth.signOut();setUserWithRef(null);setMode(null);localStorage.clear();}} classes={classes} notifications={notifications} sendNotification={sendNotification}/>
