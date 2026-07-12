@@ -4745,7 +4745,12 @@ export default function App() {
           try{await loadData(session.user.id);}catch(e){console.error(e);}
         } else {
           const {data:sa}=await supabase.from("student_auth").select("*").eq("id",session.user.id).single();
-          if(sa){try{await loadData(sa.coach_id);}catch(e){}setModeP("student_portal");}
+          if(sa){
+            lsSet("izi_student_coach_id", sa.coach_id);
+            lsSet("izi_student_id", sa.student_id);
+            try{await loadData(sa.coach_id);}catch(e){}
+            setModeP("student_portal");
+          }
           else{setModeP("coach_new");setOnboardedP(false);}
         }
         setCheckingProfile(false);
@@ -5204,6 +5209,8 @@ export default function App() {
         setCheckingProfile(false);
       }} onStudentLogin={async(u,inviteInfo)=>{
         setUserWithRef(u);setCheckingProfile(true);
+        lsSet("izi_student_coach_id", inviteInfo.coach_id);
+        lsSet("izi_student_id", inviteInfo.student_id);
         try{await loadData(inviteInfo.coach_id);}catch(e){}
         setModeP("student_portal");
         setCheckingProfile(false);
@@ -5212,8 +5219,8 @@ export default function App() {
   );
 
   if(mode==="student_portal"){
-    // Find student data from loaded students
-    const studentData=students.find(s=>s.email===user?.email)||students[0];
+    const storedStudentId=parseInt(localStorage.getItem("izi_student_id")||"0");
+    const studentData=students.find(s=>s.id===storedStudentId)||students.find(s=>s.email===user?.email)||students[0];
     return (
       <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden"}}>
         <StudentApp student={studentData||{id:0,name:"Alumno",avatar:"A",sport:"",combos:[]}} onExit={async()=>{await supabase.auth.signOut();setUserWithRef(null);setMode(null);localStorage.clear();}} classes={classes} notifications={notifications} sendNotification={sendNotification}/>
