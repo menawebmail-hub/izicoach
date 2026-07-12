@@ -4783,7 +4783,15 @@ export default function App() {
           if(sa){
             lsSet("izi_student_coach_id", sa.coach_id);
             lsSet("izi_student_id", sa.student_id);
-            try{await loadData(sa.coach_id);}catch(e){}
+            try{
+              const {data:cd}=await supabase.from("coach_data").select("*").eq("coach_id",sa.coach_id).single();
+              if(cd){
+                const tryP=(s,f=[])=>{try{const p=JSON.parse(s);return Array.isArray(p)?p:f;}catch{return f;}};
+                const s=tryP(cd.students);const cl=tryP(cd.classes);
+                if(s.length>0){setStudentsRaw(s);lsSet("izi_students",s);}
+                if(cl.length>0){setClassesRaw(cl);lsSet("izi_classes",cl);}
+              }
+            }catch(e){}
             setModeP("student_portal");
           }
           else{setModeP("coach_new");setOnboardedP(false);}
@@ -5246,7 +5254,16 @@ export default function App() {
         setUserWithRef(u);setCheckingProfile(true);
         lsSet("izi_student_coach_id", inviteInfo.coach_id);
         lsSet("izi_student_id", inviteInfo.student_id);
-        try{await loadData(inviteInfo.coach_id);}catch(e){}
+        // Load coach data directly from Supabase using coach_id
+        try{
+          const {data}=await supabase.from("coach_data").select("*").eq("coach_id",inviteInfo.coach_id).single();
+          if(data){
+            const tryP=(s,f=[])=>{try{const p=JSON.parse(s);return Array.isArray(p)?p:f;}catch{return f;}};
+            const s=tryP(data.students);const cl=tryP(data.classes);
+            if(s.length>0){setStudentsRaw(s);lsSet("izi_students",s);}
+            if(cl.length>0){setClassesRaw(cl);lsSet("izi_classes",cl);}
+          }
+        }catch(e){console.error(e);}
         setModeP("student_portal");
         setCheckingProfile(false);
       }}/>
