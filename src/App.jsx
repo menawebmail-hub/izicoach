@@ -169,7 +169,7 @@ function WhiteCard({ children, style, onClick }) {
   return <div onClick={onClick} style={{background:C.white,borderRadius:16,padding:"14px 16px",boxShadow:"0 2px 12px rgba(44,94,247,0.08)",border:"1px solid rgba(44,94,247,0.06)",marginBottom:10,...style}}>{children}</div>;
 }
 
-function NavBar({ tabs, active, onSelect, zIdx=0 }) {
+function NavBar({ tabs, active, onSelect, zIdx=0, badges={} }) {
   const ICONS = {
     dashboard:(c)=>(<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z"/><path d="M9 21V12h6v9"/></svg>),
     students:(c)=>(<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="8" cy="8" r="3.5"/><path d="M2 20c0-3.5 2.7-6 6-6s6 2.5 6 6"/><circle cx="17" cy="8" r="3"/><path d="M22 20c0-3-2-5-5-5"/></svg>),
@@ -183,11 +183,13 @@ function NavBar({ tabs, active, onSelect, zIdx=0 }) {
     <div style={{display:"flex",borderTop:"1px solid rgba(44,94,247,0.07)",background:C.white,paddingBottom:"env(safe-area-inset-bottom,8px)",position:"fixed",bottom:0,left:0,right:0,zIndex:Math.max(zIdx,100),boxShadow:"0 -2px 16px rgba(44,94,247,0.06)"}}>
       {tabs.map(t=>{
         const isActive=active===t.id; const col=isActive?C.blue2:"#9BACCB";
+        const badge=badges[t.id]||0;
         return (
           <button key={t.id} onClick={()=>onSelect(t.id)} style={{flex:1,background:"none",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"8px 0 6px",position:"relative"}}>
             {isActive&&<div style={{position:"absolute",top:0,left:"50%",transform:"translateX(-50%)",width:28,height:3,borderRadius:"0 0 4px 4px",background:C.blue2}}></div>}
-            <div style={{width:38,height:38,borderRadius:12,background:isActive?"linear-gradient(135deg,"+C.blueL+",#D0E4FF)":"transparent",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.15s"}}>
+            <div style={{width:38,height:38,borderRadius:12,background:isActive?"linear-gradient(135deg,"+C.blueL+",#D0E4FF)":"transparent",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.15s",position:"relative"}}>
               {ICONS[t.id]?ICONS[t.id](col):<span style={{fontSize:20,color:col}}>{t.icon}</span>}
+              {badge>0&&<div style={{position:"absolute",top:-2,right:-2,background:"#FF4757",borderRadius:"50%",minWidth:16,height:16,fontSize:9,fontWeight:800,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",border:"2px solid #fff",padding:"0 2px"}}>{badge>9?"9+":badge}</div>}
             </div>
             <span style={{fontSize:10,color:col,fontWeight:isActive?700:500,letterSpacing:0.1}}>{t.label}</span>
           </button>
@@ -2335,23 +2337,23 @@ function CreateGroupScreen({ students, onClose, onCreate }) {
   );
 }
 
-function Chat({ students, initialTarget, onClearTarget, sendNotification, userId }) {
+function Chat({ students, initialTarget, onClearTarget, sendNotification, userId, unreadChats={}, onMarkRead }) {
   const [view,setView]=useState(initialTarget?"chat":"list");
   const [active,setActive]=useState(initialTarget||null);
   const [msg,setMsg]=useState("");
   const [msgs,setMsgs]=useState([]);
   const [isAlert,setIsAlert]=useState(false);
   const [loading,setLoading]=useState(false);
-  const msgsEndRef=useState(null)[0];
 
-  // Load messages when active student changes
   useEffect(()=>{
     if(!active||!userId) return;
     setLoading(true);
     const studentId=active.id;
+    // Mark as read
+    supabase.from("messages").update({read:true}).eq("coach_id",userId).eq("student_id",studentId).eq("from_coach",false);
+    onMarkRead&&onMarkRead(studentId);
     supabase.from("messages").select("*").eq("coach_id",userId).eq("student_id",studentId).order("created_at",{ascending:true})
       .then(({data})=>{setMsgs(data||[]);setLoading(false);});
-    // Subscribe to realtime
     const channel=supabase.channel("chat_"+userId+"_"+studentId)
       .on("postgres_changes",{event:"INSERT",schema:"public",table:"messages",filter:`coach_id=eq.${userId}`},(payload)=>{
         if(payload.new.student_id===studentId) setMsgs(p=>[...p,payload.new]);
@@ -2361,10 +2363,9 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
 
   const send=async()=>{
     if(!msg.trim()||!active||!userId) return;
-    const newMsg={coach_id:userId,student_id:active.id,text:msg,from_coach:true,read:false};
-    setMsg("");
-    await supabase.from("messages").insert(newMsg);
-    if(isAlert&&sendNotification) sendNotification(msg,"alert");
+    const text=msg;setMsg("");
+    await supabase.from("messages").insert({coach_id:userId,student_id:active.id,text,from_coach:true,read:false,is_alert:isAlert});
+    if(isAlert&&sendNotification) sendNotification(text,"alert");
     setIsAlert(false);
   };
 
@@ -2382,15 +2383,18 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
         {loading&&<div style={{textAlign:"center",color:C.mutedDark,padding:20}}>Cargando...</div>}
         {msgs.map((m,i)=>(
           <div key={m.id||i} style={{display:"flex",justifyContent:m.from_coach?"flex-end":"flex-start"}}>
-            <div style={{maxWidth:"75%",padding:"10px 14px",fontSize:14,borderRadius:m.from_coach?"18px 18px 4px 18px":"18px 18px 18px 4px",background:m.from_coach?"linear-gradient(135deg,"+C.blue2+","+C.blue3+")":C.white,color:m.from_coach?C.white:C.text}}>
-              {m.text}
-              <div style={{fontSize:10,opacity:.7,marginTop:4,textAlign:"right"}}>{new Date(m.created_at).toLocaleTimeString("es",{hour:"2-digit",minute:"2-digit"})}</div>
+            <div style={{maxWidth:"75%"}}>
+              {m.is_alert&&m.from_coach&&<div style={{fontSize:10,color:"#E65100",fontWeight:700,marginBottom:2}}>📢 ALERTA</div>}
+              <div style={{padding:"10px 14px",fontSize:14,borderRadius:m.from_coach?"18px 18px 4px 18px":"18px 18px 18px 4px",background:m.from_coach?m.is_alert?"#fdf3e2":"linear-gradient(135deg,"+C.blue2+","+C.blue3+")":C.white,color:m.from_coach?m.is_alert?"#5D3A00":C.white:C.text,border:m.is_alert?"1px solid #F5C842":"none"}}>
+                {m.text}
+                <div style={{fontSize:10,opacity:.7,marginTop:4,textAlign:"right"}}>{new Date(m.created_at).toLocaleTimeString("es",{hour:"2-digit",minute:"2-digit"})}</div>
+              </div>
             </div>
           </div>
         ))}
       </div>
       <div style={{padding:"8px 16px",background:C.white,borderTop:"1px solid "+C.border}}>
-        {isAlert&&<div style={{background:"#FFF3E0",borderRadius:8,padding:"6px 12px",marginBottom:6,fontSize:12,color:"#E65100",fontWeight:600}}>📢 Esto se enviará como alerta</div>}
+        {isAlert&&<div style={{background:"#FFF3E0",borderRadius:8,padding:"6px 12px",marginBottom:6,fontSize:12,color:"#E65100",fontWeight:600}}>📢 Esto se enviará como alerta al alumno</div>}
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
           <button onClick={()=>setIsAlert(v=>!v)} style={{background:isAlert?"#FF8F00":C.blueL,border:"none",borderRadius:"50%",width:36,height:36,cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>📢</button>
           <input value={msg} onChange={e=>setMsg(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} placeholder={isAlert?"Escribí la alerta...":"Escribe un mensaje..."} style={{flex:1,padding:"10px 16px",borderRadius:24,border:"1.5px solid "+(isAlert?"#FF8F00":C.border),fontSize:14,background:C.bg,color:C.text,outline:"none"}}/>
@@ -2400,23 +2404,29 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
     </div>
   );
 
+  // Sort students — unread first
+  const sortedStudents=[...students].sort((a,b)=>(unreadChats[b.id]||0)-(unreadChats[a.id]||0));
   return (
     <div style={{flex:1,overflowY:"auto",background:C.bg}}>
       <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"16px 16px 24px"}}>
         <div style={{fontSize:18,fontWeight:800,color:C.white}}>Mensajes</div>
       </div>
       <div style={{padding:"12px 12px 80px"}}>
-        {students.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:C.mutedDark}}>No hay alumnos aún</div>}
-        {students.map(s=>(
-          <div key={s.id} onClick={()=>{setActive(s);setView("chat");}} style={{background:C.white,borderRadius:14,padding:"12px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:12,cursor:"pointer",boxShadow:"0 2px 8px rgba(44,94,247,0.06)"}}>
-            <div style={{width:44,height:44,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,color:C.white,flexShrink:0}}>{s.avatar||"?"}</div>
-            <div style={{flex:1}}>
-              <div style={{fontWeight:700,fontSize:14,color:C.text}}>{s.name}</div>
-              <div style={{fontSize:12,color:C.mutedDark,marginTop:2}}>Toca para chatear</div>
+        {sortedStudents.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:C.mutedDark}}>No hay alumnos aún</div>}
+        {sortedStudents.map(s=>{
+          const unread=unreadChats[s.id]||0;
+          return (
+            <div key={s.id} onClick={()=>{setActive(s);setView("chat");}} style={{background:C.white,borderRadius:14,padding:"12px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:12,cursor:"pointer",boxShadow:unread?"0 2px 12px rgba(255,71,87,0.15)":"0 2px 8px rgba(44,94,247,0.06)",border:unread?"1.5px solid #FF4757":"1.5px solid transparent"}}>
+              <div style={{width:44,height:44,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,color:C.white,flexShrink:0}}>{s.avatar||"?"}</div>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,fontSize:14,color:C.text}}>{s.name}</div>
+                <div style={{fontSize:12,color:C.mutedDark,marginTop:2}}>{unread?"Nuevo mensaje":"Toca para chatear"}</div>
+              </div>
+              {unread>0&&<div style={{background:"#FF4757",borderRadius:"50%",minWidth:22,height:22,fontSize:11,fontWeight:800,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",padding:"0 4px"}}>{unread}</div>}
+              {!unread&&<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.mutedDark} strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>}
             </div>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.mutedDark} strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -4295,7 +4305,8 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                 <div key={m.id||i} style={{display:"flex",justifyContent:m.from_coach?"flex-start":"flex-end",gap:8,alignItems:"flex-end"}}>
                   {m.from_coach&&<div style={{width:28,height:28,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:C.white,flexShrink:0}}>E</div>}
                   <div style={{maxWidth:"72%"}}>
-                    <div style={{padding:"10px 14px",fontSize:13,borderRadius:m.from_coach?"18px 18px 18px 4px":"18px 18px 4px 18px",background:m.from_coach?C.white:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",color:m.from_coach?C.text:C.white}}>
+                    {m.is_alert&&m.from_coach&&<div style={{fontSize:10,color:"#E65100",fontWeight:700,marginBottom:2}}>📢 ALERTA</div>}
+                    <div style={{padding:"10px 14px",fontSize:13,borderRadius:m.from_coach?"18px 18px 18px 4px":"18px 18px 4px 18px",background:m.from_coach?m.is_alert?"#fdf3e2":C.white:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",color:m.from_coach?m.is_alert?"#5D3A00":C.text:C.white,border:m.is_alert?"1px solid #F5C842":"none"}}>
                       {m.text}
                     </div>
                     <div style={{fontSize:10,color:C.mutedDark,marginTop:2,textAlign:m.from_coach?"left":"right"}}>{m.created_at?new Date(m.created_at).toLocaleTimeString("es",{hour:"2-digit",minute:"2-digit"}):""}</div>
@@ -4717,6 +4728,27 @@ export default function App() {
   const [showNewClass,setShowNewClass]=useState(false);
   const [showNewStudent,setShowNewStudent]=useState(false);
   const [chatTarget,setChatTarget]=useState(null);
+  const [unreadChats,setUnreadChats]=useState({});
+
+  // Subscribe to unread messages
+  useEffect(()=>{
+    if(!user?.id) return;
+    // Load unread counts
+    supabase.from("messages").select("student_id").eq("coach_id",user.id).eq("read",false).eq("from_coach",false)
+      .then(({data})=>{
+        const counts={};
+        (data||[]).forEach(m=>{counts[m.student_id]=(counts[m.student_id]||0)+1;});
+        setUnreadChats(counts);
+      });
+    // Realtime subscription for new messages
+    const channel=supabase.channel("coach_inbox_"+user.id)
+      .on("postgres_changes",{event:"INSERT",schema:"public",table:"messages",filter:`coach_id=eq.${user.id}`},(payload)=>{
+        if(!payload.new.from_coach){
+          setUnreadChats(p=>({...p,[payload.new.student_id]:(p[payload.new.student_id]||0)+1}));
+        }
+      }).subscribe();
+    return ()=>supabase.removeChannel(channel);
+  },[user?.id]);
   const [showConfig,setShowConfig]=useState(false);
   const [courts,setCourtsRaw]=useState([]);
   const [packages,setPackagesRaw]=useState([]);
@@ -5347,7 +5379,7 @@ export default function App() {
         {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={classes} onInvite={()=>setShowInvite(true)} userId={user?.id} onInviteStudent={(s)=>setInviteTarget(s)}/>}
         {inviteTarget&&<InviteModal student={inviteTarget} userId={user?.id} onClose={()=>setInviteTarget(null)}/>}
         {tab==="agenda"&&<Agenda students={students} classes={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)}/>}
-        {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification} userId={user?.id}/>}
+        {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification} userId={user?.id} unreadChats={unreadChats} onMarkRead={(sid)=>setUnreadChats(p=>{const n={...p};delete n[sid];return n;})}/>}
         {tab==="cobros"&&<Finances students={students} classes={classes} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance}/>}
         {tab==="finanzas"&&<Finances students={students} classes={classes} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages}/>}
         {showNewClass&&<NewClassModal onClose={()=>{setShowNewClass(false);if(classes.length===0)setTab("agenda");}} onSave={handleSaveClass} students={students} dateLabel="Nueva clase" onCreateStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])}/>}
@@ -5428,7 +5460,7 @@ export default function App() {
           </div>
         )}
       </div>
-      <NavBar tabs={coachTabs} active={tab} onSelect={setTab} zIdx={100}/>
+      <NavBar tabs={coachTabs} active={tab} onSelect={(t)=>{setTab(t);if(t==="chat")setUnreadChats({});}} zIdx={100} badges={{chat:Object.values(unreadChats).reduce((a,b)=>a+b,0)||0}}/>
     </div>
   );
 }
