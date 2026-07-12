@@ -5259,6 +5259,7 @@ export default function App() {
         localStorage.setItem("izi_student_id_raw", String(inviteInfo.student_id));
         try{
           const {data}=await supabase.from("coach_data").select("*").eq("coach_id",inviteInfo.coach_id).single();
+          console.log("coach_data:", data?.coach_id, "students length:", data?.students?.length);
           if(data){
             const tryP=(s,f=[])=>{try{const p=JSON.parse(s);return Array.isArray(p)?p:f;}catch{return f;}};
             const s=tryP(data.students);const cl=tryP(data.classes);
