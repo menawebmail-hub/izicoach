@@ -2434,12 +2434,14 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
           return (
             <div key={s.id} onClick={()=>{setActive(s);setView("chat");}} style={{background:C.white,borderRadius:14,padding:"12px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:12,cursor:"pointer",boxShadow:unread?"0 2px 12px rgba(255,71,87,0.15)":"0 2px 8px rgba(44,94,247,0.06)",border:unread?"1.5px solid #FF4757":"1.5px solid transparent"}}>
               <div style={{width:44,height:44,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,color:C.white,flexShrink:0}}>{s.avatar||"?"}</div>
-              <div style={{flex:1}}>
-                <div style={{fontWeight:700,fontSize:14,color:C.text}}>{s.name}</div>
-                <div style={{fontSize:12,color:C.mutedDark,marginTop:2}}>{unread?"Nuevo mensaje":"Toca para chatear"}</div>
+              <div style={{flex:1,textAlign:"left"}}>
+                <div style={{fontWeight:700,fontSize:14,color:C.text,textAlign:"left"}}>{s.name}</div>
+                <div style={{fontSize:12,color:unread?"#FF4757":C.mutedDark,marginTop:2,textAlign:"left",fontWeight:unread?600:400}}>{unread?"Nuevo mensaje":"Toca para chatear"}</div>
               </div>
-              {unread>0&&<div style={{background:"#FF4757",borderRadius:"50%",minWidth:22,height:22,fontSize:11,fontWeight:800,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",padding:"0 4px"}}>{unread}</div>}
-              {!unread&&<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.mutedDark} strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>}
+              {unread>0
+                ?<div style={{background:"#FF4757",borderRadius:"50%",minWidth:24,height:24,fontSize:12,fontWeight:800,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",padding:"0 4px",flexShrink:0}}>{unread>9?"9+":unread}</div>
+                :<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.mutedDark} strokeWidth="2" style={{flexShrink:0}}><polyline points="9 18 15 12 9 6"/></svg>
+              }
             </div>
           );
         })}
