@@ -4078,7 +4078,10 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
   const send=async()=>{
     if(!msg.trim()||!coachId||!student?.id) return;
     const text=msg;setMsg("");
-    await supabase.from("messages").insert({coach_id:coachId,student_id:student.id,text,from_coach:false,read:false});
+    const payload={coach_id:coachId,student_id:student.id,text,from_coach:false,read:false};
+    console.log("Sending message:", payload);
+    const {error}=await supabase.from("messages").insert(payload);
+    if(error) console.error("Message send error:", error);
   };
   // Attendance log from classes
   const attLogs=[];
