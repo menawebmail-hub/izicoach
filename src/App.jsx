@@ -4070,6 +4070,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
   const [student,setStudent]=useState(initialStudent);
   const [msg,setMsg]=useState("");
   const [msgs,setMsgs]=useState([]);
+  const [alerts,setAlerts]=useState([]);
   const [oldPass,setOldPass]=useState(""); const [newPass,setNewPass]=useState(""); const [newPass2,setNewPass2]=useState("");
   const combo=getCombo(student); const rem=getRem(student);
 
@@ -4077,23 +4078,24 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
   useEffect(()=>{
     if(!coachId||!student?.id) return;
     supabase.from("messages").select("*").eq("coach_id",coachId).eq("student_id",student.id).order("created_at",{ascending:true})
-      .then(({data})=>setMsgs(data||[]));
+      .then(({data})=>{
+        setMsgs(data||[]);
+        setAlerts((data||[]).filter(m=>m.is_alert&&m.from_coach).slice(-3).reverse());
+      });
     const channel=supabase.channel("student_chat_"+coachId+"_"+student.id)
       .on("postgres_changes",{event:"INSERT",schema:"public",table:"messages",filter:`coach_id=eq.${coachId}`},(payload)=>{
-        if(payload.new.student_id===student.id) setMsgs(p=>[...p,payload.new]);
+        if(payload.new.student_id===student.id){
+          setMsgs(p=>[...p,payload.new]);
+          if(payload.new.is_alert&&payload.new.from_coach) setAlerts(p=>[payload.new,...p].slice(0,3));
+        }
       }).subscribe();
     return ()=>supabase.removeChannel(channel);
   },[coachId,student?.id]);
-
   const send=async()=>{
     if(!msg.trim()||!coachId||!student?.id) return;
     const text=msg;setMsg("");
-    const payload={coach_id:coachId,student_id:student.id,text,from_coach:false,read:false};
-    console.log("Sending message:", payload);
-    const {error}=await supabase.from("messages").insert(payload);
-    if(error) console.error("Message send error:", error);
+    await supabase.from("messages").insert({coach_id:coachId,student_id:student.id,text,from_coach:false,read:false,is_alert:false});
   };
-  // Attendance log from classes
   const attLogs=[];
   classes.forEach(cls=>{
     if(!cls.students||!cls.students.includes(student.id)) return;
@@ -4225,12 +4227,12 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
               </button>
               {/* Alerts */}
               {alerts.length>0&&alerts.map((a,i)=>(
-                <div key={i} style={{background:"#fdf3e2",borderRadius:16,padding:"14px 16px",marginBottom:10,display:"flex",gap:12,alignItems:"flex-start",boxShadow:"0 4px 14px rgba(255,107,53,0.25)"}}>
-                  <div style={{width:38,height:38,borderRadius:10,background:"#F5C84230",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:20}}>📢</div>
-                  <div>
-                    <div style={{fontSize:11,fontWeight:800,color:"rgba(255,255,255,0.8)",letterSpacing:0.5,marginBottom:3}}>AVISO DEL ENTRENADOR</div>
+                <div key={a.id||i} style={{background:"#fdf3e2",borderRadius:16,padding:"14px 16px",marginBottom:10,display:"flex",gap:12,alignItems:"flex-start",border:"1px solid #F5C842"}}>
+                  <div style={{width:38,height:38,borderRadius:10,background:"#fff",border:"1px solid #F5C842",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:20}}>📢</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:11,fontWeight:800,color:"#E65100",letterSpacing:0.5,marginBottom:3}}>AVISO DEL ENTRENADOR</div>
                     <div style={{fontSize:13,color:"#5D3A00",fontWeight:600,lineHeight:1.4}}>{a.text}</div>
-                    <div style={{fontSize:10,color:"#9E6B00",marginTop:4}}>{a.time}</div>
+                    <div style={{fontSize:10,color:"#9E6B00",marginTop:4}}>{a.created_at?new Date(a.created_at).toLocaleDateString("es",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):""}</div>
                   </div>
                 </div>
               ))}
