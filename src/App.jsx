@@ -4782,7 +4782,7 @@ export default function App() {
           const {data:sa}=await supabase.from("student_auth").select("*").eq("id",session.user.id).single();
           if(sa){
             lsSet("izi_student_coach_id", sa.coach_id);
-            lsSet("izi_student_id", sa.student_id);
+            localStorage.setItem("izi_student_id_raw", String(sa.student_id));
             try{
               const {data:cd}=await supabase.from("coach_data").select("*").eq("coach_id",sa.coach_id).single();
               if(cd){
@@ -5256,7 +5256,7 @@ export default function App() {
       }} onStudentLogin={async(u,inviteInfo)=>{
         setUserWithRef(u);setCheckingProfile(true);setLoadingAuth(false);
         lsSet("izi_student_coach_id", inviteInfo.coach_id);
-        lsSet("izi_student_id", inviteInfo.student_id);
+        localStorage.setItem("izi_student_id_raw", String(inviteInfo.student_id));
         try{
           const {data}=await supabase.from("coach_data").select("*").eq("coach_id",inviteInfo.coach_id).single();
           if(data){
@@ -5273,8 +5273,11 @@ export default function App() {
   );
 
   if(mode==="student_portal"){
-    const storedStudentId=parseInt(localStorage.getItem("izi_student_id")||"0");
-    const studentData=students.find(s=>s.id===storedStudentId)||students.find(s=>s.email===user?.email)||students[0]||{id:0,name:user?.email||"Alumno",avatar:"A",sport:"",combos:[]};
+    const storedStudentIdRaw=localStorage.getItem("izi_student_id_raw")||localStorage.getItem("izi_student_id")||"0";
+    const studentData=students.find(s=>String(s.id)===storedStudentIdRaw)||
+                      students.find(s=>s.email&&s.email===user?.email)||
+                      students[0]||
+                      {id:0,name:user?.email||"Alumno",avatar:"A",sport:"",combos:[]};
     return (
       <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden"}}>
         <StudentApp student={studentData||{id:0,name:"Alumno",avatar:"A",sport:"",combos:[]}} onExit={async()=>{await supabase.auth.signOut();setUserWithRef(null);setMode(null);localStorage.clear();}} classes={classes} notifications={notifications} sendNotification={sendNotification}/>
