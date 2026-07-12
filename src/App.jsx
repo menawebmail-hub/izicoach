@@ -4097,14 +4097,14 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
         <div style={{display:"flex",alignItems:"center",gap:12}}>
           <div style={{position:"relative"}}>
             {student.photo
-              ?<img src={student.photo} style={{width:52,height:52,borderRadius:"50%",objectFit:"cover",border:"3px solid rgba(255,255,255,0.4)"}}/>
-              :<div style={{width:52,height:52,borderRadius:"50%",background:"rgba(255,255,255,0.2)",border:"3px solid rgba(255,255,255,0.3)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,fontWeight:800,color:C.white}}>{student.avatar}</div>
+              ?<img src={student.photo} style={{width:68,height:68,borderRadius:"50%",objectFit:"cover",border:"3px solid rgba(255,255,255,0.4)"}}/>
+              :<div style={{width:68,height:68,borderRadius:"50%",background:"rgba(255,255,255,0.2)",border:"3px solid rgba(255,255,255,0.3)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,fontWeight:800,color:C.white}}>{student.avatar}</div>
             }
             <div style={{position:"absolute",bottom:0,right:0,width:14,height:14,borderRadius:"50%",background:"#65CE5A",border:"2px solid #fff"}}></div>
           </div>
-          <div style={{flex:1}}>
+          <div style={{flex:1,textAlign:"left"}}>
             <div style={{fontSize:12,color:"rgba(255,255,255,0.65)",fontWeight:600,letterSpacing:0.5}}>PORTAL ALUMNO</div>
-            <div style={{fontSize:18,fontWeight:900,color:C.white,letterSpacing:-0.3}}>{student.name}</div>
+            <div style={{fontSize:20,fontWeight:900,color:C.white,letterSpacing:-0.3,textAlign:"left"}}>{student.name}</div>
             {student.sport&&<div style={{fontSize:12,color:"rgba(255,255,255,0.7)",fontWeight:500}}>{student.sport}</div>}
           </div>
           <button onClick={()=>setTab("chat")} style={{position:"relative",background:"rgba(255,255,255,0.18)",border:"1.5px solid rgba(255,255,255,0.30)",borderRadius:14,padding:"10px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:6,backdropFilter:"blur(8px)"}}>
@@ -4196,12 +4196,12 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
               </button>
               {/* Alerts */}
               {alerts.length>0&&alerts.map((a,i)=>(
-                <div key={i} style={{background:"linear-gradient(135deg,#FF6B35,#FFA726)",borderRadius:16,padding:"14px 16px",marginBottom:10,display:"flex",gap:12,alignItems:"flex-start",boxShadow:"0 4px 14px rgba(255,107,53,0.25)"}}>
-                  <div style={{width:38,height:38,borderRadius:10,background:"rgba(255,255,255,0.25)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:20}}>📢</div>
+                <div key={i} style={{background:"#fdf3e2",borderRadius:16,padding:"14px 16px",marginBottom:10,display:"flex",gap:12,alignItems:"flex-start",boxShadow:"0 4px 14px rgba(255,107,53,0.25)"}}>
+                  <div style={{width:38,height:38,borderRadius:10,background:"#F5C84230",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:20}}>📢</div>
                   <div>
                     <div style={{fontSize:11,fontWeight:800,color:"rgba(255,255,255,0.8)",letterSpacing:0.5,marginBottom:3}}>AVISO DEL ENTRENADOR</div>
-                    <div style={{fontSize:13,color:"#fff",fontWeight:600,lineHeight:1.4}}>{a.text}</div>
-                    <div style={{fontSize:10,color:"rgba(255,255,255,0.65)",marginTop:4}}>{a.time}</div>
+                    <div style={{fontSize:13,color:"#5D3A00",fontWeight:600,lineHeight:1.4}}>{a.text}</div>
+                    <div style={{fontSize:10,color:"#9E6B00",marginTop:4}}>{a.time}</div>
                   </div>
                 </div>
               ))}
