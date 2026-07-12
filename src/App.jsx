@@ -2335,55 +2335,62 @@ function CreateGroupScreen({ students, onClose, onCreate }) {
   );
 }
 
-function Chat({ students, initialTarget, onClearTarget, sendNotification }) {
+function Chat({ students, initialTarget, onClearTarget, sendNotification, userId }) {
   const [view,setView]=useState(initialTarget?"chat":"list");
-  const [active,setActive]=useState(initialTarget?{id:"s"+initialTarget.id,name:initialTarget.name,avatar:initialTarget.avatar,isGroup:false}:null);
+  const [active,setActive]=useState(initialTarget||null);
   const [msg,setMsg]=useState("");
-  const [showCreate,setShowCreate]=useState(false);
-  const [groups,setGroups]=useState([
-    {id:"g1",name:"Grupo Mañana 🌅",avatar:"GM",lastMsg:"Canchas mojadas ⚠️",time:"08:02",isGroup:true,members:[1,5]},
-    {id:"g2",name:"Equipo Fútbol ⚽",avatar:"EF",lastMsg:"Entrenamiento 17hs",time:"Ayer",isGroup:true,members:[2]},
-  ]);
-  const [msgs,setMsgs]=useState([
-    {id:1,from:"coach",text:"Hola Martina, mañana entrenamos normal.",time:"09:15"},
-    {id:2,from:"student",text:"Perfecto, ahí estaré!",time:"09:20"},
-  ]);
+  const [msgs,setMsgs]=useState([]);
   const [isAlert,setIsAlert]=useState(false);
-  const send=()=>{
-    if(msg.trim()){
-      setMsgs(p=>[...p,{id:Date.now(),from:"coach",text:msg,time:"Ahora",type:isAlert?"alert":undefined}]);
-      if(isAlert&&sendNotification) sendNotification(msg,"alert");
-      setMsg("");setIsAlert(false);
-    }
+  const [loading,setLoading]=useState(false);
+  const msgsEndRef=useState(null)[0];
+
+  // Load messages when active student changes
+  useEffect(()=>{
+    if(!active||!userId) return;
+    setLoading(true);
+    const studentId=active.id;
+    supabase.from("messages").select("*").eq("coach_id",userId).eq("student_id",studentId).order("created_at",{ascending:true})
+      .then(({data})=>{setMsgs(data||[]);setLoading(false);});
+    // Subscribe to realtime
+    const channel=supabase.channel("chat_"+userId+"_"+studentId)
+      .on("postgres_changes",{event:"INSERT",schema:"public",table:"messages",filter:`coach_id=eq.${userId}`},(payload)=>{
+        if(payload.new.student_id===studentId) setMsgs(p=>[...p,payload.new]);
+      }).subscribe();
+    return ()=>supabase.removeChannel(channel);
+  },[active,userId]);
+
+  const send=async()=>{
+    if(!msg.trim()||!active||!userId) return;
+    const newMsg={coach_id:userId,student_id:active.id,text:msg,from_coach:true,read:false};
+    setMsg("");
+    await supabase.from("messages").insert(newMsg);
+    if(isAlert&&sendNotification) sendNotification(msg,"alert");
+    setIsAlert(false);
   };
 
-  if(showCreate) return <CreateGroupScreen students={students} onClose={()=>setShowCreate(false)} onCreate={(g)=>setGroups(p=>[g,...p])}/>;
-
-  if(view==="chat") return (
+  if(view==="chat"&&active) return (
     <div style={{flex:1,display:"flex",flexDirection:"column",background:C.bg}}>
       <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"12px 16px",display:"flex",alignItems:"center",gap:12}}>
-        <button onClick={()=>setView("list")} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:18}}>{"<"}</button>
-        <div style={{width:38,height:38,borderRadius:"50%",background:C.whiteA,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white,flexShrink:0}}>{active?active.avatar:"G"}</div>
-        <div style={{flex:1,minWidth:0}}>
-          <div style={{fontWeight:700,fontSize:14,color:C.white,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{active?active.name:""}</div>
-          <div style={{fontSize:11,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
-            {active?.isGroup&&active?.members?.length>0
-              ?active.members.map(id=>students.find(s=>s.id===id)?.name?.split(" ")[0]).filter(Boolean).join(", ")
-              :"En línea"}
-          </div>
+        <button onClick={()=>{setView("list");setActive(null);setMsgs([]);onClearTarget&&onClearTarget();}} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:18}}>{"<"}</button>
+        <div style={{width:38,height:38,borderRadius:"50%",background:C.whiteA,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white,flexShrink:0}}>{active.avatar||"?"}</div>
+        <div style={{flex:1}}>
+          <div style={{fontWeight:700,fontSize:14,color:C.white}}>{active.name}</div>
+          <div style={{fontSize:11,color:C.muted}}>En línea</div>
         </div>
       </div>
       <div style={{flex:1,overflowY:"auto",padding:"16px",display:"flex",flexDirection:"column",gap:10}}>
-        {msgs.map(m=>(
-          <div key={m.id} style={{display:"flex",justifyContent:m.from==="coach"?"flex-end":"flex-start"}}>
-            <div style={{maxWidth:"75%",padding:"10px 14px",fontSize:14,borderRadius:m.from==="coach"?"18px 18px 4px 18px":"18px 18px 18px 4px",background:m.from==="coach"?"linear-gradient(135deg,"+C.blue2+","+C.blue3+")":C.white,color:m.from==="coach"?C.white:C.text}}>
-              {m.text}<div style={{fontSize:10,opacity:.7,marginTop:4,textAlign:"right"}}>{m.time}</div>
+        {loading&&<div style={{textAlign:"center",color:C.mutedDark,padding:20}}>Cargando...</div>}
+        {msgs.map((m,i)=>(
+          <div key={m.id||i} style={{display:"flex",justifyContent:m.from_coach?"flex-end":"flex-start"}}>
+            <div style={{maxWidth:"75%",padding:"10px 14px",fontSize:14,borderRadius:m.from_coach?"18px 18px 4px 18px":"18px 18px 18px 4px",background:m.from_coach?"linear-gradient(135deg,"+C.blue2+","+C.blue3+")":C.white,color:m.from_coach?C.white:C.text}}>
+              {m.text}
+              <div style={{fontSize:10,opacity:.7,marginTop:4,textAlign:"right"}}>{new Date(m.created_at).toLocaleTimeString("es",{hour:"2-digit",minute:"2-digit"})}</div>
             </div>
           </div>
         ))}
       </div>
       <div style={{padding:"8px 16px",background:C.white,borderTop:"1px solid "+C.border}}>
-        {isAlert&&<div style={{background:"#FFF3E0",borderRadius:8,padding:"6px 12px",marginBottom:6,fontSize:12,color:"#E65100",fontWeight:600}}>📢 Esto se enviará como alerta a todos los alumnos</div>}
+        {isAlert&&<div style={{background:"#FFF3E0",borderRadius:8,padding:"6px 12px",marginBottom:6,fontSize:12,color:"#E65100",fontWeight:600}}>📢 Esto se enviará como alerta</div>}
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
           <button onClick={()=>setIsAlert(v=>!v)} style={{background:isAlert?"#FF8F00":C.blueL,border:"none",borderRadius:"50%",width:36,height:36,cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>📢</button>
           <input value={msg} onChange={e=>setMsg(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} placeholder={isAlert?"Escribí la alerta...":"Escribe un mensaje..."} style={{flex:1,padding:"10px 16px",borderRadius:24,border:"1.5px solid "+(isAlert?"#FF8F00":C.border),fontSize:14,background:C.bg,color:C.text,outline:"none"}}/>
@@ -2393,30 +2400,27 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification }) {
     </div>
   );
 
-  const chats=[...groups,...students.map(s=>({id:"s"+s.id,name:s.name,avatar:s.avatar,lastMsg:"...",time:"Ayer",isGroup:false}))];
   return (
     <div style={{flex:1,overflowY:"auto",background:C.bg}}>
-      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"16px 16px 24px",flexShrink:0}}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
-          <div style={{fontSize:18,fontWeight:800,color:C.white}}>Mensajes</div>
-          <button onClick={()=>setShowCreate(true)} style={{padding:"7px 14px",borderRadius:20,border:"none",background:"linear-gradient(135deg,"+C.green+",#66BB6A)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>+ Crear grupo</button>
-        </div>
+      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"16px 16px 24px"}}>
+        <div style={{fontSize:18,fontWeight:800,color:C.white}}>Mensajes</div>
       </div>
-      <div style={{padding:"16px",marginTop:-8}}>
-        {chats.map(c=>(
-          <WhiteCard key={c.id} style={{cursor:"pointer",marginBottom:8}} onClick={()=>{setActive(c);setView("chat");}}>
-            <div style={{display:"flex",alignItems:"center",gap:12}}>
-              <div style={{width:46,height:46,borderRadius:"50%",background:"linear-gradient(135deg,"+(c.isGroup?C.green+",#66BB6A":C.blue2+","+C.blue3)+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white}}>{c.avatar}</div>
-              <div style={{flex:1,minWidth:0}}><div style={{fontWeight:700,fontSize:14,color:C.text}}>{c.name}</div><div style={{fontSize:12,color:C.mutedDark,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.lastMsg}</div></div>
-              <div style={{fontSize:11,color:C.mutedDark,flexShrink:0}}>{c.time}</div>
+      <div style={{padding:"12px 12px 80px"}}>
+        {students.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:C.mutedDark}}>No hay alumnos aún</div>}
+        {students.map(s=>(
+          <div key={s.id} onClick={()=>{setActive(s);setView("chat");}} style={{background:C.white,borderRadius:14,padding:"12px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:12,cursor:"pointer",boxShadow:"0 2px 8px rgba(44,94,247,0.06)"}}>
+            <div style={{width:44,height:44,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,color:C.white,flexShrink:0}}>{s.avatar||"?"}</div>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:700,fontSize:14,color:C.text}}>{s.name}</div>
+              <div style={{fontSize:12,color:C.mutedDark,marginTop:2}}>Toca para chatear</div>
             </div>
-          </WhiteCard>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.mutedDark} strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
+          </div>
         ))}
       </div>
     </div>
   );
 }
-
 
 function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount, newDate, setNewDate, onClose, onUpdate, classes=[], addIncome, packages=[], sendNotification}) {
   const [showRecordatorioPago,setShowRecordatorioPago]=useState(false);
@@ -4051,19 +4055,31 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
   );
 }
 
-function StudentApp({ student: initialStudent, onExit, classes=[], notifications=[], sendNotification }) {
+function StudentApp({ student: initialStudent, onExit, classes=[], notifications=[], sendNotification, coachId }) {
   const [tab,setTab]=useState("home");
   const [student,setStudent]=useState(initialStudent);
   const [msg,setMsg]=useState("");
-  const [msgs,setMsgs]=useState([
-    {id:1,from:"coach",text:"Hola! Mañana la clase empieza 15 min antes, a las 7:45. ⏰",time:"Ayer 18:30",type:"alert"},
-    {id:2,from:"me",text:"Perfecto, gracias por avisar!",time:"Ayer 18:45"},
-    {id:3,from:"coach",text:"El miércoles se suspende la clase por mantenimiento de la cancha.",time:"Hoy 09:00",type:"alert"},
-  ]);
+  const [msgs,setMsgs]=useState([]);
   const [oldPass,setOldPass]=useState(""); const [newPass,setNewPass]=useState(""); const [newPass2,setNewPass2]=useState("");
   const combo=getCombo(student); const rem=getRem(student);
-  const send=()=>{if(msg.trim()){setMsgs(p=>[...p,{id:Date.now(),from:"me",text:msg,time:"Ahora"}]);setMsg("");}};
 
+  // Load messages from Supabase
+  useEffect(()=>{
+    if(!coachId||!student?.id) return;
+    supabase.from("messages").select("*").eq("coach_id",coachId).eq("student_id",student.id).order("created_at",{ascending:true})
+      .then(({data})=>setMsgs(data||[]));
+    const channel=supabase.channel("student_chat_"+coachId+"_"+student.id)
+      .on("postgres_changes",{event:"INSERT",schema:"public",table:"messages",filter:`coach_id=eq.${coachId}`},(payload)=>{
+        if(payload.new.student_id===student.id) setMsgs(p=>[...p,payload.new]);
+      }).subscribe();
+    return ()=>supabase.removeChannel(channel);
+  },[coachId,student?.id]);
+
+  const send=async()=>{
+    if(!msg.trim()||!coachId||!student?.id) return;
+    const text=msg;setMsg("");
+    await supabase.from("messages").insert({coach_id:coachId,student_id:student.id,text,from_coach:false,read:false});
+  };
   // Attendance log from classes
   const attLogs=[];
   classes.forEach(cls=>{
@@ -4272,15 +4288,14 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
               <div><div style={{fontWeight:700,fontSize:14,color:C.text}}>Coach Carlos</div><div style={{fontSize:11,color:C.green}}>● En línea</div></div>
             </div>
             <div style={{flex:1,overflowY:"auto",padding:"12px 16px",display:"flex",flexDirection:"column",gap:8}}>
-              {msgs.map(m=>(
-                <div key={m.id} style={{display:"flex",justifyContent:m.from==="me"?"flex-end":"flex-start",gap:8,alignItems:"flex-end"}}>
-                  {m.from==="coach"&&<div style={{width:28,height:28,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:C.white,flexShrink:0}}>CC</div>}
+              {msgs.map((m,i)=>(
+                <div key={m.id||i} style={{display:"flex",justifyContent:m.from_coach?"flex-start":"flex-end",gap:8,alignItems:"flex-end"}}>
+                  {m.from_coach&&<div style={{width:28,height:28,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:C.white,flexShrink:0}}>E</div>}
                   <div style={{maxWidth:"72%"}}>
-                    {m.type==="alert"&&<div style={{fontSize:10,color:"#E65100",fontWeight:700,marginBottom:2}}>📢 AVISO</div>}
-                    <div style={{padding:"10px 14px",fontSize:13,borderRadius:m.from==="me"?"18px 18px 4px 18px":"18px 18px 18px 4px",background:m.from==="me"?"linear-gradient(135deg,"+C.blue2+","+C.blue3+")":m.type==="alert"?"#FFF3E0":C.white,color:m.from==="me"?C.white:C.text,border:m.type==="alert"?"1px solid #FFB74D":"none"}}>
+                    <div style={{padding:"10px 14px",fontSize:13,borderRadius:m.from_coach?"18px 18px 18px 4px":"18px 18px 4px 18px",background:m.from_coach?C.white:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",color:m.from_coach?C.text:C.white}}>
                       {m.text}
                     </div>
-                    <div style={{fontSize:10,color:C.mutedDark,marginTop:2,textAlign:m.from==="me"?"right":"left"}}>{m.time}</div>
+                    <div style={{fontSize:10,color:C.mutedDark,marginTop:2,textAlign:m.from_coach?"left":"right"}}>{m.created_at?new Date(m.created_at).toLocaleTimeString("es",{hour:"2-digit",minute:"2-digit"}):""}</div>
                   </div>
                 </div>
               ))}
@@ -5259,7 +5274,6 @@ export default function App() {
         localStorage.setItem("izi_student_id_raw", String(inviteInfo.student_id));
         try{
           const {data}=await supabase.from("coach_data").select("*").eq("coach_id",inviteInfo.coach_id).single();
-          console.log("coach_data:", data?.coach_id, "students length:", data?.students?.length);
           if(data){
             const tryP=(s,f=[])=>{try{const p=JSON.parse(s);return Array.isArray(p)?p:f;}catch{return f;}};
             const s=tryP(data.students);const cl=tryP(data.classes);
@@ -5281,7 +5295,7 @@ export default function App() {
                       {id:0,name:user?.email||"Alumno",avatar:"A",sport:"",combos:[]};
     return (
       <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden"}}>
-        <StudentApp student={studentData||{id:0,name:"Alumno",avatar:"A",sport:"",combos:[]}} onExit={async()=>{await supabase.auth.signOut();setUserWithRef(null);setMode(null);localStorage.clear();}} classes={classes} notifications={notifications} sendNotification={sendNotification}/>
+        <StudentApp student={studentData||{id:0,name:"Alumno",avatar:"A",sport:"",combos:[]}} onExit={async()=>{await supabase.auth.signOut();setUserWithRef(null);setMode(null);localStorage.clear();}} classes={classes} notifications={notifications} sendNotification={sendNotification} coachId={localStorage.getItem("izi_student_coach_id")}/>
       </div>
     );
   }
@@ -5313,7 +5327,7 @@ export default function App() {
         {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={classes} onInvite={()=>setShowInvite(true)} userId={user?.id} onInviteStudent={(s)=>setInviteTarget(s)}/>}
         {inviteTarget&&<InviteModal student={inviteTarget} userId={user?.id} onClose={()=>setInviteTarget(null)}/>}
         {tab==="agenda"&&<Agenda students={students} classes={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)}/>}
-        {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification}/>}
+        {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification} userId={user?.id}/>}
         {tab==="cobros"&&<Finances students={students} classes={classes} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance}/>}
         {tab==="finanzas"&&<Finances students={students} classes={classes} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages}/>}
         {showNewClass&&<NewClassModal onClose={()=>{setShowNewClass(false);if(classes.length===0)setTab("agenda");}} onSave={handleSaveClass} students={students} dateLabel="Nueva clase" onCreateStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])}/>}
