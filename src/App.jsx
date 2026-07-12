@@ -4149,37 +4149,45 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
               </div>
             </div>
 
-            {/* Estado de Cuenta + Mis Clases */}
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,margin:"10px 12px 0"}}>
-              <div style={{background:"linear-gradient(135deg,#2C5EF7,#4B7BF5)",borderRadius:20,padding:"16px 12px",textAlign:"center",boxShadow:"0 6px 20px rgba(44,94,247,0.3)"}}>
-                <div style={{fontSize:10,color:"rgba(255,255,255,0.7)",fontWeight:700,letterSpacing:0.8,marginBottom:8}}>ESTADO DE CUENTA</div>
-                {(()=>{
-                  const paidCount=combo?.paidCount||(combo?.paid?combo?.total:0)||0;
-                  const unpaid=(combo?.total||0)-paidCount;
-                  const isRed=unpaid>0;
-                  const displayNum=isRed?unpaid:paidCount;
-                  const label=!combo?"Sin combo":isRed?"A cobrar":"Pagadas";
-                  return (<>
-                    <div style={{fontSize:36,fontWeight:900,color:C.white,lineHeight:1}}>{displayNum}</div>
-                    <div style={{fontSize:13,color:"rgba(255,255,255,0.85)",fontWeight:600,marginTop:4}}>{label}</div>
-                  </>);
-                })()}
-              </div>
-              <div style={{background:C.blueL,borderRadius:20,padding:"16px 12px",textAlign:"center"}}>
-                <div style={{fontSize:10,color:C.blue2,fontWeight:700,letterSpacing:0.8,marginBottom:8}}>MIS CLASES</div>
-                {myClasses.length>0?(()=>{
-                  const cls=[...new Map(myClasses.map(c=>[c.title,c])).values()][0];
-                  const allDays=[...new Set(myClasses.flatMap(c=>c.days||[]))];
-                  return (<>
-                    <div style={{fontSize:12,fontWeight:800,color:C.blue2,marginBottom:4}}>{allDays.join(", ")}</div>
-                    <div style={{fontSize:12,fontWeight:700,color:C.blue2,marginBottom:2}}>{cls.time+(cls.timeEnd?" a "+cls.timeEnd:"")}</div>
-                    <div style={{fontSize:12,fontWeight:600,color:C.mutedDark}}>{cls.court}</div>
-                  </>);
-                })():(
-                  <div style={{fontSize:13,color:C.mutedDark,marginTop:8}}>Sin clases</div>
-                )}
-              </div>
-            </div>
+            {/* 4 boxes estado de cuenta */}
+            {(()=>{
+              const allDates=(student.combos||[]).filter(c=>c.total>0&&c.packType!=="mensual").flatMap(c=>{
+                const seen=new Set();
+                return (c.dates||[]).filter(d=>{if(seen.has(d))return false;seen.add(d);return true;}).map((d,i)=>{
+                  const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
+                  const isPaid=i<paidCount;
+                  const isPast=d<=TODAY_DATE;
+                  const attEntry=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===d);
+                  const isGiven=attEntry?(attEntry.present||[]).includes(student.id)||(attEntry.ausente_dada||[]).includes(student.id):isPast;
+                  return {date:d,isPaid,isGiven,isPast};
+                });
+              });
+              const seen2=new Set();
+              const deduped=allDates.filter(d=>{if(seen2.has(d.date))return false;seen2.add(d.date);return true;});
+              const noPagada=deduped.filter(d=>!d.isPaid).length;
+              const pagada=deduped.filter(d=>d.isPaid).length;
+              const programada=deduped.filter(d=>!d.isGiven&&d.date>TODAY_DATE).length;
+              const realizada=deduped.filter(d=>d.isGiven||d.date<=TODAY_DATE).length;
+              const boxes=[
+                {label:"No Pagada",val:noPagada,bg:"#FFEBEE",color:"#C62828"},
+                {label:"Pagada",val:pagada,bg:C.greenL,color:"#2E7D32"},
+                {label:"Programada",val:programada,bg:C.blueL,color:C.blue2},
+                {label:"Realizada",val:realizada,bg:"#F5F5F5",color:"#616161"},
+              ];
+              return (
+                <div style={{margin:"12px 12px 0"}}>
+                  <div style={{fontSize:11,fontWeight:700,color:C.mutedDark,letterSpacing:1,marginBottom:8}}>ESTADO DE CUENTA</div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8}}>
+                    {boxes.map(b=>(
+                      <div key={b.label} style={{background:b.bg,borderRadius:14,padding:"12px 6px",textAlign:"center"}}>
+                        <div style={{fontSize:24,fontWeight:900,color:b.color}}>{b.val}</div>
+                        <div style={{fontSize:10,fontWeight:700,color:b.color,marginTop:2}}>{b.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
 
             <div style={{padding:"10px 12px 0"}}>
               {/* Chat button */}
@@ -4201,36 +4209,58 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
           </div>
         )}
 
-                {/* CLASES */}
+        {/* CLASES */}
         {tab==="clases"&&(
           <div style={{flex:1,overflowY:"auto",padding:16,paddingBottom:"calc(120px + env(safe-area-inset-bottom, 34px))"}}>
             <div style={{fontSize:16,fontWeight:800,color:C.text,marginBottom:16}}>Mis Clases</div>
             {myClasses.length===0&&<div style={{textAlign:"center",padding:"32px 0",color:C.mutedDark}}>No tenés clases asignadas aún</div>}
-            {myClasses.map(c=>(
-              <WhiteCard key={c.id} style={{marginBottom:12}}>
-                <div style={{fontWeight:800,fontSize:15,color:C.text,marginBottom:6}}>{c.title}</div>
-                <div style={{display:"flex",gap:16,marginBottom:8,flexWrap:"wrap"}}>
-                  <span style={{fontSize:13,color:C.mutedDark}}>🕐 {c.time}{c.timeEnd?" – "+c.timeEnd:""}</span>
-                  <span style={{fontSize:13,color:C.mutedDark}}>📍 {c.court}</span>
-                </div>
-                <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
-                  {c.days.map(d=><span key={d} style={{fontSize:11,padding:"3px 10px",borderRadius:20,background:C.blueL,color:C.blue2,fontWeight:600}}>{d}</span>)}
-                </div>
-                <div style={{borderTop:"1px solid "+C.border,paddingTop:10}}>
-                  <div style={{fontSize:11,color:C.mutedDark,fontWeight:700,marginBottom:8}}>HISTORIAL DE ASISTENCIA</div>
-                  {(c.attendanceLog||[]).filter(e=>e.present&&e.present.includes(student.id)).length===0
-                    ?<div style={{fontSize:12,color:C.mutedDark}}>Sin registros aún</div>
-                    :(c.attendanceLog||[]).filter(e=>e.present&&e.present.includes(student.id)).slice(-5).reverse().map((e,i)=>(
-                      <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:"1px solid "+C.border}}>
-                        <div style={{width:8,height:8,borderRadius:"50%",background:C.green,flexShrink:0}}></div>
-                        <span style={{fontSize:12,color:C.text}}>{e.day} {e.date}</span>
-                        <span style={{marginLeft:"auto",fontSize:11,color:C.green,fontWeight:600}}>✓ Presente</span>
-                      </div>
-                    ))
-                  }
-                </div>
-              </WhiteCard>
-            ))}
+            {[...new Map(myClasses.map(c=>[c.title,c])).values()].map(cls=>{
+              const allDates=(student.combos||[]).filter(c=>c.total>0&&c.packType!=="mensual").flatMap(c=>{
+                const seen=new Set();
+                return (c.dates||[]).filter(d=>{if(seen.has(d))return false;seen.add(d);return true;}).map((d,i)=>{
+                  const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
+                  const isPaid=i<paidCount;
+                  const isPast=d<=TODAY_DATE;
+                  const attEntry=(cls.attendanceLog||[]).find(e=>e.date===d);
+                  const isGiven=attEntry?(attEntry.present||[]).includes(student.id)||(attEntry.ausente_dada||[]).includes(student.id):isPast;
+                  const isCancelled=attEntry&&(attEntry.ausente_reprog||[]).includes(student.id);
+                  return {date:d,isPaid,isGiven,isPast,isCancelled};
+                });
+              }).sort((a,b)=>a.date.localeCompare(b.date));
+              const seen2=new Set();
+              const deduped=allDates.filter(d=>{if(seen2.has(d.date))return false;seen2.add(d.date);return true;});
+              return (
+                <WhiteCard key={cls.id} style={{marginBottom:12}}>
+                  <div style={{fontWeight:800,fontSize:15,color:C.text,marginBottom:6}}>{cls.title}</div>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+                    {(cls.days||[]).map(d=><span key={d} style={{fontSize:11,padding:"3px 10px",borderRadius:20,background:C.blueL,color:C.blue2,fontWeight:600}}>{d}</span>)}
+                    <span style={{fontSize:12,color:C.mutedDark}}>🕐 {cls.time}{cls.timeEnd?" – "+cls.timeEnd:""}</span>
+                    <span style={{fontSize:12,color:C.mutedDark}}>📍 {cls.court}</span>
+                  </div>
+                  {deduped.length===0?<div style={{fontSize:12,color:C.mutedDark}}>Sin clases asignadas</div>:(
+                    <div>
+                      {deduped.map((item,i)=>{
+                        let leftBg="#EDFBEC",leftColor="#2E7D32",leftLabel="Pagada";
+                        if(!item.isPaid){leftBg="#FFEBEE";leftColor="#C62828";leftLabel="No Pagada";}
+                        let rightBg="#F5F5F5",rightColor="#616161",rightLabel="Realizada";
+                        if(!item.isGiven&&item.date>TODAY_DATE){rightBg=C.blueL;rightColor=C.blue2;rightLabel="Programada";}
+                        if(item.isCancelled){rightBg="#FFF3E0";rightColor="#E65100";rightLabel="A Reprog.";}
+                        return (
+                          <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid "+C.border}}>
+                            <div style={{width:26,height:26,borderRadius:"50%",background:C.blueL,border:"2px solid "+C.blue2,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                              <span style={{fontSize:10,fontWeight:800,color:C.blue2}}>{i+1}</span>
+                            </div>
+                            <div style={{flex:1,fontSize:13,fontWeight:600,color:C.text}}>{item.date}</div>
+                            <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:leftBg,color:leftColor,fontWeight:700}}>{leftLabel}</span>
+                            <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700}}>{rightLabel}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </WhiteCard>
+              );
+            })}
           </div>
         )}
 
@@ -4268,18 +4298,23 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
         {tab==="pagos"&&(
           <div style={{flex:1,overflowY:"auto",padding:16,paddingBottom:"calc(120px + env(safe-area-inset-bottom, 34px))"}}>
             <div style={{fontSize:16,fontWeight:800,color:C.text,marginBottom:16}}>Historial de Pagos</div>
-            {student.combos.slice().reverse().map((c,i)=>(
+            {(student.combos||[]).flatMap(c=>(c.payments||[]).map(p=>({...p,packType:c.packType,comboTotal:c.total}))).length===0&&(
+              <div style={{textAlign:"center",padding:"32px 0",color:C.mutedDark}}>Sin pagos registrados aún</div>
+            )}
+            {(student.combos||[]).flatMap(c=>(c.payments||[]).map(p=>({...p,packType:c.packType,comboTotal:c.total}))).sort((a,b)=>b.date.localeCompare(a.date)).map((p,i)=>(
               <WhiteCard key={i} style={{marginBottom:10}}>
-                <div style={{display:"flex",alignItems:"flex-start",gap:12}}>
-                  <div style={{width:40,height:40,borderRadius:10,background:c.paid?"linear-gradient(135deg,#52C048,#65CE5A)":"linear-gradient(135deg,#E53935,#EF5350)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{c.paid?"✓":"!"}</div>
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  <div style={{width:44,height:44,borderRadius:12,background:"linear-gradient(135deg,#52C048,#65CE5A)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>✓</div>
                   <div style={{flex:1}}>
-                    <div style={{fontWeight:700,fontSize:14,color:C.text}}>{c.total?"📦 Combo "+c.total+" clases":"📅 Plan Mensual"}</div>
-                    <div style={{fontSize:12,color:C.mutedDark,marginTop:2}}>Inicio: {c.date}</div>
-                    {c.total&&<div style={{fontSize:12,color:C.mutedDark}}>{c.used+" de "+c.total+" clases utilizadas"}</div>}
+                    <div style={{fontWeight:700,fontSize:14,color:C.text}}>
+                      {p.comboTotal===null?"📅 Plan Mensual":"📦 "+p.qty+" clase"+(p.qty>1?"s":"")}
+                    </div>
+                    <div style={{fontSize:12,color:C.mutedDark,marginTop:2}}>{p.date}</div>
+                    {p.payMonth&&<div style={{fontSize:11,color:C.blue2,fontWeight:600,marginTop:2}}>Mes: {(["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"][parseInt(p.payMonth?.split("-")[1])-1]||"")} {p.payMonth?.split("-")[0]}</div>}
                   </div>
                   <div style={{textAlign:"right"}}>
-                    <div style={{fontWeight:800,color:C.blue2,fontSize:15}}>{fmtMoneyShort(c.amount)}</div>
-                    <span style={{fontSize:11,padding:"3px 8px",borderRadius:20,background:c.paid?C.greenL:"#FFEBEE",color:c.paid?C.green:"#C62828",fontWeight:600,display:"inline-block",marginTop:4}}>{c.paid?"Pagado":"Pendiente"}</span>
+                    <div style={{fontWeight:800,color:C.blue2,fontSize:16}}>{fmtMoneyShort(p.amount)}</div>
+                    <span style={{fontSize:11,padding:"3px 8px",borderRadius:20,background:C.greenL,color:C.green,fontWeight:600,display:"inline-block",marginTop:4}}>Pagado</span>
                   </div>
                 </div>
               </WhiteCard>
