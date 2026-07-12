@@ -4130,7 +4130,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                 }
               </div>
               <div style={{flex:1,paddingTop:4}}>
-                <div style={{fontSize:22,fontWeight:900,color:C.blue2,lineHeight:1.1,marginBottom:8}}><span>{"Buen Dia,"}</span><br/><span>{student.name.split(" ")[0]+"!"}</span></div>
+                <div style={{fontSize:22,fontWeight:900,color:C.blue2,lineHeight:1.1,marginBottom:8}}><span>{"Buen día,"}</span><br/><span>{student.name?student.name.split(" ")[0]+"!":"Alumno!"}</span></div>
                 {myClasses.length>0?(()=>{
                   const next=[...new Map(myClasses.map(c=>[c.title,c])).values()][0];
                   const nextDate=next.date;
@@ -5255,6 +5255,7 @@ export default function App() {
 
   if(mode==="student_portal"){
     const storedStudentId=parseInt(localStorage.getItem("izi_student_id")||"0");
+    console.log("student_portal: storedStudentId=",storedStudentId,"students=",students.map(s=>({id:s.id,name:s.name})));
     const studentData=students.find(s=>s.id===storedStudentId)||students.find(s=>s.email===user?.email)||students[0];
     return (
       <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden"}}>
