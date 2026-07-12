@@ -5068,7 +5068,10 @@ export default function App() {
           const lastComboFullyUsed=!lastDate||(lastDate<today);
           // Only create new combo if student has no active combo OR last combo is expired
           // Don't create if student already has an active combo covering future dates
-          const hasActiveFutureCombo=lastCombo&&lastDate&&lastDate>=today;
+          const hasActiveFutureCombo=lastCombo&&(
+            (lastDate&&lastDate>=today) || // combo with future dates
+            (lastCombo.packType==="mensual"&&lastCombo.paid) // paid mensual
+          );
           if(hasActiveFutureCombo) return s; // don't modify - just editing the class
           // Create NEW combo when last combo is expired (last date is in the past)
           if(!lastDate||lastComboFullyUsed){
