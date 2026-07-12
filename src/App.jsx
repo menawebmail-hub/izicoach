@@ -5265,7 +5265,24 @@ export default function App() {
           setCoachProfileRaw({name:data.name,sport:data.sport||"",photo:data.photo||null,currency:data.currency||"₲"});
           try{await loadData(u.id);}catch(e){console.error(e);}
         } else {
-          setModeP("coach_new");setOnboardedP(false);
+          // Check if student
+          const {data:sa}=await supabase.from("student_auth").select("*").eq("id",u.id).single();
+          if(sa){
+            lsSet("izi_student_coach_id", sa.coach_id);
+            localStorage.setItem("izi_student_id_raw", String(sa.student_id));
+            try{
+              const {data:cd}=await supabase.from("coach_data").select("*").eq("coach_id",sa.coach_id).single();
+              if(cd){
+                const tryP=(s,f=[])=>{try{const p=JSON.parse(s);return Array.isArray(p)?p:f;}catch{return f;}};
+                const s=tryP(cd.students);const cl=tryP(cd.classes);
+                if(s.length>0){setStudentsRaw(s);lsSet("izi_students",s);}
+                if(cl.length>0){setClassesRaw(cl);lsSet("izi_classes",cl);}
+              }
+            }catch(e){}
+            setModeP("student_portal");
+          } else {
+            setModeP("coach_new");setOnboardedP(false);
+          }
         }
         setCheckingProfile(false);
       }} onStudentLogin={async(u,inviteInfo)=>{
