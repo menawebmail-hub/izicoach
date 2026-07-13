@@ -35,6 +35,17 @@ const C = {
 
 
 const TODAY_DATE=(()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
+const NOW_TIME=(()=>{const d=new Date();return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");})();
+
+// Check if a class date+timeEnd has passed
+const isClassDone=(date,timeEnd)=>{
+  if(!date) return false;
+  if(date<TODAY_DATE) return true;
+  if(date>TODAY_DATE) return false;
+  // Same day — check time
+  const endTime=timeEnd||"23:59";
+  return NOW_TIME>=endTime;
+};
 
 // Currency formatting
 const _cur={v:"₲"};
@@ -2561,7 +2572,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         const wasAusenteReprog=attEntry?(attEntry.ausente_reprog||[]).includes(s.id):false;
         const wasPresent=attEntry?(attEntry.present||[]).includes(s.id):false;
         const wasAbsent=attEntry?(!wasPresent&&!wasAusenteDada&&!wasAusenteReprog):false;
-        const isGiven=isCancelled?false:wasAusenteReprog?false:attEntry?(wasPresent||wasAusenteDada):(ds<TODAY);
+        const isGiven=isCancelled?false:wasAusenteReprog?false:attEntry?(wasPresent||wasAusenteDada):isClassDone(ds,classOnDate?.timeEnd);
         let status;
         if(isPaidDate){status=isGiven?"dada":"adar";}
         else{status=isGiven?"dada_unpaid":"pendiente";}
@@ -3197,12 +3208,14 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             const dates=c.dates||[];
             return dates.map(d=>{
               const attEntry=myClassesH.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===d);
+              const clsForDate=myClassesH.find(cls=>cls.date===d||((cls.occurrences||[]).includes(d)));
+              const timeEnd=clsForDate?.timeEnd||"23:59";
               const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
               const idx=dates.indexOf(d);
               const isPaid=idx<paidCount;
-              const isPast=d<TODAY_DATE;
-              const isGiven=attEntry?(attEntry.present||[]).includes(s.id)||(attEntry.ausente_dada||[]).includes(s.id):isPast;
-              return {date:d,isPaid,isGiven,isPast};
+              const isDone=isClassDone(d,timeEnd);
+              const isGiven=attEntry?(attEntry.present||[]).includes(s.id)||(attEntry.ausente_dada||[]).includes(s.id):isDone;
+              return {date:d,isPaid,isGiven,isPast:isDone};
             });
           });
           // Deduplicate by date
