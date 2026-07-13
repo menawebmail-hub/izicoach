@@ -4140,7 +4140,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
   const unreadAlerts=alerts.length;
 
   return (
-    <div style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden",background:C.bg,position:"relative"}}>
+    <div style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden",background:C.bg}}>
       {/* Header */}
       <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"16px 16px 20px",flexShrink:0,boxShadow:"0 4px 20px rgba(26,61,181,0.3)"}}>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
@@ -4163,7 +4163,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
       </div>
 
       {/* Content */}
-      <div style={{flex:1,overflow:"hidden",display:"flex",flexDirection:"column"}}>
+      <div style={{flex:1,overflow:"hidden",display:"flex",flexDirection:"column",position:"relative"}}>
 
         {/* HOME */}
         {tab==="home"&&(
