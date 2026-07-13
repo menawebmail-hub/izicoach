@@ -4339,11 +4339,11 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
         {/* CHAT */}
         {tab==="chat"&&(
           <div style={{position:"absolute",top:0,left:0,right:0,bottom:0,display:"flex",flexDirection:"column",background:C.bg,zIndex:50}}>
-            <div style={{padding:"10px 16px",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",borderBottom:"1px solid "+C.border,display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+            <div style={{padding:"10px 16px",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
               <div style={{width:38,height:38,borderRadius:"50%",background:C.whiteA,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white}}>E</div>
               <div><div style={{fontWeight:700,fontSize:14,color:C.white}}>Tu Entrenador</div><div style={{fontSize:11,color:C.muted}}>● En línea</div></div>
             </div>
-            <div style={{flex:1,overflowY:"auto",padding:"12px 16px",display:"flex",flexDirection:"column",gap:8}}>
+            <div style={{flex:1,overflowY:"auto",padding:"12px 16px",display:"flex",flexDirection:"column",gap:8,background:C.bg}}>
               {msgs.map((m,i)=>(
                 <div key={m.id||i} style={{display:"flex",justifyContent:m.from_coach?"flex-start":"flex-end",gap:8,alignItems:"flex-end"}}>
                   {m.from_coach&&<div style={{width:28,height:28,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:C.white,flexShrink:0}}>E</div>}
