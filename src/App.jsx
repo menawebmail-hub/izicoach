@@ -4206,13 +4206,9 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                 <div style={{background:C.white,margin:"8px 12px 0",borderRadius:20,padding:"14px 16px",boxShadow:"0 2px 12px rgba(44,94,247,0.08)"}}>
                   <div style={{fontSize:11,fontWeight:700,color:C.mutedDark,letterSpacing:1,marginBottom:10,textAlign:"center"}}>TUS CLASES</div>
                   <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                    <div style={{display:"flex",gap:6}}>
-                      {(cls.days||[]).map(d=><span key={d} style={{fontSize:13,padding:"6px 12px",borderRadius:10,background:C.blueL,color:C.blue2,fontWeight:700}}>{d.slice(0,2)}</span>)}
-                    </div>
-                    <div style={{flex:1,textAlign:"right"}}>
-                      <div style={{fontSize:13,fontWeight:700,color:C.mutedDark}}>{cls.time}{cls.timeEnd?"-"+cls.timeEnd:""}</div>
-                      {cls.court&&<div style={{fontSize:12,color:C.mutedDark,fontWeight:600}}>{cls.court.toUpperCase()}</div>}
-                    </div>
+                    {(cls.days||[]).map(d=><span key={d} style={{fontSize:13,padding:"6px 12px",borderRadius:10,background:C.blueL,color:C.blue2,fontWeight:700}}>{d.slice(0,2)}</span>)}
+                    <span style={{fontSize:13,fontWeight:700,color:C.mutedDark}}>{cls.time}{cls.timeEnd?" - "+cls.timeEnd:""}</span>
+                    {cls.court&&<span style={{fontSize:12,color:C.mutedDark,fontWeight:600,textTransform:"uppercase"}}>{cls.court}</span>}
                   </div>
                 </div>
               );
