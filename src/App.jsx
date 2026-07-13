@@ -4140,7 +4140,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
   const unreadAlerts=alerts.length;
 
   return (
-    <div style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden",background:C.bg}}>
+    <div style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden",background:C.bg,position:"relative"}}>
       {/* Header */}
       <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"16px 16px 20px",flexShrink:0,boxShadow:"0 4px 20px rgba(26,61,181,0.3)"}}>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
@@ -4315,7 +4315,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
 
         {/* CHAT */}
         {tab==="chat"&&(
-          <div style={{position:"fixed",top:0,left:0,right:0,bottom:"calc(64px + env(safe-area-inset-bottom,0px))",display:"flex",flexDirection:"column",background:C.bg,zIndex:50}}>
+          <div style={{position:"absolute",top:0,left:0,right:0,bottom:0,display:"flex",flexDirection:"column",background:C.bg,zIndex:50}}>
             <div style={{padding:"10px 16px",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",borderBottom:"1px solid "+C.border,display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
               <div style={{width:38,height:38,borderRadius:"50%",background:C.whiteA,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white}}>E</div>
               <div><div style={{fontWeight:700,fontSize:14,color:C.white}}>Tu Entrenador</div><div style={{fontSize:11,color:C.muted}}>● En línea</div></div>
