@@ -4179,8 +4179,8 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
               </div>
               <div style={{flex:1,paddingTop:4,display:"flex",flexDirection:"column",justifyContent:"space-between"}}>
                 <div>
-                  <div style={{fontSize:13,color:C.mutedDark,fontWeight:600,letterSpacing:0.3}}>BUEN DIA,</div>
-                  <div style={{fontSize:28,fontWeight:900,color:C.blue2,letterSpacing:-0.5,lineHeight:1,textTransform:"uppercase"}}>{student.name?student.name.split(" ")[0]:"ALUMNO"}</div>
+                  <div style={{fontSize:13,color:C.mutedDark,fontWeight:600,letterSpacing:0.3,textAlign:"left"}}>BUEN DIA,</div>
+                  <div style={{fontSize:28,fontWeight:900,color:C.blue2,letterSpacing:-0.5,lineHeight:1,textTransform:"uppercase",textAlign:"left"}}>{student.name?student.name.split(" ")[0]:"ALUMNO"}</div>
                 </div>
                 {myClasses.length>0?(()=>{
                   const next=[...myClasses].filter(c=>c.date>=TODAY_DATE).sort((a,b)=>a.date.localeCompare(b.date))[0]||myClasses[0];
@@ -4188,13 +4188,13 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                   const wD=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
                   const mN=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
                   return (
-                    <div>
+                    <div style={{textAlign:"left"}}>
                       <div style={{fontSize:10,color:C.mutedDark,fontWeight:700,letterSpacing:0.5,marginBottom:2}}>TU PRÓXIMA CLASE ES</div>
-                      <div style={{fontSize:13,fontWeight:800,color:C.blue2,lineHeight:1.4,textTransform:"uppercase"}}>{wD[d.getDay()]+" "+d.getDate()+" DE "+mN[d.getMonth()]+","}<br/>{next?.time}</div>
+                      <div style={{fontSize:13,fontWeight:800,color:C.blue2,lineHeight:1.4,textTransform:"uppercase",textAlign:"left"}}>{wD[d.getDay()]+" "+d.getDate()+" DE "+mN[d.getMonth()]+","}<br/>{next?.time}</div>
                     </div>
                   );
                 })():(
-                  <div style={{fontSize:12,color:C.mutedDark}}>Sin clases programadas</div>
+                  <div style={{fontSize:12,color:C.mutedDark,textAlign:"left"}}>Sin clases programadas</div>
                 )}
               </div>
             </div>
@@ -4205,10 +4205,10 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
               return (
                 <div style={{background:C.white,margin:"8px 12px 0",borderRadius:20,padding:"14px 16px",boxShadow:"0 2px 12px rgba(44,94,247,0.08)"}}>
                   <div style={{fontSize:11,fontWeight:700,color:C.mutedDark,letterSpacing:1,marginBottom:10,textAlign:"center"}}>TUS CLASES</div>
-                  <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                    {(cls.days||[]).map(d=><span key={d} style={{fontSize:13,padding:"6px 12px",borderRadius:10,background:C.blueL,color:C.blue2,fontWeight:700}}>{d.slice(0,2)}</span>)}
-                    <span style={{fontSize:13,fontWeight:700,color:C.mutedDark}}>{cls.time}{cls.timeEnd?" - "+cls.timeEnd:""}</span>
-                    {cls.court&&<span style={{fontSize:12,color:C.mutedDark,fontWeight:600,textTransform:"uppercase"}}>{cls.court}</span>}
+                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                    {(cls.days||[]).map(d=><span key={d} style={{fontSize:12,padding:"5px 10px",borderRadius:20,background:C.blue2,color:"#fff",fontWeight:700}}>{d.slice(0,2)}</span>)}
+                    <span style={{fontSize:13,fontWeight:700,color:C.mutedDark,marginLeft:4}}>{cls.time}{cls.timeEnd?" - "+cls.timeEnd:""}</span>
+                    {cls.court&&<span style={{fontSize:12,color:C.mutedDark}}>· {cls.court}</span>}
                   </div>
                 </div>
               );
