@@ -4420,7 +4420,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
       </div>
 
       {/* Bottom nav */}
-      <div style={{display:"flex",borderTop:"1px solid rgba(44,94,247,0.07)",background:C.white,paddingBottom:"env(safe-area-inset-bottom,4px)",flexShrink:0,position:"relative",zIndex:100,boxShadow:"0 -2px 16px rgba(44,94,247,0.06)"}}>
+      <div style={{display:"flex",borderTop:"1px solid rgba(44,94,247,0.07)",background:C.white,paddingBottom:"env(safe-area-inset-bottom,4px)",position:"fixed",bottom:0,left:0,right:0,zIndex:100,boxShadow:"0 -2px 16px rgba(44,94,247,0.06)"}}>
         {tabs.map(t=>{
           const isActive=tab===t.id; const col=isActive?C.blue2:"#9BACCB";
           return (
