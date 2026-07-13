@@ -2382,8 +2382,8 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
   };
 
   if(view==="chat"&&active) return (
-    <div style={{flex:1,display:"flex",flexDirection:"column",background:C.bg}}>
-      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"12px 16px",display:"flex",alignItems:"center",gap:12}}>
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,display:"flex",flexDirection:"column",background:C.bg,zIndex:50}}>
+      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"12px 16px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
         <button onClick={()=>{setView("list");setActive(null);setMsgs([]);onClearTarget&&onClearTarget();}} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:18}}>{"<"}</button>
         <div style={{width:38,height:38,borderRadius:"50%",background:C.whiteA,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white,flexShrink:0}}>{active.avatar||"?"}</div>
         <div style={{flex:1}}>
@@ -2391,7 +2391,7 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
           <div style={{fontSize:11,color:C.muted}}>En línea</div>
         </div>
       </div>
-      <div style={{flex:1,overflowY:"auto",padding:"16px",display:"flex",flexDirection:"column",gap:10}}>
+      <div style={{flex:1,overflowY:"auto",padding:"16px",display:"flex",flexDirection:"column",gap:10,paddingBottom:80}}>
         {loading&&<div style={{textAlign:"center",color:C.mutedDark,padding:20}}>Cargando...</div>}
         {msgs.map((m,i)=>(
           <div key={m.id||i} style={{display:"flex",justifyContent:m.from_coach?"flex-end":"flex-start"}}>
@@ -2405,7 +2405,7 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
           </div>
         ))}
       </div>
-      <div style={{padding:"8px 16px",background:C.white,borderTop:"1px solid "+C.border}}>
+      <div style={{padding:"8px 16px",background:C.white,borderTop:"1px solid "+C.border,flexShrink:0,paddingBottom:"calc(8px + env(safe-area-inset-bottom,0px))"}}>
         {isAlert&&<div style={{background:"#FFF3E0",borderRadius:8,padding:"6px 12px",marginBottom:6,fontSize:12,color:"#E65100",fontWeight:600}}>📢 Esto se enviará como alerta al alumno</div>}
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
           <button onClick={()=>setIsAlert(v=>!v)} style={{background:isAlert?"#FF8F00":C.blueL,border:"none",borderRadius:"50%",width:36,height:36,cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>📢</button>
@@ -2413,6 +2413,8 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
           <button onClick={send} style={{background:isAlert?"linear-gradient(135deg,#FF8F00,#FFA726)":"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",border:"none",borderRadius:"50%",width:44,height:44,cursor:"pointer",color:C.white,fontSize:18,flexShrink:0}}>➤</button>
         </div>
       </div>
+    </div>
+  );
     </div>
   );
 
@@ -4315,12 +4317,12 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
 
         {/* CHAT */}
         {tab==="chat"&&(
-          <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
-            <div style={{padding:"10px 16px",background:C.white,borderBottom:"1px solid "+C.border,display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
-              <div style={{width:38,height:38,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white}}>CC</div>
-              <div><div style={{fontWeight:700,fontSize:14,color:C.text}}>Coach Carlos</div><div style={{fontSize:11,color:C.green}}>● En línea</div></div>
+          <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,display:"flex",flexDirection:"column",background:C.bg,zIndex:50}}>
+            <div style={{padding:"10px 16px",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",borderBottom:"1px solid "+C.border,display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+              <div style={{width:38,height:38,borderRadius:"50%",background:C.whiteA,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white}}>E</div>
+              <div><div style={{fontWeight:700,fontSize:14,color:C.white}}>Tu Entrenador</div><div style={{fontSize:11,color:C.muted}}>● En línea</div></div>
             </div>
-            <div style={{flex:1,overflowY:"auto",padding:"12px 16px",display:"flex",flexDirection:"column",gap:8}}>
+            <div style={{flex:1,overflowY:"auto",padding:"12px 16px",display:"flex",flexDirection:"column",gap:8,paddingBottom:80}}>
               {msgs.map((m,i)=>(
                 <div key={m.id||i} style={{display:"flex",justifyContent:m.from_coach?"flex-start":"flex-end",gap:8,alignItems:"flex-end"}}>
                   {m.from_coach&&<div style={{width:28,height:28,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:C.white,flexShrink:0}}>E</div>}
@@ -4334,7 +4336,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                 </div>
               ))}
             </div>
-            <div style={{padding:"10px 16px 16px",background:C.white,borderTop:"1px solid "+C.border,display:"flex",gap:8,alignItems:"center",flexShrink:0}}>
+            <div style={{padding:"10px 16px",background:C.white,borderTop:"1px solid "+C.border,display:"flex",gap:8,alignItems:"center",flexShrink:0,paddingBottom:"calc(10px + env(safe-area-inset-bottom,0px))"}}>
               <input value={msg} onChange={e=>setMsg(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} placeholder="Escribí un mensaje..." style={{flex:1,padding:"10px 16px",borderRadius:24,border:"1.5px solid "+C.border,fontSize:14,background:C.bg,color:C.text,outline:"none"}}/>
               <button onClick={send} style={{background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",border:"none",borderRadius:"50%",width:44,height:44,cursor:"pointer",color:C.white,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
