@@ -2361,7 +2361,8 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
     setLoading(true);
     const studentId=active.id;
     // Mark as read
-    supabase.from("messages").update({read:true}).eq("coach_id",userId).eq("student_id",studentId).eq("from_coach",false);
+    supabase.from("messages").update({read:true}).eq("coach_id",userId).eq("student_id",studentId).eq("from_coach",false)
+      .then(({error})=>{if(error)console.error("mark read error:",error);});
     onMarkRead&&onMarkRead(String(studentId));
     supabase.from("messages").select("*").eq("coach_id",userId).eq("student_id",studentId).order("created_at",{ascending:true})
       .then(({data})=>{setMsgs(data||[]);setLoading(false);});
