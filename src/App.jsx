@@ -4149,16 +4149,15 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
               ?<img src={student.photo} style={{width:68,height:68,borderRadius:"50%",objectFit:"cover",border:"3px solid rgba(255,255,255,0.4)"}}/>
               :<div style={{width:68,height:68,borderRadius:"50%",background:"rgba(255,255,255,0.2)",border:"3px solid rgba(255,255,255,0.3)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,fontWeight:800,color:C.white}}>{student.avatar}</div>
             }
-            <div style={{position:"absolute",bottom:0,right:0,width:14,height:14,borderRadius:"50%",background:"#65CE5A",border:"2px solid #fff"}}></div>
+            <div style={{position:"absolute",bottom:2,right:2,width:14,height:14,borderRadius:"50%",background:"#65CE5A",border:"2px solid #fff"}}></div>
           </div>
-          <div style={{flex:1,textAlign:"left"}}>
-            <div style={{fontSize:12,color:"rgba(255,255,255,0.65)",fontWeight:600,letterSpacing:0.5}}>PORTAL ALUMNO</div>
-            <div style={{fontSize:20,fontWeight:900,color:C.white,letterSpacing:-0.3,textAlign:"left"}}>{student.name}</div>
-            {student.sport&&<div style={{fontSize:12,color:"rgba(255,255,255,0.7)",fontWeight:500}}>{student.sport}</div>}
+          <div style={{flex:1}}>
+            <div style={{fontSize:11,color:"rgba(255,255,255,0.65)",fontWeight:600,letterSpacing:1,marginBottom:2}}>PORTAL ALUMNO</div>
+            <div style={{fontSize:22,fontWeight:900,color:C.white,letterSpacing:-0.3}}>{student.name}</div>
           </div>
-          <button onClick={()=>setTab("chat")} style={{position:"relative",background:"rgba(255,255,255,0.18)",border:"1.5px solid rgba(255,255,255,0.30)",borderRadius:14,padding:"10px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:6,backdropFilter:"blur(8px)"}}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
-            {unreadAlerts>0&&<span style={{position:"absolute",top:-6,right:-6,background:"#FF4757",color:"#fff",borderRadius:"50%",width:18,height:18,fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",border:"2px solid #fff"}}>{unreadAlerts}</span>}
+          <button onClick={()=>setTab("home")} style={{position:"relative",background:"rgba(255,255,255,0.18)",border:"1.5px solid rgba(255,255,255,0.30)",borderRadius:14,width:48,height:48,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+            {unreadAlerts>0&&<span style={{position:"absolute",top:-6,right:-6,background:"#FF4757",color:"#fff",borderRadius:"50%",width:20,height:20,fontSize:11,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",border:"2px solid #fff"}}>{unreadAlerts}</span>}
           </button>
         </div>
       </div>
@@ -4170,35 +4169,56 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
         {tab==="home"&&(
           <div style={{flex:1,overflowY:"auto",paddingBottom:"calc(120px + env(safe-area-inset-bottom, 34px))",background:C.bg}}>
 
-            {/* Hero card */}
-            <div style={{background:C.white,margin:"12px 12px 0",borderRadius:20,padding:16,boxShadow:"0 2px 12px rgba(44,94,247,0.08)",display:"flex",gap:14,alignItems:"flex-start"}}>
+            {/* Hero card - Bienvenida + Próxima clase */}
+            <div style={{background:C.white,margin:"12px 12px 0",borderRadius:20,padding:16,boxShadow:"0 2px 12px rgba(44,94,247,0.08)",display:"flex",gap:14,alignItems:"stretch"}}>
               <div style={{flexShrink:0}}>
                 {student.photo
-                  ?<img src={student.photo} style={{width:80,height:100,borderRadius:14,objectFit:"cover"}}/>
-                  :<div style={{width:80,height:100,borderRadius:14,background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,fontWeight:900,color:C.white}}>{student.avatar}</div>
+                  ?<img src={student.photo} style={{width:90,height:110,borderRadius:14,objectFit:"cover"}}/>
+                  :<div style={{width:90,height:110,borderRadius:14,background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:32,fontWeight:900,color:C.white}}>{student.avatar}</div>
                 }
               </div>
-              <div style={{flex:1,paddingTop:4}}>
-                <div style={{fontSize:22,fontWeight:900,color:C.blue2,lineHeight:1.1,marginBottom:8}}><span>{"Buen día,"}</span><br/><span>{student.name?student.name.split(" ")[0]+"!":"Alumno!"}</span></div>
+              <div style={{flex:1,paddingTop:4,display:"flex",flexDirection:"column",justifyContent:"space-between"}}>
+                <div>
+                  <div style={{fontSize:13,color:C.mutedDark,fontWeight:600,letterSpacing:0.3}}>BUEN DIA,</div>
+                  <div style={{fontSize:28,fontWeight:900,color:C.blue2,letterSpacing:-0.5,lineHeight:1,textTransform:"uppercase"}}>{student.name?student.name.split(" ")[0]:"ALUMNO"}</div>
+                </div>
                 {myClasses.length>0?(()=>{
-                  const next=[...new Map(myClasses.map(c=>[c.title,c])).values()][0];
-                  const nextDate=next.date;
-                  const d=new Date((nextDate||TODAY_DATE)+"T12:00:00");
+                  const next=[...myClasses].filter(c=>c.date>=TODAY_DATE).sort((a,b)=>a.date.localeCompare(b.date))[0]||myClasses[0];
+                  const d=new Date((next?.date||TODAY_DATE)+"T12:00:00");
                   const wD=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
                   const mN=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
                   return (
                     <div>
-                      <div style={{fontSize:14,color:C.mutedDark,marginBottom:4}}>Tu próxima clase es el</div>
-                      <div style={{fontSize:13,fontWeight:800,color:C.blue2,lineHeight:1.3}}><span>{wD[d.getDay()]+" "+d.getDate()+" de "+mN[d.getMonth()]+","}</span><br/><span>{next.time}</span></div>
+                      <div style={{fontSize:10,color:C.mutedDark,fontWeight:700,letterSpacing:0.5,marginBottom:2}}>TU PRÓXIMA CLASE ES</div>
+                      <div style={{fontSize:13,fontWeight:800,color:C.blue2,lineHeight:1.4,textTransform:"uppercase"}}>{wD[d.getDay()]+" "+d.getDate()+" DE "+mN[d.getMonth()]+","}<br/>{next?.time}</div>
                     </div>
                   );
                 })():(
-                  <div style={{fontSize:14,color:C.mutedDark}}>Sin clases programadas</div>
+                  <div style={{fontSize:12,color:C.mutedDark}}>Sin clases programadas</div>
                 )}
               </div>
             </div>
 
-            {/* 4 boxes estado de cuenta */}
+            {/* Tus Clases */}
+            {myClasses.length>0&&(()=>{
+              const cls=[...new Map(myClasses.map(c=>[c.title,c])).values()][0];
+              return (
+                <div style={{background:C.white,margin:"8px 12px 0",borderRadius:20,padding:"14px 16px",boxShadow:"0 2px 12px rgba(44,94,247,0.08)"}}>
+                  <div style={{fontSize:11,fontWeight:700,color:C.mutedDark,letterSpacing:1,marginBottom:10,textAlign:"center"}}>TUS CLASES</div>
+                  <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                    <div style={{display:"flex",gap:6}}>
+                      {(cls.days||[]).map(d=><span key={d} style={{fontSize:13,padding:"6px 12px",borderRadius:10,background:C.blueL,color:C.blue2,fontWeight:700}}>{d.slice(0,2)}</span>)}
+                    </div>
+                    <div style={{flex:1,textAlign:"right"}}>
+                      <div style={{fontSize:13,fontWeight:700,color:C.mutedDark}}>{cls.time}{cls.timeEnd?"-"+cls.timeEnd:""}</div>
+                      {cls.court&&<div style={{fontSize:12,color:C.mutedDark,fontWeight:600}}>{cls.court.toUpperCase()}</div>}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Estado de Cuenta */}
             {(()=>{
               const allDates=(student.combos||[]).filter(c=>c.total>0&&c.packType!=="mensual").flatMap(c=>{
                 const seen=new Set();
@@ -4224,13 +4244,13 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                 {label:"Realizada",val:realizada,bg:"#F5F5F5",color:"#616161"},
               ];
               return (
-                <div style={{margin:"12px 12px 0"}}>
-                  <div style={{fontSize:11,fontWeight:700,color:C.mutedDark,letterSpacing:1,marginBottom:8}}>ESTADO DE CUENTA</div>
+                <div style={{margin:"8px 12px 0"}}>
+                  <div style={{fontSize:11,fontWeight:700,color:C.mutedDark,letterSpacing:1,marginBottom:8,textAlign:"center"}}>ESTADO DE CUENTA</div>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8}}>
                     {boxes.map(b=>(
-                      <div key={b.label} style={{background:b.bg,borderRadius:14,padding:"12px 6px",textAlign:"center"}}>
-                        <div style={{fontSize:24,fontWeight:900,color:b.color}}>{b.val}</div>
-                        <div style={{fontSize:10,fontWeight:700,color:b.color,marginTop:2}}>{b.label}</div>
+                      <div key={b.label} style={{background:b.bg,borderRadius:14,padding:"14px 6px",textAlign:"center"}}>
+                        <div style={{fontSize:28,fontWeight:900,color:b.color,lineHeight:1}}>{b.val}</div>
+                        <div style={{fontSize:10,fontWeight:700,color:b.color,marginTop:4}}>{b.label}</div>
                       </div>
                     ))}
                   </div>
@@ -4240,20 +4260,27 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
 
             <div style={{padding:"10px 12px 0"}}>
               {/* Chat button */}
-              <button onClick={()=>setTab("chat")} style={{width:"100%",padding:"18px",borderRadius:16,border:"none",background:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:800,letterSpacing:0.3,marginBottom:12,boxShadow:"0 6px 20px rgba(101,206,90,0.35)",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-                <span style={{fontSize:20}}>💬</span> Chatear con el Entrenador
+              <button onClick={()=>setTab("chat")} style={{width:"100%",padding:"18px",borderRadius:16,border:"none",background:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800,letterSpacing:0.3,marginBottom:12,boxShadow:"0 6px 20px rgba(101,206,90,0.35)",display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                Chatear con el Entrenador
               </button>
               {/* Alerts */}
-              {alerts.length>0&&alerts.map((a,i)=>(
-                <div key={a.id||i} style={{background:"#fdf3e2",borderRadius:16,padding:"14px 16px",marginBottom:10,display:"flex",gap:12,alignItems:"flex-start",border:"1px solid #F5C842"}}>
-                  <div style={{width:38,height:38,borderRadius:10,background:"#fff",border:"1px solid #F5C842",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:20}}>📢</div>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:11,fontWeight:800,color:"#E65100",letterSpacing:0.5,marginBottom:3}}>AVISO DEL ENTRENADOR</div>
-                    <div style={{fontSize:13,color:"#5D3A00",fontWeight:600,lineHeight:1.4}}>{a.text}</div>
-                    <div style={{fontSize:10,color:"#9E6B00",marginTop:4}}>{a.created_at?new Date(a.created_at).toLocaleDateString("es",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):""}</div>
-                  </div>
+              {alerts.length>0&&(
+                <div>
+                  <div style={{fontSize:11,fontWeight:700,color:C.mutedDark,letterSpacing:1,marginBottom:8,textAlign:"center"}}>AVISO DEL ENTRENADOR</div>
+                  {alerts.map((a,i)=>(
+                    <div key={a.id||i} style={{background:"#fdf3e2",borderRadius:16,padding:"14px 16px",marginBottom:10,display:"flex",gap:12,alignItems:"center",border:"1px solid #F5C842"}}>
+                      <div style={{width:40,height:40,borderRadius:12,background:"#fff",border:"1px solid #F5C842",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#E65100" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+                      </div>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:13,color:"#5D3A00",fontWeight:700,lineHeight:1.4}}>{a.text}</div>
+                        <div style={{fontSize:11,color:"#E65100",marginTop:3,fontWeight:500}}>{a.created_at?new Date(a.created_at).toLocaleDateString("es",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):""}</div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
             </div>
           </div>
         )}
