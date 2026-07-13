@@ -4140,7 +4140,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
   const unreadAlerts=alerts.length;
 
   return (
-    <div style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden",background:C.bg}}>
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,display:"flex",flexDirection:"column",background:C.bg,zIndex:10}}>
       {/* Header */}
       <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"16px 16px 20px",flexShrink:0,boxShadow:"0 4px 20px rgba(26,61,181,0.3)"}}>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
@@ -4163,7 +4163,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
       </div>
 
       {/* Content */}
-      <div style={{flex:1,overflow:"hidden",display:"flex",flexDirection:"column",position:"relative",minHeight:0}}>
+      <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minHeight:0}}>
 
         {/* HOME */}
         {tab==="home"&&(
@@ -4343,7 +4343,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
               <div style={{width:38,height:38,borderRadius:"50%",background:C.whiteA,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white}}>E</div>
               <div><div style={{fontWeight:700,fontSize:14,color:C.white}}>Tu Entrenador</div><div style={{fontSize:11,color:C.muted}}>● En línea</div></div>
             </div>
-            <div style={{flex:1,overflowY:"auto",padding:"12px 16px",display:"flex",flexDirection:"column",gap:8,background:C.bg,minHeight:0}}>
+            <div style={{flex:1,overflowY:"auto",padding:"12px 16px",display:"flex",flexDirection:"column",gap:8,background:C.bg,minHeight:0,paddingBottom:"calc(80px + env(safe-area-inset-bottom,0px))"}}>
               {msgs.map((m,i)=>(
                 <div key={m.id||i} style={{display:"flex",justifyContent:m.from_coach?"flex-start":"flex-end",gap:8,alignItems:"flex-end"}}>
                   {m.from_coach&&<div style={{width:28,height:28,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:C.white,flexShrink:0}}>E</div>}
@@ -4357,7 +4357,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                 </div>
               ))}
             </div>
-            <div style={{padding:"10px 16px 16px",background:C.white,borderTop:"1px solid "+C.border,display:"flex",gap:8,alignItems:"center",flexShrink:0,zIndex:2}}>
+            <div style={{padding:"10px 16px",background:C.white,borderTop:"1px solid "+C.border,display:"flex",gap:8,alignItems:"center",flexShrink:0,zIndex:2,marginBottom:"calc(64px + env(safe-area-inset-bottom,0px))"}}>
               <input value={msg} onChange={e=>setMsg(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} placeholder="Escribí un mensaje..." style={{flex:1,padding:"10px 16px",borderRadius:24,border:"1.5px solid "+C.border,fontSize:14,background:C.bg,color:C.text,outline:"none"}}/>
               <button onClick={send} style={{background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",border:"none",borderRadius:"50%",width:44,height:44,cursor:"pointer",color:C.white,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
