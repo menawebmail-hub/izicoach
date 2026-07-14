@@ -4439,15 +4439,12 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
               <button onClick={async()=>{
                 const coachId=localStorage.getItem("izi_student_coach_id")?.replace(/"/g,"");
                 const studentIdRaw=localStorage.getItem("izi_student_id_raw");
-                console.log("save: coachId=",coachId,"studentIdRaw=",studentIdRaw,"student=",student);
                 if(coachId&&studentIdRaw){
-                  const {data,error}=await supabase.from("coach_data").select("students").eq("coach_id",coachId).single();
-                  console.log("coach_data:", data, error);
+                  const {data}=await supabase.from("coach_data").select("students").eq("coach_id",coachId).single();
                   if(data?.students){
                     const students=JSON.parse(data.students);
                     const updated=students.map(s=>String(s.id)===studentIdRaw?{...s,name:student.name,phone:student.phone,email:student.email,photo:student.photo}:s);
-                    const {error:e2}=await supabase.from("coach_data").update({students:JSON.stringify(updated)}).eq("coach_id",coachId);
-                    console.log("update error:", e2);
+                    await supabase.from("coach_data").update({students:JSON.stringify(updated)}).eq("coach_id",coachId);
                   }
                 }
                 setTab("home");
