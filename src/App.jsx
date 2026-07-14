@@ -942,7 +942,7 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
       cls:c,reason:"cancelled",students:(c.students||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean)
     })).filter(x=>x.students.length>0),
   ];
-  const todayC=classes.filter(c=>c.date===TODAY_DATE&&!c.cancelled);
+  const todayC=classes.filter(c=>c.date===TODAY_DATE&&!c.cancelled&&!isClassDone(c.date,c.timeEnd));
   const mN=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
   const todayLabel=new Date(TODAY_DATE+"T12:00:00").getDate()+" de "+mN[new Date(TODAY_DATE+"T12:00:00").getMonth()];
   return (
