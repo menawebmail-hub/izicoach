@@ -35,16 +35,17 @@ const C = {
 
 
 const TODAY_DATE=(()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
-const NOW_TIME=(()=>{const d=new Date();return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");})();
 
-// Check if a class date+timeEnd has passed
+// Check if a class date+timeEnd has passed (dynamic - called at render time)
 const isClassDone=(date,timeEnd)=>{
   if(!date) return false;
-  if(date<TODAY_DATE) return true;
-  if(date>TODAY_DATE) return false;
-  // Same day — check time
+  const now=new Date();
+  const todayStr=now.getFullYear()+"-"+String(now.getMonth()+1).padStart(2,"0")+"-"+String(now.getDate()).padStart(2,"0");
+  if(date<todayStr) return true;
+  if(date>todayStr) return false;
+  const nowTime=String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0");
   const endTime=timeEnd||"23:59";
-  return NOW_TIME>=endTime;
+  return nowTime>=endTime;
 };
 
 // Currency formatting
@@ -4784,6 +4785,11 @@ export default function App() {
   const [showNewClass,setShowNewClass]=useState(false);
   const [showNewStudent,setShowNewStudent]=useState(false);
   const [chatTarget,setChatTarget]=useState(null);
+  const [tick,setTick]=useState(0);
+  useEffect(()=>{
+    const interval=setInterval(()=>setTick(t=>t+1),1800000); // re-render every 30 min
+    return ()=>clearInterval(interval);
+  },[]);
   const [unreadChats,setUnreadChats]=useState({});
 
   // Subscribe to unread messages
