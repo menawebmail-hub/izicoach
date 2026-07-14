@@ -4436,7 +4436,19 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                   <input value={f.v} onChange={e=>setStudent({...student,[f.k]:e.target.value})} style={{width:"100%",padding:"11px 14px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",color:C.text,background:C.bg,outline:"none"}}/>
                 </div>
               ))}
-              <button onClick={async()=>{setTab("home");}} style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:700}}>Guardar cambios</button>
+              <button onClick={async()=>{
+                const coachId=localStorage.getItem("izi_student_coach_id")?.replace(/"/g,"");
+                const studentIdRaw=localStorage.getItem("izi_student_id_raw");
+                if(coachId&&studentIdRaw){
+                  const {data}=await supabase.from("coach_data").select("students").eq("coach_id",coachId).single();
+                  if(data?.students){
+                    const students=JSON.parse(data.students);
+                    const updated=students.map(s=>String(s.id)===studentIdRaw?{...s,name:student.name,phone:student.phone,email:student.email,photo:student.photo}:s);
+                    await supabase.from("coach_data").update({students:JSON.stringify(updated)}).eq("coach_id",coachId);
+                  }
+                }
+                setTab("home");
+              }} style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:700}}>Guardar cambios</button>
             </WhiteCard>
 
             {/* Password */}
