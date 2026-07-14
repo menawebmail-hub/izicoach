@@ -4443,8 +4443,9 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                   const {data}=await supabase.from("coach_data").select("students").eq("coach_id",coachId).single();
                   if(data?.students){
                     const students=JSON.parse(data.students);
-                    const updated=students.map(s=>String(s.id)===studentIdRaw?{...s,name:student.name,phone:student.phone,email:student.email,photo:student.photo}:s);
+                    const updated=students.map(s=>String(s.id)===studentIdRaw?{...s,name:student.name,phone:student.phone||"",email:student.email||""}:s);
                     await supabase.from("coach_data").update({students:JSON.stringify(updated)}).eq("coach_id",coachId);
+                    localStorage.setItem("izi_students",JSON.stringify(updated));
                   }
                 }
                 setTab("home");
