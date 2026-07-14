@@ -4436,7 +4436,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                   <input value={f.v} onChange={e=>setStudent({...student,[f.k]:e.target.value})} style={{width:"100%",padding:"11px 14px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",color:C.text,background:C.bg,outline:"none"}}/>
                 </div>
               ))}
-              <button style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:700}}>Guardar cambios</button>
+              <button onClick={async()=>{setTab("home");}} style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:700}}>Guardar cambios</button>
             </WhiteCard>
 
             {/* Password */}
@@ -4448,7 +4448,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                   <input type="password" value={f.v} onChange={e=>f.s(e.target.value)} placeholder="••••••••" style={{width:"100%",padding:"11px 14px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",color:C.text,background:C.bg,outline:"none"}}/>
                 </div>
               ))}
-              <button style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:700,marginTop:4}}>Actualizar contraseña</button>
+              <button onClick={async()=>{if(!newPass||newPass!==newPass2){alert("Las contraseñas no coinciden.");return;}if(newPass.length<6){alert("Mínimo 6 caracteres.");return;}const {error}=await supabase.auth.updateUser({password:newPass});if(error){alert("Error: "+error.message);}else{setOldPass("");setNewPass("");setNewPass2("");setTab("home");}}} style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:700,marginTop:4}}>Actualizar contraseña</button>
             </WhiteCard>
 
             <button onClick={onExit} style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:"#FFF0F0",color:"#D32F2F",fontSize:14,cursor:"pointer",fontWeight:700}}>Cerrar sesión</button>
