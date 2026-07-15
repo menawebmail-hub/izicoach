@@ -4124,6 +4124,11 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
       }).subscribe();
     return ()=>supabase.removeChannel(channel);
   },[coachId,student?.id]);
+  const send=()=>{
+    if(!msg.trim()||!coachId||!student?.id) return;
+    const text=msg;setMsg("");
+    supabase.from("messages").insert({coach_id:coachId,student_id:student.id,text,from_coach:false,read:false,is_alert:false});
+  };
   const doSaveProfile=(s)=>{
     const cId=coachId||(localStorage.getItem("izi_student_coach_id")||"").replace(/"/g,"");
     const studentIdRaw=localStorage.getItem("izi_student_id_raw")||"";
