@@ -4129,7 +4129,8 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
     const text=msg;setMsg("");
     const optimistic={id:Date.now(),coach_id:coachId,student_id:student.id,text,from_coach:false,read:false,is_alert:false,created_at:new Date().toISOString()};
     setMsgs(p=>[...p,optimistic]);
-    supabase.from("messages").insert({coach_id:coachId,student_id:student.id,text,from_coach:false,read:false,is_alert:false});
+    supabase.from("messages").insert({coach_id:coachId,student_id:student.id,text,from_coach:false,read:false,is_alert:false})
+      .then(({error})=>{if(error)console.error("send error:",error);});
   };
   const [saving,setSaving]=useState(false);
   const doSaveProfile=(s)=>{
