@@ -4140,11 +4140,12 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
         if(data&&data.students){
           const studs=JSON.parse(data.students);
           const updated=studs.map(x=>String(x.id)===studentIdRaw?{...x,name:s.name,phone:s.phone||"",email:s.email||""}:x);
-          return supabase.from("coach_data").update({students:JSON.stringify(updated)}).eq("coach_id",cId)
-            .then(()=>{localStorage.setItem("izi_students",JSON.stringify(updated));});
+          supabase.from("coach_data").update({students:JSON.stringify(updated)}).eq("coach_id",cId);
+          localStorage.setItem("izi_students",JSON.stringify(updated));
         }
+        setSaving(false);
+        setTab("home");
       })
-      .then(()=>{setSaving(false);setTab("home");})
       .catch(()=>{setSaving(false);setTab("home");});
   };
   const attLogs=[];
