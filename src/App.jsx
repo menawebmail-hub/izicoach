@@ -4129,20 +4129,23 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
     const text=msg;setMsg("");
     supabase.from("messages").insert({coach_id:coachId,student_id:student.id,text,from_coach:false,read:false,is_alert:false});
   };
+  const [saving,setSaving]=useState(false);
   const doSaveProfile=(s)=>{
     const cId=coachId||(localStorage.getItem("izi_student_coach_id")||"").replace(/"/g,"");
     const studentIdRaw=localStorage.getItem("izi_student_id_raw")||"";
     if(!cId||!studentIdRaw){setTab("home");return;}
+    setSaving(true);
     supabase.from("coach_data").select("students").eq("coach_id",cId).single()
       .then(({data})=>{
         if(data&&data.students){
           const studs=JSON.parse(data.students);
           const updated=studs.map(x=>String(x.id)===studentIdRaw?{...x,name:s.name,phone:s.phone||"",email:s.email||""}:x);
-          supabase.from("coach_data").update({students:JSON.stringify(updated)}).eq("coach_id",cId);
-          localStorage.setItem("izi_students",JSON.stringify(updated));
+          return supabase.from("coach_data").update({students:JSON.stringify(updated)}).eq("coach_id",cId)
+            .then(()=>{localStorage.setItem("izi_students",JSON.stringify(updated));});
         }
-      });
-    setTimeout(()=>setTab("home"),2000);
+      })
+      .then(()=>{setSaving(false);setTab("home");})
+      .catch(()=>{setSaving(false);setTab("home");});
   };
   const attLogs=[];
   classes.forEach(cls=>{
@@ -4451,7 +4454,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                   <input value={f.v} onChange={e=>setStudent({...student,[f.k]:e.target.value})} style={{width:"100%",padding:"11px 14px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",color:C.text,background:C.bg,outline:"none"}}/>
                 </div>
               ))}
-              <button onClick={()=>doSaveProfile(student)} style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:700}}>Guardar cambios</button>
+              <button onClick={()=>doSaveProfile(student)} disabled={saving} style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:700,opacity:saving?0.7:1}}>{saving?"Guardando...":"Guardar cambios"}</button>
             </WhiteCard>
 
             {/* Password */}
