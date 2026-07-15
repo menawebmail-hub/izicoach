@@ -4124,20 +4124,19 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
       }).subscribe();
     return ()=>supabase.removeChannel(channel);
   },[coachId,student?.id]);
-  const saveProfile=async()=>{
-    try{
-      const cId=coachId||(localStorage.getItem("izi_student_coach_id")?.replace(/"/g,""));
-      const studentIdRaw=localStorage.getItem("izi_student_id_raw");
-      if(cId&&studentIdRaw){
-        const {data}=await supabase.from("coach_data").select("students").eq("coach_id",cId).single();
-        if(data?.students){
+  const doSaveProfile=()=>{
+    const cId=coachId||(localStorage.getItem("izi_student_coach_id")||"").replace(/"/g,"");
+    const studentIdRaw=localStorage.getItem("izi_student_id_raw")||"";
+    if(!cId||!studentIdRaw){setTab("home");return;}
+    supabase.from("coach_data").select("students").eq("coach_id",cId).single()
+      .then(({data})=>{
+        if(data&&data.students){
           const studs=JSON.parse(data.students);
           const updated=studs.map(s=>String(s.id)===studentIdRaw?{...s,name:student.name,phone:student.phone||"",email:student.email||""}:s);
-          await supabase.from("coach_data").update({students:JSON.stringify(updated)}).eq("coach_id",cId);
-          localStorage.setItem("izi_students",JSON.stringify(updated));
+          supabase.from("coach_data").update({students:JSON.stringify(updated)}).eq("coach_id",cId)
+            .then(()=>localStorage.setItem("izi_students",JSON.stringify(updated)));
         }
-      }
-    }catch(e){console.error("saveProfile error:",e);}
+      });
     setTab("home");
   };
   const attLogs=[];
@@ -4447,7 +4446,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                   <input value={f.v} onChange={e=>setStudent({...student,[f.k]:e.target.value})} style={{width:"100%",padding:"11px 14px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",color:C.text,background:C.bg,outline:"none"}}/>
                 </div>
               ))}
-              <button onClick={saveProfile} style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:700}}>Guardar cambios</button>
+              <button onClick={doSaveProfile} style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:700}}>Guardar cambios</button>
             </WhiteCard>
 
             {/* Password */}
