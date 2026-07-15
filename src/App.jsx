@@ -4437,18 +4437,20 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                 </div>
               ))}
               <button onClick={async()=>{
-                const coachId=localStorage.getItem("izi_student_coach_id")?.replace(/"/g,"");
-                const studentIdRaw=localStorage.getItem("izi_student_id_raw");
-                if(coachId&&studentIdRaw){
-                  const {data}=await supabase.from("coach_data").select("students").eq("coach_id",coachId).single();
-                  if(data?.students){
-                    const students=JSON.parse(data.students);
-                    const updated=students.map(s=>String(s.id)===studentIdRaw?{...s,name:student.name,phone:student.phone||"",email:student.email||""}:s);
-                    const {error:ue}=await supabase.from("coach_data").update({students:JSON.stringify(updated)}).eq("coach_id",coachId);
-                    if(!ue) localStorage.setItem("izi_students",JSON.stringify(updated));
+                try{
+                  const coachId=localStorage.getItem("izi_student_coach_id")?.replace(/"/g,"");
+                  const studentIdRaw=localStorage.getItem("izi_student_id_raw");
+                  if(coachId&&studentIdRaw){
+                    const {data}=await supabase.from("coach_data").select("students").eq("coach_id",coachId).single();
+                    if(data?.students){
+                      const students=JSON.parse(data.students);
+                      const updated=students.map(s=>String(s.id)===studentIdRaw?{...s,name:student.name,phone:student.phone||"",email:student.email||""}:s);
+                      await supabase.from("coach_data").update({students:JSON.stringify(updated)}).eq("coach_id",coachId);
+                      localStorage.setItem("izi_students",JSON.stringify(updated));
+                    }
                   }
-                }
-                setTimeout(()=>setTab("home"),100);
+                }catch(e){console.error(e);}
+                setTab("home");
               }} style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:700}}>Guardar cambios</button>
             </WhiteCard>
 
