@@ -200,7 +200,7 @@ function NavBar({ tabs, active, onSelect, zIdx=0, badges={} }) {
           <button key={t.id} onClick={()=>onSelect(t.id)} style={{flex:1,background:"none",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"8px 0 6px",position:"relative"}}>
             {isActive&&<div style={{position:"absolute",top:0,left:"50%",transform:"translateX(-50%)",width:28,height:3,borderRadius:"0 0 4px 4px",background:C.blue2}}></div>}
             <div style={{width:38,height:38,borderRadius:12,background:isActive?"linear-gradient(135deg,"+C.blueL+",#D0E4FF)":"transparent",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.15s",position:"relative"}}>
-              {ICONS[t.id]?ICONS[t.id](col):typeof t.icon==="function"?t.icon(col):<span style={{fontSize:20,color:col}}>{t.icon}</span>}
+              {ICONS[t.id]?ICONS[t.id](col):<span style={{fontSize:20,color:col}}>{t.icon}</span>}
               {badge>0&&<div style={{position:"absolute",top:-2,right:-2,background:"#FF4757",borderRadius:"50%",minWidth:16,height:16,fontSize:9,fontWeight:800,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",border:"2px solid #fff",padding:"0 2px"}}>{badge>9?"9+":badge}</div>}
             </div>
             <span style={{fontSize:10,color:col,fontWeight:isActive?700:500,letterSpacing:0.1}}>{t.label}</span>
@@ -4124,37 +4124,21 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
       }).subscribe();
     return ()=>supabase.removeChannel(channel);
   },[coachId,student?.id]);
-  const send=()=>{
-    if(!msg.trim()||!coachId||!student?.id) return;
-    const text=msg;setMsg("");
-    const optimistic={id:Date.now(),coach_id:coachId,student_id:student.id,text,from_coach:false,read:false,is_alert:false,created_at:new Date().toISOString()};
-    setMsgs(p=>[...p,optimistic]);
-    supabase.from("messages").insert({coach_id:coachId,student_id:student.id,text,from_coach:false,read:false,is_alert:false})
-      .then(({error})=>{if(error)console.error("send error:",error);});
-  };
-  const [saving,setSaving]=useState(false);
-  const doSaveProfile=(s)=>{
-    const cId=coachId||(localStorage.getItem("izi_student_coach_id")||"").replace(/"/g,"");
-    const studentIdRaw=localStorage.getItem("izi_student_id_raw")||"";
-    if(!cId||!studentIdRaw){setTab("home");return;}
-    setSaving(true);
-    // Update localStorage immediately
+  const saveProfile=async()=>{
     try{
-      const existing=JSON.parse(localStorage.getItem("izi_students")||"[]");
-      const updated=existing.map(x=>String(x.id)===studentIdRaw?{...x,name:s.name,phone:s.phone||"",email:s.email||""}:x);
-      localStorage.setItem("izi_students",JSON.stringify(updated));
-      // Update Supabase
-      supabase.from("coach_data").update({students:JSON.stringify(updated)}).eq("coach_id",cId)
-        .then(({error})=>{
-          if(error) console.error("save error:",error);
-          setSaving(false);
-          setTab("home");
-        });
-    }catch(e){
-      console.error(e);
-      setSaving(false);
-      setTab("home");
-    }
+      const cId=coachId||(localStorage.getItem("izi_student_coach_id")?.replace(/"/g,""));
+      const studentIdRaw=localStorage.getItem("izi_student_id_raw");
+      if(cId&&studentIdRaw){
+        const {data}=await supabase.from("coach_data").select("students").eq("coach_id",cId).single();
+        if(data?.students){
+          const studs=JSON.parse(data.students);
+          const updated=studs.map(s=>String(s.id)===studentIdRaw?{...s,name:student.name,phone:student.phone||"",email:student.email||""}:s);
+          await supabase.from("coach_data").update({students:JSON.stringify(updated)}).eq("coach_id",cId);
+          localStorage.setItem("izi_students",JSON.stringify(updated));
+        }
+      }
+    }catch(e){console.error("saveProfile error:",e);}
+    setTab("home");
   };
   const attLogs=[];
   classes.forEach(cls=>{
@@ -4463,7 +4447,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                   <input value={f.v} onChange={e=>setStudent({...student,[f.k]:e.target.value})} style={{width:"100%",padding:"11px 14px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",color:C.text,background:C.bg,outline:"none"}}/>
                 </div>
               ))}
-              <button onClick={()=>doSaveProfile(student)} disabled={saving} style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:700,opacity:saving?0.7:1}}>{saving?"Guardando...":"Guardar cambios"}</button>
+              <button onClick={saveProfile} style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:700}}>Guardar cambios</button>
             </WhiteCard>
 
             {/* Password */}
@@ -4848,6 +4832,8 @@ export default function App() {
   const syncAll=async(newStudents, newClasses, newExpenses, newCourts, newPackages)=>{
     const userId=window._iziUserId;
     if(!userId) return;
+    // Never sync if in student portal mode
+    if(localStorage.getItem("izi_mode")==='"student_portal"') return;
     // Validate data before saving - must be arrays
     if(!Array.isArray(newStudents)||!Array.isArray(newClasses)) return;
     try {
@@ -4902,7 +4888,7 @@ export default function App() {
   // Sync all data to Supabase when anything changes (debounced 1s)
   useEffect(()=>{
     if(!window._iziUserId||loadingAuth||checkingProfile) return;
-    if(mode==="student_portal") return; // students don't sync coach data
+    if(mode==="student_portal") return; // never sync coach data as student
     const timer=setTimeout(()=>{
       syncAll(students,classes,expenses,courts,packages);
     },1000);
