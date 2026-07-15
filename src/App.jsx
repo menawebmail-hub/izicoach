@@ -5108,8 +5108,7 @@ export default function App() {
       // If studentPacks changed, update student combos
       if(cd.studentPacks){
         try {
-
-        const editedClass=classes.find(c=>c.id===cd.id)||cd;
+        console.log("studentPacks:", JSON.stringify(cd.studentPacks).slice(0,200));
         setStudents(p=>p.map(s=>{
           const sp=cd.studentPacks[s.id]||cd.studentPacks[String(s.id)];
           if(!sp||!sp.pack) return s;
