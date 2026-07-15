@@ -4129,8 +4129,10 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
     const studentIdRaw=localStorage.getItem("izi_student_id_raw")||"";
     console.log("doSaveProfile: cId=",cId,"studentIdRaw=",studentIdRaw,"name=",s.name,"phone=",s.phone,"cId length=",cId?.length,"first char=",cId?.[0]);
     if(!cId||!studentIdRaw){setTab("home");return;}
-    supabase.from("coach_data").select("students").eq("coach_id",cId).single()
-      .then(({data,error})=>{
+    console.log("calling supabase...");
+    const promise=supabase.from("coach_data").select("students").eq("coach_id",cId).single();
+    setTimeout(()=>console.log("3 seconds passed"),3000);
+    promise.then(({data,error})=>{
         console.log("coach_data fetched:", data?"ok":"null", error);
         if(data&&data.students){
           const studs=JSON.parse(data.students);
