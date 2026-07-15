@@ -4127,6 +4127,8 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
   const send=()=>{
     if(!msg.trim()||!coachId||!student?.id) return;
     const text=msg;setMsg("");
+    const optimistic={id:Date.now(),coach_id:coachId,student_id:student.id,text,from_coach:false,read:false,is_alert:false,created_at:new Date().toISOString()};
+    setMsgs(p=>[...p,optimistic]);
     supabase.from("messages").insert({coach_id:coachId,student_id:student.id,text,from_coach:false,read:false,is_alert:false});
   };
   const [saving,setSaving]=useState(false);
