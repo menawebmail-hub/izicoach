@@ -4136,17 +4136,25 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
   const doSaveProfile=(s)=>{
     const cId=coachId||(localStorage.getItem("izi_student_coach_id")||"").replace(/"/g,"");
     const studentIdRaw=localStorage.getItem("izi_student_id_raw")||"";
+    if(!cId||!studentIdRaw){setTab("home");return;}
+    setSaving(true);
     // Update localStorage immediately
     try{
       const existing=JSON.parse(localStorage.getItem("izi_students")||"[]");
       const updated=existing.map(x=>String(x.id)===studentIdRaw?{...x,name:s.name,phone:s.phone||"",email:s.email||""}:x);
       localStorage.setItem("izi_students",JSON.stringify(updated));
-      // Fire and forget - update Supabase in background
-      if(cId&&studentIdRaw){
-        supabase.from("coach_data").update({students:JSON.stringify(updated)}).eq("coach_id",cId);
-      }
-    }catch(e){console.error(e);}
-    setTab("home");
+      // Update Supabase
+      supabase.from("coach_data").update({students:JSON.stringify(updated)}).eq("coach_id",cId)
+        .then(({error})=>{
+          if(error) console.error("save error:",error);
+          setSaving(false);
+          setTab("home");
+        });
+    }catch(e){
+      console.error(e);
+      setSaving(false);
+      setTab("home");
+    }
   };
   const attLogs=[];
   classes.forEach(cls=>{
@@ -4455,7 +4463,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                   <input value={f.v} onChange={e=>setStudent({...student,[f.k]:e.target.value})} style={{width:"100%",padding:"11px 14px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",color:C.text,background:C.bg,outline:"none"}}/>
                 </div>
               ))}
-              <button onClick={()=>doSaveProfile(student)} style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:700}}>Guardar cambios</button>
+              <button onClick={()=>doSaveProfile(student)} disabled={saving} style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:700,opacity:saving?0.7:1}}>{saving?"Guardando...":"Guardar cambios"}</button>
             </WhiteCard>
 
             {/* Password */}
