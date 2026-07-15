@@ -4127,14 +4127,19 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
   const doSaveProfile=(s)=>{
     const cId=coachId||(localStorage.getItem("izi_student_coach_id")||"").replace(/"/g,"");
     const studentIdRaw=localStorage.getItem("izi_student_id_raw")||"";
+    console.log("doSaveProfile: cId=",cId,"studentIdRaw=",studentIdRaw,"name=",s.name,"phone=",s.phone);
     if(!cId||!studentIdRaw){setTab("home");return;}
     supabase.from("coach_data").select("students").eq("coach_id",cId).single()
-      .then(({data})=>{
+      .then(({data,error})=>{
+        console.log("coach_data fetched:", data?"ok":"null", error);
         if(data&&data.students){
           const studs=JSON.parse(data.students);
           const updated=studs.map(x=>String(x.id)===studentIdRaw?{...x,name:s.name,phone:s.phone||"",email:s.email||""}:x);
           supabase.from("coach_data").update({students:JSON.stringify(updated)}).eq("coach_id",cId)
-            .then(()=>localStorage.setItem("izi_students",JSON.stringify(updated)));
+            .then(({error:e2})=>{
+              console.log("update result:", e2?"error:"+e2.message:"ok");
+              if(!e2) localStorage.setItem("izi_students",JSON.stringify(updated));
+            });
         }
       });
     setTab("home");
