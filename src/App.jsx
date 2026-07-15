@@ -4902,6 +4902,7 @@ export default function App() {
   // Sync all data to Supabase when anything changes (debounced 1s)
   useEffect(()=>{
     if(!window._iziUserId||loadingAuth||checkingProfile) return;
+    if(mode==="student_portal") return; // students don't sync coach data
     const timer=setTimeout(()=>{
       syncAll(students,classes,expenses,courts,packages);
     },1000);
