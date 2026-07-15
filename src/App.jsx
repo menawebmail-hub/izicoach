@@ -35,16 +35,17 @@ const C = {
 
 
 const TODAY_DATE=(()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
-const NOW_TIME=(()=>{const d=new Date();return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");})();
 
-// Check if a class date+timeEnd has passed
+// Check if a class date+timeEnd has passed (dynamic - called at render time)
 const isClassDone=(date,timeEnd)=>{
   if(!date) return false;
-  if(date<TODAY_DATE) return true;
-  if(date>TODAY_DATE) return false;
-  // Same day — check time
+  const now=new Date();
+  const todayStr=now.getFullYear()+"-"+String(now.getMonth()+1).padStart(2,"0")+"-"+String(now.getDate()).padStart(2,"0");
+  if(date<todayStr) return true;
+  if(date>todayStr) return false;
+  const nowTime=String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0");
   const endTime=timeEnd||"23:59";
-  return NOW_TIME>=endTime;
+  return nowTime>=endTime;
 };
 
 // Currency formatting
@@ -942,7 +943,7 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
       cls:c,reason:"cancelled",students:(c.students||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean)
     })).filter(x=>x.students.length>0),
   ];
-  const todayC=classes.filter(c=>c.date===TODAY_DATE&&!c.cancelled);
+  const todayC=classes.filter(c=>c.date===TODAY_DATE&&!c.cancelled&&!isClassDone(c.date,c.timeEnd));
   const mN=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
   const todayLabel=new Date(TODAY_DATE+"T12:00:00").getDate()+" de "+mN[new Date(TODAY_DATE+"T12:00:00").getMonth()];
   return (
@@ -4123,10 +4124,21 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
       }).subscribe();
     return ()=>supabase.removeChannel(channel);
   },[coachId,student?.id]);
-  const send=async()=>{
-    if(!msg.trim()||!coachId||!student?.id) return;
-    const text=msg;setMsg("");
-    await supabase.from("messages").insert({coach_id:coachId,student_id:student.id,text,from_coach:false,read:false,is_alert:false});
+  const saveProfile=async()=>{
+    try{
+      const cId=coachId||(localStorage.getItem("izi_student_coach_id")?.replace(/"/g,""));
+      const studentIdRaw=localStorage.getItem("izi_student_id_raw");
+      if(cId&&studentIdRaw){
+        const {data}=await supabase.from("coach_data").select("students").eq("coach_id",cId).single();
+        if(data?.students){
+          const studs=JSON.parse(data.students);
+          const updated=studs.map(s=>String(s.id)===studentIdRaw?{...s,name:student.name,phone:student.phone||"",email:student.email||""}:s);
+          await supabase.from("coach_data").update({students:JSON.stringify(updated)}).eq("coach_id",cId);
+          localStorage.setItem("izi_students",JSON.stringify(updated));
+        }
+      }
+    }catch(e){console.error("saveProfile error:",e);}
+    setTab("home");
   };
   const attLogs=[];
   classes.forEach(cls=>{
@@ -4435,7 +4447,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                   <input value={f.v} onChange={e=>setStudent({...student,[f.k]:e.target.value})} style={{width:"100%",padding:"11px 14px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",color:C.text,background:C.bg,outline:"none"}}/>
                 </div>
               ))}
-              <button style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:700}}>Guardar cambios</button>
+              <button onClick={saveProfile} style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:700}}>Guardar cambios</button>
             </WhiteCard>
 
             {/* Password */}
@@ -4447,7 +4459,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                   <input type="password" value={f.v} onChange={e=>f.s(e.target.value)} placeholder="••••••••" style={{width:"100%",padding:"11px 14px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",color:C.text,background:C.bg,outline:"none"}}/>
                 </div>
               ))}
-              <button style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:700,marginTop:4}}>Actualizar contraseña</button>
+              <button onClick={async()=>{if(!newPass||newPass!==newPass2){alert("Las contraseñas no coinciden.");return;}if(newPass.length<6){alert("Mínimo 6 caracteres.");return;}const {error}=await supabase.auth.updateUser({password:newPass});if(error){alert("Error: "+error.message);}else{setOldPass("");setNewPass("");setNewPass2("");setTab("home");}}} style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:700,marginTop:4}}>Actualizar contraseña</button>
             </WhiteCard>
 
             <button onClick={onExit} style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:"#FFF0F0",color:"#D32F2F",fontSize:14,cursor:"pointer",fontWeight:700}}>Cerrar sesión</button>
@@ -4784,6 +4796,11 @@ export default function App() {
   const [showNewClass,setShowNewClass]=useState(false);
   const [showNewStudent,setShowNewStudent]=useState(false);
   const [chatTarget,setChatTarget]=useState(null);
+  const [tick,setTick]=useState(0);
+  useEffect(()=>{
+    const interval=setInterval(()=>setTick(t=>t+1),1800000); // re-render every 30 min
+    return ()=>clearInterval(interval);
+  },[]);
   const [unreadChats,setUnreadChats]=useState({});
 
   // Subscribe to unread messages
@@ -5109,6 +5126,11 @@ export default function App() {
             (lastDate&&lastDate>=today) || // combo with future dates
             (lastCombo.packType==="mensual"&&lastCombo.paid) // paid mensual
           );
+          // If explicitly marking as paid, update existing combo
+          if(hasActiveFutureCombo&&sp.paid===true&&lastCombo&&!lastCombo.paid){
+            combos[combos.length-1]={...lastCombo,paid:true,paidCount:lastCombo.total||0};
+            return {...s,combos};
+          }
           if(hasActiveFutureCombo) return s; // don't modify - just editing the class
           // Create NEW combo when last combo is expired (last date is in the past)
           if(!lastDate||lastComboFullyUsed){
@@ -5129,12 +5151,12 @@ export default function App() {
               total:qty,
               packType,
               used:0,
-              paid:false,
-              paidCount:0,
+              paid:sp.paid===true,
+              paidCount:sp.paid===true?(qty||0):0,
               date:newDates[0]||startDate,
               amount:parseInt(sp.amount)||0,
               dates:newDates,
-              payments:[],
+              payments:sp.paid===true?[{id:Date.now(),qty:qty||0,amount:parseInt(sp.amount)||0,method:"efectivo",date:today,dates:newDates}]:[],
             });
           } else {
             // Update existing last combo
