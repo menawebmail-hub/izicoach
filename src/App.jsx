@@ -4127,7 +4127,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
   const doSaveProfile=(s)=>{
     const cId=coachId||(localStorage.getItem("izi_student_coach_id")||"").replace(/"/g,"");
     const studentIdRaw=localStorage.getItem("izi_student_id_raw")||"";
-    console.log("doSaveProfile: cId=",cId,"studentIdRaw=",studentIdRaw,"name=",s.name,"phone=",s.phone);
+    console.log("doSaveProfile: cId=",cId,"studentIdRaw=",studentIdRaw,"name=",s.name,"phone=",s.phone,"cId length=",cId?.length,"first char=",cId?.[0]);
     if(!cId||!studentIdRaw){setTab("home");return;}
     supabase.from("coach_data").select("students").eq("coach_id",cId).single()
       .then(({data,error})=>{
