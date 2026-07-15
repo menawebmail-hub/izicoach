@@ -5130,6 +5130,7 @@ export default function App() {
             (lastCombo.packType==="mensual"&&lastCombo.paid) // paid mensual
           );
           if(hasActiveFutureCombo) return s; // don't modify - just editing the class
+          console.log("Creating combo for", s.name, "paid:", sp.paid, "qty:", qty);
           // Create NEW combo when last combo is expired (last date is in the past)
           if(!lastDate||lastComboFullyUsed){
             const startDate=cd.date||today;
@@ -5149,12 +5150,12 @@ export default function App() {
               total:qty,
               packType,
               used:0,
-              paid:false,
-              paidCount:0,
+              paid:sp.paid===true,
+              paidCount:sp.paid===true?(qty||0):0,
               date:newDates[0]||startDate,
               amount:parseInt(sp.amount)||0,
               dates:newDates,
-              payments:[],
+              payments:sp.paid===true?[{id:Date.now(),qty:qty||0,amount:parseInt(sp.amount)||0,method:"efectivo",date:today,dates:newDates}]:[],
             });
           } else {
             // Update existing last combo
