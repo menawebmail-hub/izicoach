@@ -4126,14 +4126,14 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
   },[coachId,student?.id]);
   const saveProfile=async()=>{
     try{
-      const coachId=localStorage.getItem("izi_student_coach_id")?.replace(/"/g,"");
+      const cId=coachId||(localStorage.getItem("izi_student_coach_id")?.replace(/"/g,""));
       const studentIdRaw=localStorage.getItem("izi_student_id_raw");
-      if(coachId&&studentIdRaw){
-        const {data}=await supabase.from("coach_data").select("students").eq("coach_id",coachId).single();
+      if(cId&&studentIdRaw){
+        const {data}=await supabase.from("coach_data").select("students").eq("coach_id",cId).single();
         if(data?.students){
           const studs=JSON.parse(data.students);
           const updated=studs.map(s=>String(s.id)===studentIdRaw?{...s,name:student.name,phone:student.phone||"",email:student.email||""}:s);
-          await supabase.from("coach_data").update({students:JSON.stringify(updated)}).eq("coach_id",coachId);
+          await supabase.from("coach_data").update({students:JSON.stringify(updated)}).eq("coach_id",cId);
           localStorage.setItem("izi_students",JSON.stringify(updated));
         }
       }
