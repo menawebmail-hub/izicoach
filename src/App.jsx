@@ -1384,7 +1384,9 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
     cls.students.forEach(sid=>{
       const st=initialStudents.find(s=>s.id===sid);
       if(!st){init[sid]={pack:"",amount:0,paid:false};return;}
-      const combo=st?.combos?.[st.combos.length-1];
+      const combos=st?.combos||[];
+      // Find combo that covers this class date, or fall back to last combo
+      const combo=combos.find(c=>(c.dates||[]).includes(cls.date))||combos[combos.length-1];
       if(!combo){init[sid]={pack:"",amount:0,paid:false};return;}
       // Find matching package - first try packId, then qty+amount, then qty
       let packVal="";
@@ -4886,6 +4888,7 @@ export default function App() {
   // Sync all data to Supabase when anything changes (debounced 1s)
   useEffect(()=>{
     if(!window._iziUserId||loadingAuth||checkingProfile) return;
+    if(mode==="student_portal") return;
     const timer=setTimeout(()=>{
       syncAll(students,classes,expenses,courts,packages);
     },1000);
