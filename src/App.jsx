@@ -1851,7 +1851,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
   const [reprog,setReprog]=useState(pendingReprog||null);
   const [showCancel,setShowCancel]=useState(null);
   // Auto-open reprog modal if navigated from dashboard
-  useState(()=>{if(pendingReprog){setReprog(pendingReprog);onClearPendingReprog&&onClearPendingReprog();}}); // class to reschedule
+  useEffect(()=>{if(pendingReprog){setReprog(pendingReprog);onClearPendingReprog&&onClearPendingReprog();}},[pendingReprog]); // class to reschedule
 
   const ClassCard=({c})=>{
     const log=(c.attendanceLog||[]).find(e=>e.date===c.date);
@@ -4953,9 +4953,9 @@ export default function App() {
   };
 
   // Set currency from saved profile on load
-  useState(()=>{
+  useEffect(()=>{
     try{const p=JSON.parse(localStorage.getItem("izi_profile")||"{}");if(p.currency) setCUR(p.currency);}catch{}
-  });
+  },[]);
 
   const handleLogout=async()=>{
     await supabase.auth.signOut();
@@ -4969,11 +4969,11 @@ export default function App() {
   };
 
   // Listen for navigation events from child components
-  useState(()=>{
+  useEffect(()=>{
     const handler=(e)=>setTab(e.detail);
     document.addEventListener("izi-nav",handler);
     return ()=>document.removeEventListener("izi-nav",handler);
-  });
+  },[]);
 
   const isFirstTime=students.length===0&&classes.length===0;
 
