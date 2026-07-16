@@ -4959,13 +4959,12 @@ export default function App() {
 
   const handleLogout=async()=>{
     await supabase.auth.signOut();
+    localStorage.clear();
     setUserWithRef(null);
     window._iziUserId=null;
     setStudentsRaw([]);setClassesRaw([]);setCourtsRaw([]);setPackagesRaw([]);
     setCoachProfileRaw({name:"Coach",sport:"",photo:null});setExpensesRaw([]);
-    setMode(null);setOnboarded(false);
-    localStorage.clear();
-    setModeP(null);setOnboardedP(false);setStudentsRaw([]);setClassesRaw([]);setCourtsRaw([]);setPackagesRaw([]);setCoachProfileRaw({name:"Coach",sport:"",photo:null});setExpensesRaw(EXPENSES);
+    setMode(null);setModeP(null);setOnboarded(false);setOnboardedP(false);
   };
 
   // Listen for navigation events from child components
