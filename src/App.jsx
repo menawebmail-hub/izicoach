@@ -4875,11 +4875,12 @@ export default function App() {
         const expenses=tryParse(data.expenses);
         const courts=tryParse(data.courts);
         const packages=tryParse(data.packages);
-        if(students.length>0){setStudentsRaw(students);lsSet("izi_students",students);}
-        if(classes.length>0){setClassesRaw(classes);lsSet("izi_classes",classes);}
-        if(expenses.length>0){setExpensesRaw(expenses);lsSet("izi_expenses",expenses);}
-        if(courts.length>0){setCourtsRaw(courts);lsSet("izi_courts",courts);}
-        if(packages.length>0){setPackagesRaw(packages);lsSet("izi_packages",packages);}
+        // Always trust server data — including empty arrays (e.g. coach deleted all students)
+        setStudentsRaw(students);lsSet("izi_students",students);
+        setClassesRaw(classes);lsSet("izi_classes",classes);
+        setExpensesRaw(expenses);lsSet("izi_expenses",expenses);
+        setCourtsRaw(courts);lsSet("izi_courts",courts);
+        setPackagesRaw(packages);lsSet("izi_packages",packages);
       }
     } catch(e){ console.error("Load error:",e); }
   };
