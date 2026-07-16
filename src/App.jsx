@@ -4855,9 +4855,13 @@ export default function App() {
     } catch(e){ console.error("Sync error:",e); }
   };
 
-  const syncToSupabase=(table,data,userId)=>{
-    // No-op - we use useEffect to sync all state at once
-  };
+  // Wrapped setters that persist to localStorage (Supabase sync handled by debounced useEffect)
+  const setStudents=(v)=>{const next=typeof v==="function"?v(students):v;setStudentsRaw(next);lsSet("izi_students",next);};
+  const setClasses=(v)=>{const next=typeof v==="function"?v(classes):v;setClassesRaw(next);lsSet("izi_classes",next);};
+  const setCourts=(v)=>{const next=typeof v==="function"?v(courts):v;setCourtsRaw(next);lsSet("izi_courts",next);};
+  const setPackages=(v)=>{const next=typeof v==="function"?v(packages):v;setPackagesRaw(next);lsSet("izi_packages",next);};
+  const setCoachProfile=(v)=>{const next=typeof v==="function"?v(coachProfile):v;setCoachProfileRaw(next);lsSet("izi_profile",next);if(window._iziUserId)supabase.from("coaches").upsert({id:window._iziUserId,...next}).then(()=>{});};
+  const setExpenses=(v)=>{const next=typeof v==="function"?v(expenses):v;setExpensesRaw(next);lsSet("izi_expenses",next);};
 
   const loadData=async(userId)=>{
     try {
@@ -4880,14 +4884,6 @@ export default function App() {
     } catch(e){ console.error("Load error:",e); }
   };
 
-  // Wrapped setters that persist to localStorage AND Supabase
-  const setStudents=(v)=>{const next=typeof v==="function"?v(students):v;setStudentsRaw(next);lsSet("izi_students",next);if(window._iziUserId)syncToSupabase("students",next,window._iziUserId);};
-  const setClasses=(v)=>{const next=typeof v==="function"?v(classes):v;setClassesRaw(next);lsSet("izi_classes",next);if(window._iziUserId)syncToSupabase("classes",next,window._iziUserId);};
-  const setCourts=(v)=>{const next=typeof v==="function"?v(courts):v;setCourtsRaw(next);lsSet("izi_courts",next);if(window._iziUserId)syncToSupabase("courts",next,window._iziUserId);};
-  const setPackages=(v)=>{const next=typeof v==="function"?v(packages):v;setPackagesRaw(next);lsSet("izi_packages",next);if(window._iziUserId)syncToSupabase("packages",next,window._iziUserId);};
-  const setCoachProfile=(v)=>{const next=typeof v==="function"?v(coachProfile):v;setCoachProfileRaw(next);lsSet("izi_profile",next);if(window._iziUserId)supabase.from("coaches").upsert({id:window._iziUserId,...next}).then(()=>{});};
-  const setExpenses=(v)=>{const next=typeof v==="function"?v(expenses):v;setExpensesRaw(next);lsSet("izi_expenses",next);if(window._iziUserId)syncToSupabase("expenses",next,window._iziUserId);};
-
   const setModeP=(v)=>{setMode(v);lsSet("izi_mode",v);};
   const setOnboardedP=(v)=>{setOnboarded(v);lsSet("izi_onboarded",v);};
 
@@ -4900,6 +4896,23 @@ export default function App() {
     },1000);
     return ()=>clearTimeout(timer);
   },[students,classes,expenses,courts,packages]);
+
+  // Force sync when user switches tabs or minimizes to prevent data loss
+  useEffect(()=>{
+    const handleVisChange=()=>{
+      if(document.visibilityState==="hidden"&&window._iziUserId&&mode!=="student_portal"){
+        syncAll(
+          JSON.parse(localStorage.getItem("izi_students")||"[]"),
+          JSON.parse(localStorage.getItem("izi_classes")||"[]"),
+          JSON.parse(localStorage.getItem("izi_expenses")||"[]"),
+          JSON.parse(localStorage.getItem("izi_courts")||"[]"),
+          JSON.parse(localStorage.getItem("izi_packages")||"[]")
+        );
+      }
+    };
+    document.addEventListener("visibilitychange",handleVisChange);
+    return ()=>document.removeEventListener("visibilitychange",handleVisChange);
+  },[mode]);
 
   useEffect(()=>{
     supabase.auth.getSession().then(async({data:{session}})=>{
