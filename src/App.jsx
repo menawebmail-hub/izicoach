@@ -2541,11 +2541,17 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   // Build dates from ALL active combos (individual + regular combos)
   const buildAllDates=()=>{
     const result=[];
-    // Include ALL combos that are NOT purely mensual
+    // Include ALL combos that are NOT purely mensual and NOT fully complete (paid+realized)
     const activeCombos=allCombos.filter(c=>{
-      if(c.total>0) return true;
+      if(c.total>0){
+        const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
+        const allDates=c.dates||[];
+        const allRealized=allDates.length>0&&allDates.every(d=>isClassDone(d,"23:59"));
+        // Hide if fully paid AND all classes already realized
+        if(paidCount>=(c.total||1)&&allRealized) return false;
+        return true;
+      }
       if(c.packType==="individual"||c.packType==="combo") return true;
-      // Legacy individual: null total but matches a specific class date
       if(c.total===null&&c.date&&c.packType!=="mensual"){
         const hasMatchingClass=myClasses.some(cls=>cls.date===c.date);
         if(hasMatchingClass) return true;
