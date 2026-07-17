@@ -608,7 +608,7 @@ function AuthFlow({ onLogin, onStudentLogin }) {
           <>
             {inviteInfo&&<div style={{background:"rgba(255,255,255,0.15)",borderRadius:12,padding:"12px 16px",marginBottom:20,textAlign:"center"}}>
               <div style={{fontSize:12,color:"rgba(255,255,255,0.7)"}}>Invitado por</div>
-              <div style={{fontSize:16,fontWeight:800,color:"#fff"}}>{inviteInfo.coaches?.name||"tu entrenador"}</div>
+              <div style={{fontSize:16,fontWeight:800,color:"#fff"}}>{inviteInfo.coach_name||inviteInfo.coaches?.name||"tu entrenador"}</div>
             </div>}
             {err&&<div style={{background:"rgba(229,57,53,0.3)",borderRadius:10,padding:"10px 14px",fontSize:13,color:"#FFCDD2",marginBottom:16}}>{err}</div>}
             {!err&&<>
@@ -1312,7 +1312,8 @@ function InviteModal({ student, userId, onClose }) {
       .then((res)=>{
         if(res.data&&res.data.code){setCode(res.data.code);setLoading(false);return;}
         const c=Math.random().toString(36).slice(2,10).toUpperCase();
-        supabase.from("invites").insert({code:c,coach_id:userId,student_id:student.id,used:false})
+        const coachName=(JSON.parse(localStorage.getItem("izi_profile")||"{}")).name||"";
+        supabase.from("invites").insert({code:c,coach_id:userId,student_id:student.id,used:false,coach_name:coachName})
           .then(()=>{setCode(c);setLoading(false);});
       });
   },[]);
