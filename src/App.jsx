@@ -3351,16 +3351,10 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             const fullyPaid=paidCount>=(lastComboS.total||1);
             if(!fullyPaid) return false; // don't show if unpaid classes remain
             const allDates=lastComboS.dates||[];
-            // Count classes remaining (not yet given = no attendance taken OR future)
-            const remaining=allDates.filter(d=>{
-              if(d>=TODAY_DATE) return true; // future date
-              // Past date: check if attendance was taken
-              const attEntry=myClassesH.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===d);
-              const wasGiven=attEntry&&((attEntry.present||[]).includes(s.id)||(attEntry.ausente_dada||[]).includes(s.id));
-              return !wasGiven; // still remaining if attendance not taken
-            }).length;
-            // Show when 2 or fewer remaining, OR combo is fully completed (0 remaining)
-            return remaining<=2;
+            const futureDates=allDates.filter(d=>d>=TODAY_DATE);
+            // Show renewal if: all dates in the past, OR 2 or fewer future dates remain
+            if(futureDates.length===0) return true; // combo period ended
+            return futureDates.length<=2;
           })();
           // Mensual renewal
           const isMensualCombo=combo&&(combo.total===null&&combo.packType!=="individual")||(combo?.packType==="mensual");
