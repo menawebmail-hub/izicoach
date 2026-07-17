@@ -5188,9 +5188,17 @@ export default function App() {
             (lastCombo.packType==="mensual"&&lastCombo.paid) || // paid mensual
             ((lastCombo.used||0)<(lastCombo.total||0)) // combo with unused classes (even if dates passed)
           );
-          // If explicitly marking as paid, update existing combo
+          // If explicitly marking as paid, update existing combo and create payment record
           if(hasActiveCombo&&sp.paid===true&&lastCombo&&!lastCombo.paid){
-            combos[combos.length-1]={...lastCombo,paid:true,paidCount:lastCombo.total||0};
+            const paymentRecord={
+              id:Date.now(),
+              qty:lastCombo.total||0,
+              amount:lastCombo.amount||sp.amount||0,
+              method:"efectivo",
+              date:TODAY_DATE,
+              dates:lastCombo.dates||[],
+            };
+            combos[combos.length-1]={...lastCombo,paid:true,paidCount:lastCombo.total||0,payments:[...(lastCombo.payments||[]),paymentRecord]};
             return {...s,combos};
           }
           if(hasActiveCombo) return s; // don't modify - just editing the class
