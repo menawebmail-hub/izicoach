@@ -2574,7 +2574,6 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   // Build dates from ALL active combos (individual + regular combos)
   const buildAllDates=()=>{
     const result=[];
-    console.log("[buildAllDates] allCombos.length=", allCombos.length, "combos=", allCombos.map(c=>({id:c.id,total:c.total,paid:c.paid,paidCount:c.paidCount,datesLen:(c.dates||[]).length})));
     // Include active combos - hide fully paid AND fully realized ones (those go to history)
     const activeCombos=allCombos.filter(c=>{
       if(c.total>0){
@@ -3034,27 +3033,31 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
 
         {/* Fechas de clase list - show all until full cycle closes */}
         {pagoTipo==="clases"&&(()=>{
-          console.log("[PagoModal DEBUG] allDates.length=", allDates.length, "allDates=", allDates.map(d=>d.date+":"+d.status));
           const lastComboDate=allDates.length>0?allDates[allDates.length-1].date:"";
           const allPaid=allDates.every(d=>d.status==="dada"||d.status==="adar"||d.isCancelled);
           const lastDatePassed=lastComboDate&&lastComboDate<TODAY_DATE;
           // Show ALL dates until every combo cycle is closed
           const activeDates=allPaid&&lastDatePassed?[]:allDates;
           const hasNew=parseInt(localClasses)>0;
-          // Fallback for individual/unpaid with no generated dates
+          // Fallback when all combos are fully paid and realized
           if(activeDates.length===0&&!hasNew){
-            const fallbackDate=lastCombo?.date||TODAY_DATE;
+            const totalPaid=allCombos.reduce((sum,c)=>sum+(c.paidCount||0),0);
+            const totalClasses=allCombos.reduce((sum,c)=>sum+(c.total||0),0);
+            const allComplete=totalPaid>0&&totalPaid>=totalClasses;
             return (
-              <div style={{padding:"0 20px 16px"}}>
-                <div style={{fontSize:11,fontWeight:700,color:"#5C7A9F",letterSpacing:0.5,marginBottom:8}}>FECHAS DE CLASE</div>
-                <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0"}}>
-                  <div style={{width:28,height:28,borderRadius:"50%",background:C.blueL,border:"2px solid #1976D2",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                    <span style={{fontSize:11,fontWeight:800,color:C.blue2}}>1</span>
+              <div style={{padding:"0 20px 16px",textAlign:"center"}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#5C7A9F",letterSpacing:0.5,marginBottom:12}}>FECHAS DE CLASE</div>
+                {allComplete?(
+                  <div style={{padding:"20px",borderRadius:16,background:"#EDFBEC",border:"1.5px solid #66BB6A"}}>
+                    <div style={{fontSize:28}}>✅</div>
+                    <div style={{fontSize:15,fontWeight:800,color:"#2E7D32",marginTop:8}}>Todo al día</div>
+                    <div style={{fontSize:12,color:"#4CAF50",marginTop:4}}>{totalPaid} clases pagadas · {totalClasses} realizadas</div>
                   </div>
-                  <div style={{flex:1,fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(fallbackDate)}</div>
-                  <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:"#FFF3E0",color:"#E65100",fontWeight:700,flexShrink:0}}>Clase No Dada</span>
-                  <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:"#FFF3E0",color:"#E65100",fontWeight:700,flexShrink:0}}>No Pagada</span>
-                </div>
+                ):(
+                  <div style={{padding:"20px",borderRadius:16,background:C.blueL,border:"1.5px solid "+C.border}}>
+                    <div style={{fontSize:13,color:C.mutedDark}}>No hay clases pendientes</div>
+                  </div>
+                )}
               </div>
             );
           }
