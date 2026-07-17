@@ -1420,6 +1420,7 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
       const combos=st?.combos||[];
       // Find combo that covers this class date, or fall back to last combo
       const combo=combos.find(c=>(c.dates||[]).includes(cls.date))||combos[combos.length-1];
+      console.log("[EditClass DEBUG]", st?.name, "cls.date=", cls.date, "combo found:", combo?.id, "paid=", combo?.paid, "dates=", combo?.dates?.slice(0,3));
       if(!combo){init[sid]={pack:"",amount:0,paid:false};return;}
       // Find matching package - first try packId, then qty+amount, then qty
       let packVal="";
@@ -2289,7 +2290,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
         </div>
       )}
 
-      {editCls&&<EditClassScreen cls={editCls} students={students} onClose={()=>setEditCls(null)} onSave={(u)=>{
+      {editCls&&<EditClassScreen key={editCls._virtualId||editCls.id+"_"+editCls.date} cls={editCls} students={students} onClose={()=>setEditCls(null)} onSave={(u)=>{
         // Check if this is a recurring class (has days array with values)
         const isRecurring=editCls.days&&editCls.days.length>0;
         if(isRecurring){
