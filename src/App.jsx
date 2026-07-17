@@ -3033,6 +3033,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
 
         {/* Fechas de clase list - show all until full cycle closes */}
         {pagoTipo==="clases"&&(()=>{
+          console.log("[PagoModal DEBUG] allDates.length=", allDates.length, "allDates=", allDates.map(d=>d.date+":"+d.status));
           const lastComboDate=allDates.length>0?allDates[allDates.length-1].date:"";
           const allPaid=allDates.every(d=>d.status==="dada"||d.status==="adar"||d.isCancelled);
           const lastDatePassed=lastComboDate&&lastComboDate<TODAY_DATE;
