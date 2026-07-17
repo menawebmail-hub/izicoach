@@ -196,7 +196,11 @@ function getRem(s, classes=[]) {
     totalUnpaid+=unpaid;
     totalPorDar+=porDar;
   });
-  if(!anyActive) return null;
+  if(!anyActive){
+    // If we had class combos but none are active, the cycle is complete — return 0 (al día)
+    if(classCombos.length>0) return 0;
+    return null;
+  }
   if(totalUnpaid>0) return -totalUnpaid;
   return totalPorDar;
 }
