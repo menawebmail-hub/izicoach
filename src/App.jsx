@@ -96,6 +96,33 @@ const INIT_CLASSES = [];
 const _nowM=(()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");})();
 const EXPENSES = [];
 
+// Expand recurring classes into per-date virtual instances for display
+// A class with occurrences:["2026-07-13","2026-07-15","2026-07-17"] becomes 3 virtual instances
+// Each shares the same _seriesId so edits/deletes can target the series
+const expandClasses=(classes)=>{
+  const result=[];
+  for(const c of classes){
+    if(c.occurrences&&c.occurrences.length>0){
+      for(const date of c.occurrences){
+        const log=(c.attendanceLog||[]).find(e=>e.date===date);
+        result.push({
+          ...c,
+          _seriesId:c.id,
+          _virtualId:c.id+"_"+date,
+          date,
+          cancelled:c.cancelledDates?.includes(date)||false,
+          rescheduled:c.rescheduledDates?.includes(date)||false,
+          attendanceLog:log?[log]:[],
+        });
+      }
+    } else {
+      // Single class or legacy format — pass through
+      result.push({...c,_seriesId:c.id,_virtualId:c.id+"_"+(c.date||"")});
+    }
+  }
+  return result;
+};
+
 function getCombo(s) {
   const combos=s.combos||[];
   // Prefer last combo with total>0 (individual or combo clases)
@@ -1800,7 +1827,7 @@ function AttModal({ att, students, onAttendance, onClose }) {
   );
 }
 
-function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, courts=[], packages=[], onUpdateStudent, onDeleteClass, pendingReprog, onClearPendingReprog, onAddPackage }) {
+function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAddStudent, courts=[], packages=[], onUpdateStudent, onDeleteClass, pendingReprog, onClearPendingReprog, onAddPackage }) {
   const [selDay,setSelDay]=useState(TODAY_DATE);
   const [viewYear,setViewYear]=useState(new Date().getFullYear());
   const [viewMonth,setViewMonth]=useState(new Date().getMonth());
@@ -2264,7 +2291,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
           onSaveClass(u,true);
           setEditCls(null);
         }
-      }} onCreateStudent={onAddStudent} packages={packages} onDelete={(id)=>{onDeleteClass&&onDeleteClass(id);setEditCls(null);}}/>}
+      }} onCreateStudent={onAddStudent} packages={packages} onDelete={(id)=>{const realId=editCls?._seriesId||id;onDeleteClass&&onDeleteClass(realId);setEditCls(null);}}/>}
 
       {/* Custom delete confirmation modal */}
       {confirmDelete&&(
@@ -2277,7 +2304,7 @@ function Agenda({ students, classes, onSaveClass, onAttendance, onAddStudent, co
             <div style={{fontSize:14,color:"#6B7BAD",textAlign:"center",marginBottom:24,lineHeight:1.5}}>Todas las instancias de <strong>{confirmDelete.title}</strong> serán eliminadas del calendario. Esta acción no se puede deshacer.</div>
             <div style={{display:"flex",gap:10}}>
               <button onClick={()=>setConfirmDelete(null)} style={{flex:1,padding:"13px",borderRadius:12,border:"1.5px solid #E0E7FF",background:"#fff",cursor:"pointer",fontSize:14,color:"#6B7BAD",fontWeight:700}}>Cancelar</button>
-              <button onClick={()=>{onDeleteClass&&onDeleteClass(confirmDelete.id);setConfirmDelete(null);}} style={{flex:1,padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#C62828,#E53935)",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:800}}>Eliminar</button>
+              <button onClick={()=>{onDeleteClass&&onDeleteClass(confirmDelete._seriesId||confirmDelete.id);setConfirmDelete(null);}} style={{flex:1,padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#C62828,#E53935)",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:800}}>Eliminar</button>
             </div>
           </div>
         </div>
@@ -5052,12 +5079,12 @@ export default function App() {
   };
 
   const handleDeleteClass=(id)=>{
+    // Support both expanded virtual classes and raw classes
     const cls=classes.find(c=>c.id===id);
     if(!cls) return;
-    const seriesClasses=classes.filter(c=>c.title===cls.title&&c.time===cls.time&&JSON.stringify(c.days)===JSON.stringify(cls.days));
-    const allDatesInSeries=new Set(seriesClasses.map(c=>c.date));
-    // Calculate new classes and students together
-    const newClasses=classes.filter(c=>!(c.title===cls.title&&c.time===cls.time&&JSON.stringify(c.days)===JSON.stringify(cls.days)));
+    const allDatesInSeries=new Set(cls.occurrences||[cls.date]);
+    // Remove the class (single object now with occurrences)
+    const newClasses=classes.filter(c=>c.id!==cls.id);
     const newStudents=students.map(s=>{
       if(!(cls.students||[]).includes(s.id)) return s;
       const cleanedCombos=s.combos.filter(combo=>{
@@ -5094,21 +5121,22 @@ export default function App() {
 
   const handleSaveClass=(cd,isEdit=false)=>{
     if(isEdit){
+      // Resolve virtual id to real series id
+      const realId=cd._seriesId||cd.id;
       if(cd.applyToAll){
-        // Apply changes to ALL instances of same series (same title+time+days)
-        const orig=classes.find(c=>c.id===cd.id);
+        // With new format, the series is a single object — just update it
         setClasses(p=>p.map(c=>{
-          if(c.title===orig?.title&&c.time===orig?.time&&JSON.stringify(c.days)===JSON.stringify(orig?.days)){
-            return {...c,...cd,date:c.date}; // keep each instance's own date
+          if(c.id===realId){
+            return {...c,...cd,id:realId,date:c.date,occurrences:c.occurrences};
           }
           return c;
         }));
       } else {
-        setClasses(p=>p.map(c=>c.id===cd.id?{...c,...cd}:c));
+        setClasses(p=>p.map(c=>c.id===realId?{...c,...cd,id:realId}:c));
       }
       // Clean combos for students removed from the class
       if(cd.students){
-        const originalClass=classes.find(c=>c.id===cd.id);
+        const originalClass=classes.find(c=>c.id===realId);
         const removedStudentIds=(originalClass?.students||[]).filter(id=>!(cd.students||[]).includes(id));
         if(removedStudentIds.length>0){
           const classDate=originalClass?.date;
@@ -5191,15 +5219,18 @@ export default function App() {
       }
       return;
     }
-    // If occurrences exist, create one class entry per occurrence date
+    // Store a single class definition with occurrences array
     const dates=cd.occurrences&&cd.occurrences.length>0?cd.occurrences:[cd.date||TODAY_DATE];
-    const newClasses=dates.map((date,i)=>({
+    const newClass={
       ...cd,
-      id:Date.now()+i,
-      date,
+      id:Date.now(),
+      date:dates[0],
+      occurrences:dates,
       attendanceLog:[],
-    }));
-    setClasses(p=>[...p,...newClasses]);
+      cancelledDates:[],
+      rescheduledDates:[],
+    };
+    setClasses(p=>[...p,newClass]);
     if(cd.studentData&&cd.studentData.length>0){
       setStudents(p=>p.map(s=>{
         const sd=cd.studentData.find(x=>x.id===s.id);
@@ -5291,10 +5322,12 @@ export default function App() {
     const presentIds=cls.students||[];
     const ausenteDadaIds=cls.ausente_dada||[];
     const ausenteReprogIds=cls.ausente_reprog||[];
-    const allClassStudents=classes.find(c=>c.id===cls.id)?.students||cls.students;
+    // Resolve to the real class id (support expanded virtual classes)
+    const realId=cls._seriesId||cls.id;
+    const allClassStudents=classes.find(c=>c.id===realId)?.students||cls.students;
     // Save attendance log with full status
     setClasses(p=>p.map(c=>{
-      if(c.id!==cls.id) return c;
+      if(c.id!==realId) return c;
       const log=[...(c.attendanceLog||[]).filter(e=>e.date!==classDate),
         {date:classDate,day,present:presentIds,ausente_dada:ausenteDadaIds,ausente_reprog:ausenteReprogIds}];
       return {...c,attendanceLog:log};
@@ -5441,6 +5474,9 @@ export default function App() {
     </div>
   );
 
+  // Expand recurring classes into per-date instances for display
+  const xClasses=expandClasses(classes);
+
   if(mode==="student_portal"){
     const storedStudentIdRaw=localStorage.getItem("izi_student_id_raw")||localStorage.getItem("izi_student_id")||"0";
     const studentData=students.find(s=>String(s.id)===storedStudentIdRaw)||
@@ -5449,14 +5485,14 @@ export default function App() {
                       {id:0,name:user?.email||"Alumno",avatar:"A",sport:"",combos:[]};
     return (
       <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden"}}>
-        <StudentApp student={studentData||{id:0,name:"Alumno",avatar:"A",sport:"",combos:[]}} onExit={async()=>{await supabase.auth.signOut();setUserWithRef(null);setMode(null);localStorage.clear();}} classes={classes} notifications={notifications} sendNotification={sendNotification} coachId={(()=>{try{const v=localStorage.getItem("izi_student_coach_id");return v?JSON.parse(v):null;}catch{return localStorage.getItem("izi_student_coach_id");}})()}/>
+        <StudentApp student={studentData||{id:0,name:"Alumno",avatar:"A",sport:"",combos:[]}} onExit={async()=>{await supabase.auth.signOut();setUserWithRef(null);setMode(null);localStorage.clear();}} classes={xClasses} notifications={notifications} sendNotification={sendNotification} coachId={(()=>{try{const v=localStorage.getItem("izi_student_coach_id");return v?JSON.parse(v):null;}catch{return localStorage.getItem("izi_student_coach_id");}})()}/>
       </div>
     );
   }
 
   if(mode==="student_new") return (
     <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden"}}>
-      <StudentApp student={students[students.length-1]||{id:99,name:"Alumno",avatar:"AL",sport:"",combos:[]}} onExit={()=>setMode(null)} classes={classes} notifications={notifications} sendNotification={sendNotification}/>
+      <StudentApp student={students[students.length-1]||{id:99,name:"Alumno",avatar:"AL",sport:"",combos:[]}} onExit={()=>setMode(null)} classes={xClasses} notifications={notifications} sendNotification={sendNotification}/>
     </div>
   );
 
@@ -5477,13 +5513,13 @@ export default function App() {
       <TopBar onExit={handleLogout} onConfig={()=>setShowConfig(true)}/>
       <div key={"cur-"+currency} style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",position:"relative",overflow:"hidden",paddingBottom:"calc(64px + env(safe-area-inset-bottom, 34px))"}}>
         {tab==="dashboard"&&isFirstTime&&<EmptyDashboard onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)}/>}
-        {tab==="dashboard"&&!isFirstTime&&<Dashboard students={students} classes={classes} onNavigate={handleNavigate} onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)} expenses={expenses} coachProfile={coachProfile}/>}
-        {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={classes} onInvite={()=>setShowInvite(true)} userId={user?.id} onInviteStudent={(s)=>setInviteTarget(s)}/>}
+        {tab==="dashboard"&&!isFirstTime&&<Dashboard students={students} classes={xClasses} onNavigate={handleNavigate} onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)} expenses={expenses} coachProfile={coachProfile}/>}
+        {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={xClasses} onInvite={()=>setShowInvite(true)} userId={user?.id} onInviteStudent={(s)=>setInviteTarget(s)}/>}
         {inviteTarget&&<InviteModal student={inviteTarget} userId={user?.id} onClose={()=>setInviteTarget(null)}/>}
-        {tab==="agenda"&&<Agenda students={students} classes={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])}/>}
+        {tab==="agenda"&&<Agenda students={students} classes={xClasses} rawClasses={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])}/>}
         {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification} userId={user?.id} unreadChats={unreadChats} onMarkRead={(sid)=>setUnreadChats(p=>{const n={...p};delete n[String(sid)];return n;})}/>}
-        {tab==="cobros"&&<Finances students={students} classes={classes} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance}/>}
-        {tab==="finanzas"&&<Finances students={students} classes={classes} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages}/>}
+        {tab==="cobros"&&<Finances students={students} classes={xClasses} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance}/>}
+        {tab==="finanzas"&&<Finances students={students} classes={xClasses} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages}/>}
         {showNewClass&&<NewClassModal onClose={()=>{setShowNewClass(false);if(classes.length===0)setTab("agenda");}} onSave={handleSaveClass} students={students} dateLabel="Nueva clase" onCreateStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])}/>}
         {showNewStudent&&<NewStudentModal onClose={()=>setShowNewStudent(false)} onSave={(d)=>setStudents(p=>[...p,{id:Date.now(),...d}])}/>}
         {showConfig&&<ConfigScreen onClose={()=>setShowConfig(false)} courts={courts} setCourts={setCourts} packages={packages} setPackages={setPackages} coachProfile={coachProfile} setCoachProfile={setCoachProfile}/>}
