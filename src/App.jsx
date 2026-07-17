@@ -949,16 +949,17 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
   // Combos that just completed and need renewal (new combo created but unpaid)
   const comboRenewalAlerts=students.filter(s=>{
     const combos=s.combos||[];
-    if(combos.length<2) return false;
+    if(combos.length===0) return false;
     const last=combos[combos.length-1];
-    const prev=combos[combos.length-2];
-    // Last combo is unpaid (auto-created), previous was paid+complete
-    // But only show if the last combo has NO dates yet (not yet renewed manually)
-    const lastHasDates=last?.dates&&last.dates.length>0;
-    const lastDateIsFuture=lastHasDates&&last.dates[0]>TODAY_DATE;
-    // Don't show if already renewed (last combo has future dates = already set up)
-    if(lastHasDates&&lastDateIsFuture) return false;
-    return last&&!last.paid&&last.paidCount===0&&prev?.paid&&prev?.total>0;
+    if(!last||!last.total||last.total<=0) return false;
+    const paidCount=last.paidCount!==undefined?last.paidCount:(last.paid?last.total:0);
+    const fullyPaid=paidCount>=(last.total||1);
+    if(!fullyPaid) return false;
+    // Check if combo period ended (all dates in the past)
+    const allDates=last.dates||[];
+    const futureDates=allDates.filter(d=>d>=TODAY_DATE);
+    // Show alert if fully paid AND (all dates passed OR 2 or fewer future dates)
+    return futureDates.length<=2;
   });
 
   // Classes that need rescheduling: ausente_reprog OR cancelled (but not already rescheduled)
@@ -1096,7 +1097,7 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
                   <div style={{width:36,height:36,borderRadius:"50%",background:"linear-gradient(135deg,#2E7D32,#43A047)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:800,color:"#fff",flexShrink:0}}>{s.avatar[0]}</div>
                   <div style={{flex:1}}>
                     <div style={{fontSize:13,fontWeight:700,color:C.text}}>{s.name}</div>
-                    <div style={{fontSize:11,color:"#2E7D32",fontWeight:600}}>Combo de {last?.total} clases completado · Nuevo combo sin pagar</div>
+                    <div style={{fontSize:11,color:"#2E7D32",fontWeight:600}}>Combo de {last?.total} clases terminado · Renovar combo</div>
                   </div>
                   <div style={{fontSize:20,fontWeight:900,color:"#2E7D32"}}>{last?.total}</div>
                 </div>
