@@ -3251,7 +3251,17 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
         </div>
         {/* ESTADO DE CUENTAS - 4 columns */}
         {combo&&rem!==null&&(()=>{
-          const allDatesForStudentRaw=s.combos.filter(c=>c.total>0||(c.packType&&c.packType!=="mensual")).flatMap(c=>{
+          // Only count dates from ACTIVE combos (not fully paid+realized)
+          const activeCombosForCount=s.combos.filter(c=>{
+            if(!(c.total>0||(c.packType&&c.packType!=="mensual"))) return false;
+            const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
+            const allDates=c.dates||[];
+            const allRealized=allDates.length>0&&allDates.every(d=>isClassDone(d,"23:59"));
+            // Exclude fully paid AND fully realized combos
+            if(paidCount>=(c.total||1)&&allRealized) return false;
+            return true;
+          });
+          const allDatesForStudentRaw=activeCombosForCount.flatMap(c=>{
             const dates=c.dates||[];
             return dates.map(d=>{
               const attEntry=myClassesH.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===d);
@@ -3286,7 +3296,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             const attEntry=myClassesH.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===d.date);
             return attEntry&&(attEntry.ausente_reprog||[]).includes(s.id);
           }).length;
-          const cancelledCount=s.combos.filter(c=>c.total>0||(c.packType&&c.packType!=="mensual")).flatMap(c=>c.dates||[]).filter(d=>{
+          const cancelledCount=activeCombosForCount.flatMap(c=>c.dates||[]).filter(d=>{
             const cls=myClassesH.find(c=>c.date===d);
             return cls?.cancelled&&!cls?.rescheduled;
           }).length;
