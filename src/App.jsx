@@ -2574,7 +2574,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   // Build dates from ALL active combos (individual + regular combos)
   const buildAllDates=()=>{
     const result=[];
-    // Include ALL combos that are NOT purely mensual and NOT fully complete (paid+realized)
+    // Include active combos - hide fully paid AND fully realized ones (those go to history)
     const activeCombos=allCombos.filter(c=>{
       if(c.total>0){
         const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
