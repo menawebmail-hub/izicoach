@@ -97,43 +97,29 @@ const _nowM=(()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMont
 const EXPENSES = [];
 
 // Expand recurring classes into per-date virtual instances for display
-// A class with occurrences:["2026-07-13","2026-07-15","2026-07-17"] becomes 3 virtual instances
-// Each shares the same _seriesId so edits/deletes can target the series
+// Expand recurring classes into per-date virtual instances for display
+// NEW format: single object with occurrences + cancelledDates + rescheduledDates
+// LEGACY format: one object per date, may have occurrences copied from spread — ignore it
 const expandClasses=(classes)=>{
-  // Detect legacy format: multiple class objects sharing the same occurrences array
-  // In legacy format, each object has its own date AND the full occurrences list
-  // We detect this by checking if multiple classes share the same id prefix or title+time+days
-  const seenSeries=new Set();
   const result=[];
   for(const c of classes){
-    if(c.occurrences&&c.occurrences.length>0){
-      // Check if this is a NEW format (single object per series) or LEGACY (one object per date with occurrences copied)
-      // Legacy detection: if c.date exists and is one of the occurrences, AND there are sibling classes with same title+time
-      const isLegacy=c.date&&classes.filter(x=>
-        x.id!==c.id&&x.title===c.title&&x.time===c.time&&
-        JSON.stringify(x.days)===JSON.stringify(c.days)&&
-        x.occurrences&&x.occurrences.length>0
-      ).length>0;
-      if(isLegacy){
-        // Legacy per-date object: just use its own date, ignore occurrences
-        result.push({...c,_seriesId:c.id,_virtualId:c.id+"_"+c.date,occurrences:undefined});
-      } else {
-        // New format: expand occurrences into virtual instances
-        for(const date of c.occurrences){
-          const log=(c.attendanceLog||[]).find(e=>e.date===date);
-          result.push({
-            ...c,
-            _seriesId:c.id,
-            _virtualId:c.id+"_"+date,
-            date,
-            cancelled:c.cancelledDates?.includes(date)||false,
-            rescheduled:c.rescheduledDates?.includes(date)||false,
-            attendanceLog:log?[log]:[],
-          });
-        }
+    // New format classes have cancelledDates (added by new handleSaveClass)
+    const isNewFormat=c.hasOwnProperty("cancelledDates");
+    if(isNewFormat&&c.occurrences&&c.occurrences.length>0){
+      for(const date of c.occurrences){
+        const log=(c.attendanceLog||[]).find(e=>e.date===date);
+        result.push({
+          ...c,
+          _seriesId:c.id,
+          _virtualId:c.id+"_"+date,
+          date,
+          cancelled:c.cancelledDates?.includes(date)||false,
+          rescheduled:c.rescheduledDates?.includes(date)||false,
+          attendanceLog:log?[log]:[],
+        });
       }
     } else {
-      // Single class without occurrences — pass through
+      // Legacy or single class — use as-is, strip occurrences to avoid confusion
       result.push({...c,_seriesId:c.id,_virtualId:c.id+"_"+(c.date||"")});
     }
   }
