@@ -5175,19 +5175,20 @@ export default function App() {
           const lastCombo=combos.length>0?combos[combos.length-1]:null;
           const lastDate=lastCombo?.dates?.slice(-1)[0]||"";
           const today=new Date().toISOString().slice(0,10);
-          const lastComboFullyUsed=!lastDate||(lastDate<today);
+          const lastComboFullyUsed=!lastDate||((lastDate<today)&&(lastCombo?.used||0)>=(lastCombo?.total||0));
           // Only create new combo if student has no active combo OR last combo is expired
-          // Don't create if student already has an active combo covering future dates
-          const hasActiveFutureCombo=lastCombo&&(
+          // Don't create if student already has an active combo (future dates OR unused classes)
+          const hasActiveCombo=lastCombo&&(
             (lastDate&&lastDate>=today) || // combo with future dates
-            (lastCombo.packType==="mensual"&&lastCombo.paid) // paid mensual
+            (lastCombo.packType==="mensual"&&lastCombo.paid) || // paid mensual
+            ((lastCombo.used||0)<(lastCombo.total||0)) // combo with unused classes (even if dates passed)
           );
           // If explicitly marking as paid, update existing combo
-          if(hasActiveFutureCombo&&sp.paid===true&&lastCombo&&!lastCombo.paid){
+          if(hasActiveCombo&&sp.paid===true&&lastCombo&&!lastCombo.paid){
             combos[combos.length-1]={...lastCombo,paid:true,paidCount:lastCombo.total||0};
             return {...s,combos};
           }
-          if(hasActiveFutureCombo) return s; // don't modify - just editing the class
+          if(hasActiveCombo) return s; // don't modify - just editing the class
           // Create NEW combo when last combo is expired (last date is in the past)
           if(!lastDate||lastComboFullyUsed){
             const startDate=cd.date||today;
