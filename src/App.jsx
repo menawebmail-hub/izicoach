@@ -1420,7 +1420,6 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
       const combos=st?.combos||[];
       // Find combo that covers this class date, or fall back to last combo
       const combo=combos.find(c=>(c.dates||[]).includes(cls.date))||combos[combos.length-1];
-      console.log("[EditClass DEBUG]", st?.name, "cls.date=", cls.date, "combo found:", combo?.id, "paid=", combo?.paid, "dates=", combo?.dates?.slice(0,3));
       if(!combo){init[sid]={pack:"",amount:0,paid:false};return;}
       // Find matching package - first try packId, then qty+amount, then qty
       let packVal="";
@@ -2003,7 +2002,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                 <div style={{fontSize:12,marginTop:4}}>Tocá + para agregar</div>
               </div>
             ):dayC.map(c=>(
-              <div key={c.id} onClick={()=>setHighlightCls(c.id===highlightCls?null:c.id)} style={{background:c.cancelled?"#FFF3E0":c.rescheduled?"#E3F2FD":isNextComboPending(c,students)?"#F5F5F5":C.white,borderRadius:16,padding:"12px 14px",marginBottom:10,boxShadow:highlightCls===c.id?"0 4px 16px rgba(44,94,247,0.18)":"0 2px 10px rgba(44,94,247,0.07)",border:"1.5px solid "+(highlightCls===c.id?C.blue2:isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:"pointer",opacity:isNextComboPending(c,students)?0.75:1,transition:"box-shadow 0.15s,border 0.15s"}}>
+              <div key={c._virtualId||c.id} onClick={()=>setHighlightCls((c._virtualId||c.id)===highlightCls?null:(c._virtualId||c.id))} style={{background:c.cancelled?"#FFF3E0":c.rescheduled?"#E3F2FD":isNextComboPending(c,students)?"#F5F5F5":C.white,borderRadius:16,padding:"12px 14px",marginBottom:10,boxShadow:highlightCls===(c._virtualId||c.id)?"0 4px 16px rgba(44,94,247,0.18)":"0 2px 10px rgba(44,94,247,0.07)",border:"1.5px solid "+(highlightCls===(c._virtualId||c.id)?C.blue2:isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:"pointer",opacity:isNextComboPending(c,students)?0.75:1,transition:"box-shadow 0.15s,border 0.15s"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:4}}>
@@ -2017,9 +2016,9 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                     </div>
                   </div>
                   <div style={{flexShrink:0}}>
-                    <div style={{display:"flex",alignItems:"center",gap:4,background:highlightCls===c.id?C.blue2:"#F0F2FF",borderRadius:20,padding:"5px 10px"}}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill={highlightCls===c.id?"#fff":C.blue2}><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
-                      <span style={{fontSize:10,fontWeight:700,color:highlightCls===c.id?"#fff":C.blue2}}>{highlightCls===c.id?"Cerrar":"Opciones"}</span>
+                    <div style={{display:"flex",alignItems:"center",gap:4,background:highlightCls===(c._virtualId||c.id)?C.blue2:"#F0F2FF",borderRadius:20,padding:"5px 10px"}}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill={highlightCls===(c._virtualId||c.id)?"#fff":C.blue2}><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+                      <span style={{fontSize:10,fontWeight:700,color:highlightCls===(c._virtualId||c.id)?"#fff":C.blue2}}>{highlightCls===(c._virtualId||c.id)?"Cerrar":"Opciones"}</span>
                     </div>
                   </div>
                 </div>
@@ -2037,7 +2036,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
 
           {/* Class action modal */}
           {highlightCls&&(()=>{
-            const c=classes.find(x=>x.id===highlightCls);
+            const c=classes.find(x=>(x._virtualId||x.id)===highlightCls);
             if(!c) return null;
             return (
               <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.45)",zIndex:99,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 16px"}} onClick={()=>setHighlightCls(null)}>
@@ -2192,8 +2191,8 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                     const colW=`calc((100% - ${LEFT}px - ${RIGHT}px) / ${c.totalCols} - 4px)`;
                     const colL=`calc(${LEFT}px + (100% - ${LEFT}px - ${RIGHT}px) / ${c.totalCols} * ${c.col} + ${c.col*2}px)`;
                     return (
-                      <div key={c.id} onClick={()=>setHighlightCls(c.id===highlightCls?null:c.id)}
-                        style={{position:"absolute",top:topPx,left:colL,width:colW,height:heightPx,background:c.cancelled?"#FFF3E0":c.rescheduled?"#E3F2FD":isNextComboPending(c,students)?"#F5F5F5":C.white,borderRadius:12,padding:"6px 10px",border:"1.5px solid "+(highlightCls===c.id?C.blue2:isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:"pointer",boxShadow:"0 2px 8px rgba(44,94,247,0.10)",overflow:"hidden",borderLeft:"4px solid "+(c.cancelled?"#E65100":c.rescheduled?"#1565C0":isNextComboPending(c,students)?"#BDBDBD":C.blue2),zIndex:2,opacity:isNextComboPending(c,students)?0.7:1}}>
+                      <div key={c._virtualId||c.id} onClick={()=>setHighlightCls((c._virtualId||c.id)===highlightCls?null:(c._virtualId||c.id))}
+                        style={{position:"absolute",top:topPx,left:colL,width:colW,height:heightPx,background:c.cancelled?"#FFF3E0":c.rescheduled?"#E3F2FD":isNextComboPending(c,students)?"#F5F5F5":C.white,borderRadius:12,padding:"6px 10px",border:"1.5px solid "+(highlightCls===(c._virtualId||c.id)?C.blue2:isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:"pointer",boxShadow:"0 2px 8px rgba(44,94,247,0.10)",overflow:"hidden",borderLeft:"4px solid "+(c.cancelled?"#E65100":c.rescheduled?"#1565C0":isNextComboPending(c,students)?"#BDBDBD":C.blue2),zIndex:2,opacity:isNextComboPending(c,students)?0.7:1}}>
                         <div style={{display:"flex",alignItems:"center",gap:4,overflow:"hidden"}}>
                           <div style={{fontSize:13,fontWeight:800,color:c.cancelled?"#C62828":isNextComboPending(c,students)?"#9E9E9E":C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",flex:1}}>{c.title}{c.cancelled&&c.cancelType!=="cancelled_reprog"?" (Cancelada)":c.cancelled&&c.cancelType==="cancelled_reprog"?" (Cancelada - Reprog.)":c.rescheduled?" (Reprogramada)":""}</div>
                           {isNextComboPending(c,students)&&<span style={{fontSize:9,padding:"2px 5px",borderRadius:8,background:"#EEEEEE",color:"#757575",fontWeight:700,flexShrink:0}}>Sin pagar</span>}
@@ -2214,7 +2213,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                 })()}
               {/* Class detail modal */}
               {highlightCls&&(()=>{
-                const c=classes.find(x=>x.id===highlightCls);
+                const c=classes.find(x=>(x._virtualId||x.id)===highlightCls);
                 if(!c) return null;
                 return (
                   <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.45)",zIndex:99,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 16px"}} onClick={()=>setHighlightCls(null)}>
