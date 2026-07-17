@@ -3050,7 +3050,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
                 {allComplete?(
                   <div style={{padding:"20px",borderRadius:16,background:"#EDFBEC",border:"1.5px solid #66BB6A"}}>
                     <div style={{fontSize:28}}>✅</div>
-                    <div style={{fontSize:15,fontWeight:800,color:"#2E7D32",marginTop:8}}>Todo al día</div>
+                    <div style={{fontSize:15,fontWeight:800,color:"#2E7D32",marginTop:8}}>No hay clases pendientes</div>
                     <div style={{fontSize:12,color:"#4CAF50",marginTop:4}}>{totalPaid} clases pagadas · {totalClasses} realizadas</div>
                   </div>
                 ):(
@@ -3340,8 +3340,17 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             const paidCount=lastComboS.paidCount!==undefined?lastComboS.paidCount:(lastComboS.paid?lastComboS.total:0);
             const fullyPaid=paidCount>=(lastComboS.total||1);
             if(!fullyPaid) return false; // don't show if unpaid classes remain
-            const remaining=(lastComboS.dates||[]).filter(d=>d>=TODAY_DATE).length;
-            return remaining<=2&&remaining>0;
+            const allDates=lastComboS.dates||[];
+            // Count classes remaining (not yet given = no attendance taken OR future)
+            const remaining=allDates.filter(d=>{
+              if(d>=TODAY_DATE) return true; // future date
+              // Past date: check if attendance was taken
+              const attEntry=myClassesH.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===d);
+              const wasGiven=attEntry&&((attEntry.present||[]).includes(s.id)||(attEntry.ausente_dada||[]).includes(s.id));
+              return !wasGiven; // still remaining if attendance not taken
+            }).length;
+            // Show when 2 or fewer remaining, OR combo is fully completed (0 remaining)
+            return remaining<=2;
           })();
           // Mensual renewal
           const isMensualCombo=combo&&(combo.total===null&&combo.packType!=="individual")||(combo?.packType==="mensual");
