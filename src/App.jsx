@@ -4934,6 +4934,13 @@ export default function App() {
         setCourtsRaw(courts);lsSet("izi_courts",courts);
         setPackagesRaw(packages);lsSet("izi_packages",packages);
       }
+      // Also load coach profile (name, phone, email, sport, photo, currency)
+      const {data:profileData}=await supabase.from("coaches").select("*").eq("id",userId).single();
+      if(profileData){
+        const profile={name:profileData.name||"Coach",sport:profileData.sport||"",photo:profileData.photo||null,phone:profileData.phone||"",email:profileData.email||"",currency:profileData.currency||""};
+        setCoachProfileRaw(profile);lsSet("izi_profile",profile);
+        if(profile.currency) setCUR(profile.currency);
+      }
     } catch(e){ console.error("Load error:",e); }
   };
 
