@@ -4951,6 +4951,7 @@ export default function App() {
   },[students,classes,expenses,courts,packages]);
 
   // Force sync when user switches tabs or minimizes to prevent data loss
+  // AND reload from Supabase when returning to the tab (multi-device sync)
   useEffect(()=>{
     const handleVisChange=()=>{
       if(document.visibilityState==="hidden"&&window._iziUserId&&mode!=="student_portal"){
@@ -4961,6 +4962,9 @@ export default function App() {
           JSON.parse(localStorage.getItem("izi_courts")||"[]"),
           JSON.parse(localStorage.getItem("izi_packages")||"[]")
         );
+      }
+      if(document.visibilityState==="visible"&&window._iziUserId&&mode!=="student_portal"){
+        loadData(window._iziUserId);
       }
     };
     document.addEventListener("visibilitychange",handleVisChange);
