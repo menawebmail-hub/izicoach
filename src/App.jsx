@@ -5182,12 +5182,13 @@ export default function App() {
           const classDates=new Set(originalClass?.occurrences||[originalClass?.date].filter(Boolean));
           setStudents(p=>p.map(s=>{
             if(!removedStudentIds.includes(s.id)) return s;
-            // Remove combos whose dates overlap with this class's dates
-            const cleanedCombos=(s.combos||[]).filter(combo=>{
+            // Remove only the dates belonging to this class from each combo
+            const cleanedCombos=(s.combos||[]).map(combo=>{
               const comboDates=combo.dates||[combo.date].filter(Boolean);
-              // Remove combo if ANY of its dates are in the class dates
-              return !comboDates.some(d=>classDates.has(d));
-            });
+              const filteredDates=comboDates.filter(d=>!classDates.has(d));
+              if(filteredDates.length===0) return null; // combo fully emptied, remove it
+              return {...combo, dates:filteredDates, total:filteredDates.length, date:filteredDates[0]};
+            }).filter(Boolean);
             return {...s,combos:cleanedCombos};
           }));
         }
