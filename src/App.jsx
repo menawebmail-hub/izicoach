@@ -1150,15 +1150,23 @@ function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onI
   const [infoS,setInfoS]=useState(null);
   const [invites,setInvites]=useState({});
 
-  // Load invite status for all students
+  // Load invite status and detect active students (have messages)
   useEffect(()=>{
     if(!userId) return;
-    supabase.from("invites").select("student_id,used").eq("coach_id",userId)
-      .then(({data})=>{
-        const map={};
-        (data||[]).forEach(inv=>{map[inv.student_id]=inv.used?"registered":"invited";});
-        setInvites(map);
+    Promise.all([
+      supabase.from("invites").select("student_id,used").eq("coach_id",userId),
+      supabase.from("messages").select("student_id").eq("coach_id",userId)
+    ]).then(([invRes,msgRes])=>{
+      const map={};
+      const activeStudents=new Set((msgRes.data||[]).map(m=>m.student_id));
+      (invRes.data||[]).forEach(inv=>{
+        if(inv.used||activeStudents.has(inv.student_id)) map[inv.student_id]="active";
+        else map[inv.student_id]="invited";
       });
+      // Also mark students with messages but no invite as active
+      activeStudents.forEach(sid=>{if(!map[sid]) map[sid]="active";});
+      setInvites(map);
+    });
   },[userId,students]);
   let list=f==="all"?students:students.filter(s=>s.status===f);
   if(search.trim()) list=list.filter(s=>s.name.toLowerCase().includes(search.toLowerCase()));
@@ -1203,7 +1211,7 @@ function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onI
                   <div style={{fontSize:12,color:C.mutedDark,marginBottom:4}}>{"Alta: "+(s.createdAt||getCombo(s)?.date||"—")}</div>
                   <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:7,height:7,borderRadius:"50%",background:s.status==="active"?C.green:"#BDBDBD"}}></div><span style={{fontSize:11,color:s.status==="active"?C.green:"#BDBDBD",fontWeight:600}}>{s.status==="active"?"Activo":"Inactivo"}</span></div>
                   {invites[s.id]==="invited"&&<div style={{marginTop:4,display:"inline-block",fontSize:10,fontWeight:700,color:"#5C7A9F",background:"#E8EEF4",padding:"3px 10px",borderRadius:10,letterSpacing:0.5}}>📩 INVITACIÓN ENVIADA</div>}
-                  {invites[s.id]==="registered"&&<div style={{marginTop:4,display:"inline-block",fontSize:10,fontWeight:700,color:"#2E7D32",background:"#EDFBEC",padding:"3px 10px",borderRadius:10,letterSpacing:0.5}}>✓ CONECTADO</div>}
+                  {invites[s.id]==="active"&&<div style={{marginTop:4,display:"inline-block",fontSize:10,fontWeight:700,color:"#2E7D32",background:"#EDFBEC",padding:"3px 10px",borderRadius:10,letterSpacing:0.5}}>✅ APP ACTIVA</div>}
                 </div>
                 <div style={{display:"flex",flexDirection:"column",gap:6}}>
                   <button onClick={()=>setInfoS(infoS?.id===s.id?null:s)} style={{background:C.blueL,border:"none",borderRadius:10,padding:"10px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
