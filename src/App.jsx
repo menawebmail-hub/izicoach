@@ -97,6 +97,11 @@ const INIT_CLASSES = [];
 const _nowM=(()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");})();
 const EXPENSES = [];
 
+// Global date formatter: "Martes 21 Jul"
+const _wDFull=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+const _mNShort=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+const fmtDate=(ds)=>{const d=new Date(ds+"T12:00:00");return _wDFull[d.getDay()]+" "+d.getDate()+" "+_mNShort[d.getMonth()];};
+
 // Expand recurring classes into per-date virtual instances for display
 // Expand recurring classes into per-date virtual instances for display
 // NEW format: single object with occurrences + cancelledDates + rescheduledDates
@@ -4435,7 +4440,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                             <div style={{width:26,height:26,borderRadius:"50%",background:C.blueL,border:"2px solid "+C.blue2,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                               <span style={{fontSize:10,fontWeight:800,color:C.blue2}}>{i+1}</span>
                             </div>
-                            <div style={{flex:1,fontSize:13,fontWeight:600,color:C.text}}>{item.date}</div>
+                            <div style={{flex:1,fontSize:13,fontWeight:600,color:C.text}}>{fmtDate(item.date)}</div>
                             <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:leftBg,color:leftColor,fontWeight:700}}>{leftLabel}</span>
                             <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700}}>{rightLabel}</span>
                           </div>
