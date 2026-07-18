@@ -2418,7 +2418,10 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
       .then(({data})=>{setMsgs(data||[]);setLoading(false);});
     const channel=supabase.channel("chat_"+userId+"_"+studentId)
       .on("postgres_changes",{event:"INSERT",schema:"public",table:"messages",filter:`coach_id=eq.${userId}`},(payload)=>{
-        if(payload.new.student_id===studentId) setMsgs(p=>[...p,payload.new]);
+        if(payload.new.student_id===studentId) setMsgs(p=>{
+          if(p.some(m=>m.id===payload.new.id||(m.created_at===payload.new.created_at&&m.text===payload.new.text))) return p;
+          return [...p,payload.new];
+        });
       }).subscribe();
     return ()=>supabase.removeChannel(channel);
   },[active,userId]);
@@ -4188,7 +4191,10 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
     const channel=supabase.channel("student_chat_"+coachId+"_"+student.id)
       .on("postgres_changes",{event:"INSERT",schema:"public",table:"messages",filter:`coach_id=eq.${coachId}`},(payload)=>{
         if(payload.new.student_id===student.id){
-          setMsgs(p=>[...p,payload.new]);
+          setMsgs(p=>{
+            if(p.some(m=>m.id===payload.new.id||(m.created_at===payload.new.created_at&&m.text===payload.new.text))) return p;
+            return [...p,payload.new];
+          });
           if(payload.new.is_alert&&payload.new.from_coach) setAlerts(p=>[payload.new,...p].slice(0,3));
         }
       }).subscribe();
