@@ -4169,6 +4169,14 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
   const [oldPass,setOldPass]=useState(""); const [newPass,setNewPass]=useState(""); const [newPass2,setNewPass2]=useState("");
   const combo=getCombo(student); const rem=getRem(student);
 
+  // Send message from student to coach
+  const send=async()=>{
+    if(!msg.trim()||!coachId||!student?.id) return;
+    const newMsg={coach_id:coachId,student_id:student.id,text:msg.trim(),from_coach:false,is_alert:false,created_at:new Date().toISOString()};
+    setMsgs(p=>[...p,newMsg]);setMsg("");
+    await supabase.from("messages").insert(newMsg);
+  };
+
   // Load messages from Supabase
   useEffect(()=>{
     if(!coachId||!student?.id) return;
