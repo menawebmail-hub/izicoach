@@ -1200,21 +1200,20 @@ function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onI
                   {invites[s.id]==="invited"&&<div style={{marginTop:4,display:"inline-block",fontSize:10,fontWeight:700,color:"#5C7A9F",background:"#E8EEF4",padding:"3px 10px",borderRadius:10,letterSpacing:0.5}}>📩 INVITACIÓN ENVIADA</div>}
                   {invites[s.id]==="registered"&&<div style={{marginTop:4,display:"inline-block",fontSize:10,fontWeight:700,color:"#2E7D32",background:"#EDFBEC",padding:"3px 10px",borderRadius:10,letterSpacing:0.5}}>✓ CONECTADO</div>}
                 </div>
-              </div>
-              {/* Action buttons */}
-              <div style={{display:"flex",gap:6,marginTop:10}}>
-                <button onClick={()=>setInfoS(infoS?.id===s.id?null:s)} style={{flex:1,background:C.blueL,border:"none",borderRadius:10,padding:"8px 0",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
-                  <span style={{fontSize:11,fontWeight:700,color:C.blue2}}>VER PAGOS</span>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                </button>
-                <button onClick={()=>onChat&&onChat(s)} style={{flex:1,background:C.blueL,border:"none",borderRadius:10,padding:"8px 0",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
-                  <span style={{fontSize:11,fontWeight:700,color:C.blue2}}>CHATEAR</span>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-                </button>
-                <button onClick={()=>onInviteStudent&&onInviteStudent(s)} style={{flex:1,background:C.blueL,border:"none",borderRadius:10,padding:"8px 0",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
-                  <span style={{fontSize:11,fontWeight:700,color:C.blue2}}>INVITAR</span>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
-                </button>
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  <button onClick={()=>setInfoS(infoS?.id===s.id?null:s)} style={{background:C.blueL,border:"none",borderRadius:10,padding:"6px 12px",cursor:"pointer",display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+                    <span style={{fontSize:11,fontWeight:700,color:C.blue2}}>VER PAGOS</span>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                  </button>
+                  <button onClick={()=>onChat&&onChat(s)} style={{background:C.blueL,border:"none",borderRadius:10,padding:"6px 12px",cursor:"pointer",display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+                    <span style={{fontSize:11,fontWeight:700,color:C.blue2}}>CHATEAR</span>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                  </button>
+                  <button onClick={()=>onInviteStudent&&onInviteStudent(s)} style={{background:C.blueL,border:"none",borderRadius:10,padding:"6px 12px",cursor:"pointer",display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+                    <span style={{fontSize:11,fontWeight:700,color:C.blue2}}>INVITAR</span>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+                  </button>
+                </div>
               </div>
               {/* Info panel */}
               {infoS?.id===s.id&&(()=>{
