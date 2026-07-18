@@ -5178,13 +5178,15 @@ export default function App() {
         const originalClass=classes.find(c=>c.id===realId);
         const removedStudentIds=(originalClass?.students||[]).filter(id=>!(cd.students||[]).includes(id));
         if(removedStudentIds.length>0){
-          const classDate=originalClass?.date;
+          // Get ALL dates from this class (occurrences or single date)
+          const classDates=new Set(originalClass?.occurrences||[originalClass?.date].filter(Boolean));
           setStudents(p=>p.map(s=>{
             if(!removedStudentIds.includes(s.id)) return s;
-            // Remove combos that were created for this class
-            const cleanedCombos=s.combos.filter(combo=>{
-              if(!combo.dates||combo.dates.length===0) return combo.date!==classDate;
-              return !combo.dates.includes(classDate);
+            // Remove combos whose dates overlap with this class's dates
+            const cleanedCombos=(s.combos||[]).filter(combo=>{
+              const comboDates=combo.dates||[combo.date].filter(Boolean);
+              // Remove combo if ANY of its dates are in the class dates
+              return !comboDates.some(d=>classDates.has(d));
             });
             return {...s,combos:cleanedCombos};
           }));
