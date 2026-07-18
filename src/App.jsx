@@ -4182,7 +4182,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
     supabase.from("messages").select("*").eq("coach_id",coachId).eq("student_id",student.id).order("created_at",{ascending:true})
       .then(({data})=>{
         setMsgs(data||[]);
-        setAlerts((data||[]).filter(m=>m.is_alert&&m.from_coach).slice(-3).reverse());
+        setAlerts((data||[]).filter(m=>m.is_alert&&m.from_coach&&!m.read).slice(-3).reverse());
       });
     const channel=supabase.channel("student_chat_"+coachId+"_"+student.id)
       .on("postgres_changes",{event:"INSERT",schema:"public",table:"messages",filter:`coach_id=eq.${coachId}`},(payload)=>{
@@ -4367,6 +4367,9 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                         <div style={{fontSize:13,color:"#5D3A00",fontWeight:700,lineHeight:1.4}}>{a.text}</div>
                         <div style={{fontSize:11,color:"#E65100",marginTop:3,fontWeight:500}}>{a.created_at?new Date(a.created_at).toLocaleDateString("es",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):""}</div>
                       </div>
+                      <button onClick={()=>{setAlerts(p=>p.filter(x=>x!==a));if(a.id)supabase.from("messages").update({read:true}).eq("id",a.id);}} style={{background:"none",border:"none",cursor:"pointer",padding:4,flexShrink:0,opacity:0.5}}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5D3A00" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      </button>
                     </div>
                   ))}
                 </div>
