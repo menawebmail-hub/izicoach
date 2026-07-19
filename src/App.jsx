@@ -1224,24 +1224,24 @@ function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onI
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
                   {invites[s.id]==="invited"&&<div style={{fontSize:10,fontWeight:700,color:"#5C7A9F",background:"#E8EEF4",padding:"3px 10px",borderRadius:10,letterSpacing:0.5}}>📩 INVITACIÓN ENVIADA</div>}
                   {invites[s.id]==="active"&&<div style={{fontSize:10,fontWeight:700,color:"#2E7D32",background:"#EDFBEC",padding:"3px 10px",borderRadius:10,letterSpacing:0.5}}>✅ APP ACTIVA</div>}
-                  <button onClick={toggleExpand} style={{background:"none",border:"none",cursor:"pointer",padding:4}}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.mutedDark} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">{isExpanded?<polyline points="18 15 12 9 6 15"/>:<polyline points="6 9 12 15 18 9"/>}</svg>
+                  <button onClick={toggleExpand} style={{background:C.blueL,border:"none",cursor:"pointer",padding:8,borderRadius:8}}>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">{isExpanded?<polyline points="18 15 12 9 6 15"/>:<polyline points="6 9 12 15 18 9"/>}</svg>
                   </button>
                 </div>
               </div>
               {isExpanded&&(
                 <div style={{display:"flex",gap:8,marginTop:12,paddingTop:12,borderTop:"1px solid "+C.border}}>
-                  <button onClick={()=>setInfoS(infoS?.id===s.id?null:s)} style={{flex:1,background:C.blueL,border:"none",borderRadius:10,padding:"10px 0",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
-                    <span style={{fontSize:11,fontWeight:700,color:C.blue2}}>VER PAGOS</span>
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                  <button onClick={()=>setInfoS(infoS?.id===s.id?null:s)} style={{flex:1,background:C.blueL,border:"none",borderRadius:12,padding:"14px 0",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                    <span style={{fontSize:12,fontWeight:700,color:C.blue2}}>VER PAGOS</span>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
                   </button>
-                  <button onClick={()=>onChat&&onChat(s)} style={{flex:1,background:C.blueL,border:"none",borderRadius:10,padding:"10px 0",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
-                    <span style={{fontSize:11,fontWeight:700,color:C.blue2}}>CHATEAR</span>
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                  <button onClick={()=>onChat&&onChat(s)} style={{flex:1,background:C.blueL,border:"none",borderRadius:12,padding:"14px 0",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                    <span style={{fontSize:12,fontWeight:700,color:C.blue2}}>CHATEAR</span>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
                   </button>
-                  <button onClick={()=>onInviteStudent&&onInviteStudent(s)} style={{flex:1,background:C.blueL,border:"none",borderRadius:10,padding:"10px 0",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
-                    <span style={{fontSize:11,fontWeight:700,color:C.blue2}}>INVITAR</span>
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+                  <button onClick={()=>onInviteStudent&&onInviteStudent(s)} style={{flex:1,background:C.blueL,border:"none",borderRadius:12,padding:"14px 0",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                    <span style={{fontSize:12,fontWeight:700,color:C.blue2}}>INVITAR</span>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
                   </button>
                 </div>
               )}
