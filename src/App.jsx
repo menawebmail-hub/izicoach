@@ -1149,6 +1149,8 @@ function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onI
   const [search,setSearch]=useState("");
   const [infoS,setInfoS]=useState(null);
   const [invites,setInvites]=useState({});
+  const [expandAll,setExpandAll]=useState(false);
+  const [expandedIds,setExpandedIds]=useState(new Set());
 
   // Load invite status and detect active students (have messages)
   useEffect(()=>{
@@ -1195,8 +1197,16 @@ function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onI
       </div>
       <div style={{flex:1,overflowY:"auto",padding:16,paddingBottom:"calc(120px + env(safe-area-inset-bottom, 34px))"}}>
         {list.length===0&&<div style={{textAlign:"center",padding:"32px 0",color:C.mutedDark,fontSize:14}}>No se encontraron alumnos</div>}
+        <div style={{display:"flex",justifyContent:"flex-end",marginBottom:8}}>
+          <button onClick={()=>{setExpandAll(v=>!v);setExpandedIds(new Set());}} style={{background:C.blueL,border:"none",borderRadius:8,padding:"5px 12px",cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{expandAll?<><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></>:<><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></>}</svg>
+            <span style={{fontSize:11,fontWeight:700,color:C.blue2}}>{expandAll?"Compactar":"Expandir"}</span>
+          </button>
+        </div>
         {list.map(s=>{
           const combo=getCombo(s); const rem=getRem(s,classes);
+          const isExpanded=expandAll?!expandedIds.has(s.id):expandedIds.has(s.id);
+          const toggleExpand=()=>setExpandedIds(p=>{const n=new Set(p);if(n.has(s.id))n.delete(s.id);else n.add(s.id);return n;});
           return (
             <WhiteCard key={s.id} style={{marginBottom:10}}>
               <div style={{display:"flex",alignItems:"center",gap:12}}>
@@ -1210,24 +1220,31 @@ function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onI
                   </div>
                   <div style={{fontSize:12,color:C.mutedDark,marginBottom:4}}>{"Alta: "+(s.createdAt||getCombo(s)?.date||"—")}</div>
                   <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:7,height:7,borderRadius:"50%",background:s.status==="active"?C.green:"#BDBDBD"}}></div><span style={{fontSize:11,color:s.status==="active"?C.green:"#BDBDBD",fontWeight:600}}>{s.status==="active"?"Activo":"Inactivo"}</span></div>
-                  {invites[s.id]==="invited"&&<div style={{marginTop:4,display:"inline-block",fontSize:10,fontWeight:700,color:"#5C7A9F",background:"#E8EEF4",padding:"3px 10px",borderRadius:10,letterSpacing:0.5}}>📩 INVITACIÓN ENVIADA</div>}
-                  {invites[s.id]==="active"&&<div style={{marginTop:4,display:"inline-block",fontSize:10,fontWeight:700,color:"#2E7D32",background:"#EDFBEC",padding:"3px 10px",borderRadius:10,letterSpacing:0.5}}>✅ APP ACTIVA</div>}
                 </div>
-                <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                  <button onClick={()=>setInfoS(infoS?.id===s.id?null:s)} style={{background:C.blueL,border:"none",borderRadius:10,padding:"10px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  {invites[s.id]==="invited"&&<div style={{fontSize:10,fontWeight:700,color:"#5C7A9F",background:"#E8EEF4",padding:"3px 10px",borderRadius:10,letterSpacing:0.5}}>📩 INVITACIÓN ENVIADA</div>}
+                  {invites[s.id]==="active"&&<div style={{fontSize:10,fontWeight:700,color:"#2E7D32",background:"#EDFBEC",padding:"3px 10px",borderRadius:10,letterSpacing:0.5}}>✅ APP ACTIVA</div>}
+                  <button onClick={toggleExpand} style={{background:"none",border:"none",cursor:"pointer",padding:4}}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.mutedDark} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">{isExpanded?<polyline points="18 15 12 9 6 15"/>:<polyline points="6 9 12 15 18 9"/>}</svg>
+                  </button>
+                </div>
+              </div>
+              {isExpanded&&(
+                <div style={{display:"flex",gap:8,marginTop:12,paddingTop:12,borderTop:"1px solid "+C.border}}>
+                  <button onClick={()=>setInfoS(infoS?.id===s.id?null:s)} style={{flex:1,background:C.blueL,border:"none",borderRadius:10,padding:"10px 0",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
                     <span style={{fontSize:11,fontWeight:700,color:C.blue2}}>VER PAGOS</span>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
                   </button>
-                  <button onClick={()=>onChat&&onChat(s)} style={{background:C.blueL,border:"none",borderRadius:10,padding:"10px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+                  <button onClick={()=>onChat&&onChat(s)} style={{flex:1,background:C.blueL,border:"none",borderRadius:10,padding:"10px 0",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
                     <span style={{fontSize:11,fontWeight:700,color:C.blue2}}>CHATEAR</span>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
                   </button>
-                  <button onClick={()=>onInviteStudent&&onInviteStudent(s)} style={{background:C.blueL,border:"none",borderRadius:10,padding:"10px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+                  <button onClick={()=>onInviteStudent&&onInviteStudent(s)} style={{flex:1,background:C.blueL,border:"none",borderRadius:10,padding:"10px 0",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
                     <span style={{fontSize:11,fontWeight:700,color:C.blue2}}>INVITAR</span>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
                   </button>
                 </div>
-              </div>
+              )}
               {/* Info panel */}
               {infoS?.id===s.id&&(()=>{
                 const myClasses=classes.filter(c=>c.students&&c.students.includes(s.id));
