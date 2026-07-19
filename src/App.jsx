@@ -2424,6 +2424,8 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
   const [isAlert,setIsAlert]=useState(false);
   const [loading,setLoading]=useState(false);
   const [lastMsgTime,setLastMsgTime]=useState({});
+  const [showCreate,setShowCreate]=useState(false);
+  const [groups,setGroups]=useState(()=>{try{return JSON.parse(localStorage.getItem("izi_groups")||"[]");}catch{return[];}});
 
   useEffect(()=>{
     if(!userId) return;
@@ -2495,6 +2497,8 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
     </div>
   );
 
+  if(showCreate) return <CreateGroupScreen students={students} onClose={()=>setShowCreate(false)} onCreate={(g)=>{setGroups(p=>{const next=[g,...p];localStorage.setItem("izi_groups",JSON.stringify(next));return next;});setShowCreate(false);}}/>;
+
   // Sort students — unread first, then by most recent message
   const sortedStudents=[...students].sort((a,b)=>{
     const ua=unreadChats[String(a.id)]||0, ub=unreadChats[String(b.id)]||0;
@@ -2505,10 +2509,25 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
   return (
     <div style={{flex:1,overflowY:"auto",background:C.bg}}>
       <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"16px 16px 24px"}}>
-        <div style={{fontSize:18,fontWeight:800,color:C.white}}>Mensajes</div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div style={{fontSize:18,fontWeight:800,color:C.white}}>Mensajes</div>
+          <button onClick={()=>setShowCreate(true)} style={{padding:"7px 14px",borderRadius:20,border:"none",background:"linear-gradient(135deg,"+C.green+",#66BB6A)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>+ Crear grupo</button>
+        </div>
       </div>
       <div style={{padding:"12px 12px 80px"}}>
-        {sortedStudents.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:C.mutedDark}}>No hay alumnos aún</div>}
+        {/* Groups */}
+        {groups.map(g=>(
+          <div key={g.id} onClick={()=>{setActive({...g});setView("chat");}} style={{background:C.white,borderRadius:14,padding:"12px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:12,cursor:"pointer",boxShadow:"0 2px 8px rgba(44,94,247,0.06)",border:"1.5px solid transparent"}}>
+            <div style={{width:44,height:44,borderRadius:"50%",background:"linear-gradient(135deg,"+C.green+",#66BB6A)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white,flexShrink:0}}>{g.avatar||"G"}</div>
+            <div style={{flex:1,textAlign:"left"}}>
+              <div style={{fontWeight:700,fontSize:14,color:C.text,textAlign:"left"}}>{g.name}</div>
+              <div style={{fontSize:12,color:C.mutedDark,marginTop:2,textAlign:"left"}}>{(g.members||[]).length} miembros</div>
+            </div>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.mutedDark} strokeWidth="2" style={{flexShrink:0}}><polyline points="9 18 15 12 9 6"/></svg>
+          </div>
+        ))}
+        {/* Individual students */}
+        {sortedStudents.length===0&&groups.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:C.mutedDark}}>No hay alumnos aún</div>}
         {sortedStudents.map(s=>{
           const unread=unreadChats[String(s.id)]||0;
           return (
