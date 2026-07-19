@@ -1198,9 +1198,9 @@ function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onI
       <div style={{flex:1,overflowY:"auto",padding:16,paddingBottom:"calc(120px + env(safe-area-inset-bottom, 34px))"}}>
         {list.length===0&&<div style={{textAlign:"center",padding:"32px 0",color:C.mutedDark,fontSize:14}}>No se encontraron alumnos</div>}
         <div style={{display:"flex",justifyContent:"flex-end",marginBottom:8}}>
-          <button onClick={()=>{setExpandAll(v=>!v);setExpandedIds(new Set());}} style={{background:C.blueL,border:"none",borderRadius:8,padding:"5px 12px",cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{expandAll?<><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></>:<><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></>}</svg>
-            <span style={{fontSize:11,fontWeight:700,color:C.blue2}}>{expandAll?"Compactar":"Expandir"}</span>
+          <button onClick={()=>{setExpandAll(v=>!v);setExpandedIds(new Set());}} style={{background:C.blueL,border:"none",borderRadius:10,padding:"10px 16px",cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{expandAll?<><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></>:<><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></>}</svg>
+            <span style={{fontSize:13,fontWeight:700,color:C.blue2}}>{expandAll?"Compactar":"Expandir"}</span>
           </button>
         </div>
         {list.map(s=>{
