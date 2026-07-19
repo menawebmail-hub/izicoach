@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
@@ -219,6 +219,37 @@ function IziLogoBlack({ height=34 }) {
 
 function WhiteCard({ children, style, onClick }) {
   return <div onClick={onClick} style={{background:C.white,borderRadius:16,padding:"14px 16px",boxShadow:"0 2px 12px rgba(44,94,247,0.08)",border:"1px solid rgba(44,94,247,0.06)",marginBottom:10,...style}}>{children}</div>;
+}
+
+function PullRefresh({ onRefresh, children, style }) {
+  const [pulling,setPulling]=useState(false);
+  const [pullY,setPullY]=useState(0);
+  const [refreshing,setRefreshing]=useState(false);
+  const startY=useRef(0);
+  const scrollRef=useRef(null);
+  const threshold=60;
+  const onTouchStart=(e)=>{if(scrollRef.current&&scrollRef.current.scrollTop===0){startY.current=e.touches[0].clientY;setPulling(true);}};
+  const onTouchMove=(e)=>{if(!pulling) return;const dy=e.touches[0].clientY-startY.current;if(dy>0&&scrollRef.current&&scrollRef.current.scrollTop===0){setPullY(Math.min(dy*0.4,80));e.preventDefault();}else{setPulling(false);setPullY(0);}};
+  const onTouchEnd=async()=>{if(pullY>=threshold&&!refreshing){setRefreshing(true);setPullY(threshold);try{await onRefresh();}catch{}setTimeout(()=>{setRefreshing(false);setPullY(0);setPulling(false);},600);}else{setPullY(0);setPulling(false);}};
+  return (
+    <div ref={scrollRef} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} style={{...style,position:"relative"}}>
+      {pullY>0&&(
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:pullY,transition:refreshing?"none":"height 0.2s",overflow:"hidden"}}>
+          <div style={{fontSize:12,fontWeight:700,color:C.blue2,display:"flex",alignItems:"center",gap:6}}>
+            {refreshing?(
+              <><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.5" strokeLinecap="round" style={{animation:"spin 0.8s linear infinite"}}><path d="M21 12a9 9 0 11-6.2-8.6"/></svg> Actualizando...</>
+            ):pullY>=threshold?(
+              <><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.5" strokeLinecap="round"><polyline points="18 15 12 9 6 15"/></svg> Soltar para actualizar</>
+            ):(
+              <><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.mutedDark} strokeWidth="2.5" strokeLinecap="round"><polyline points="6 9 12 15 18 9"/></svg> Tirar para actualizar</>
+            )}
+          </div>
+        </div>
+      )}
+      {children}
+      <style>{`@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
 }
 
 function NavBar({ tabs, active, onSelect, zIdx=0, badges={} }) {
@@ -939,7 +970,7 @@ function NewStudentModal({ onClose, onSave }) {
   );
 }
 
-function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, onInvite, expenses=[], coachProfile={} }) {
+function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, onInvite, expenses=[], coachProfile={}, onRefresh }) {
   const now=new Date();
   const curMonth=now.getMonth();
   const curYear=now.getFullYear();
@@ -987,7 +1018,7 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
   const mN=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
   const todayLabel=new Date(TODAY_DATE+"T12:00:00").getDate()+" de "+mN[new Date(TODAY_DATE+"T12:00:00").getMonth()];
   return (
-    <div style={{flex:1,overflowY:"auto",background:C.bg,display:"flex",flexDirection:"column"}}>
+    <PullRefresh onRefresh={onRefresh||(() => {})} style={{flex:1,overflowY:"auto",background:C.bg,display:"flex",flexDirection:"column"}}>
       <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"16px 16px 32px",flexShrink:0}}>
         <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20}}>
           <div style={{width:46,height:46,borderRadius:"50%",background:C.whiteA,border:"2px solid "+C.whiteB,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:800,color:C.white,overflow:"hidden",flexShrink:0}}>
@@ -1139,11 +1170,11 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
           </div>
         )}
       </div>
-    </div>
+    </PullRefresh>
   );
 }
 
-function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onInvite, userId, onInviteStudent }) {
+function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onInvite, userId, onInviteStudent, onRefresh }) {
   const [f,setF]=useState("all");
   const [editS,setEditS]=useState(null);
   const [search,setSearch]=useState("");
@@ -1883,7 +1914,7 @@ function AttModal({ att, students, onAttendance, onClose }) {
   );
 }
 
-function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAddStudent, courts=[], packages=[], onUpdateStudent, onDeleteClass, pendingReprog, onClearPendingReprog, onAddPackage }) {
+function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAddStudent, courts=[], packages=[], onUpdateStudent, onDeleteClass, pendingReprog, onClearPendingReprog, onAddPackage, onRefresh }) {
   const [selDay,setSelDay]=useState(TODAY_DATE);
   const [viewYear,setViewYear]=useState(new Date().getFullYear());
   const [viewMonth,setViewMonth]=useState(new Date().getMonth());
@@ -5513,6 +5544,8 @@ export default function App() {
   };
 
   const [pendingReprog,setPendingReprog]=useState(null);
+  const handleRefresh=async()=>{if(window._iziUserId)await loadData(window._iziUserId);};
+
   const handleNavigate=(section,params)=>{
     setTab(section);
     if(params?.subTab&&section==="cobros") setFinanceTab(params.subTab);
@@ -5641,10 +5674,10 @@ export default function App() {
       <TopBar onExit={handleLogout} onConfig={()=>setShowConfig(true)}/>
       <div key={"cur-"+currency} style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",position:"relative",overflow:"hidden",paddingBottom:"calc(64px + env(safe-area-inset-bottom, 34px))"}}>
         {tab==="dashboard"&&isFirstTime&&<EmptyDashboard onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)}/>}
-        {tab==="dashboard"&&!isFirstTime&&<Dashboard students={students} classes={xClasses} onNavigate={handleNavigate} onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)} expenses={expenses} coachProfile={coachProfile}/>}
-        {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={xClasses} onInvite={()=>setShowInvite(true)} userId={user?.id} onInviteStudent={(s)=>setInviteTarget(s)}/>}
+        {tab==="dashboard"&&!isFirstTime&&<Dashboard students={students} classes={xClasses} onNavigate={handleNavigate} onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)} expenses={expenses} coachProfile={coachProfile} onRefresh={handleRefresh}/>}
+        {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={xClasses} onInvite={()=>setShowInvite(true)} userId={user?.id} onInviteStudent={(s)=>setInviteTarget(s)} onRefresh={handleRefresh}/>}
         {inviteTarget&&<InviteModal student={inviteTarget} userId={user?.id} onClose={()=>setInviteTarget(null)}/>}
-        {tab==="agenda"&&<Agenda students={students} classes={xClasses} rawClasses={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])}/>}
+        {tab==="agenda"&&<Agenda students={students} classes={xClasses} rawClasses={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])} onRefresh={handleRefresh}/>}
         {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification} userId={user?.id} unreadChats={unreadChats} onMarkRead={(sid)=>setUnreadChats(p=>{const n={...p};delete n[String(sid)];return n;})}/>}
         {tab==="cobros"&&<Finances students={students} classes={xClasses} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance}/>}
         {tab==="finanzas"&&<Finances students={students} classes={xClasses} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages}/>}
