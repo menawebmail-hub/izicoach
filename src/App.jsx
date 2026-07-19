@@ -1972,7 +1972,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
       <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"16px 16px 16px",flexShrink:0}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
           <div style={{fontSize:18,fontWeight:800,color:C.white}}>Agenda</div>
-          <button onClick={()=>setShowNew(true)} style={{padding:"7px 12px",borderRadius:20,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:11,cursor:"pointer",fontWeight:700}}>+ Crear Clase</button>
+          <button onClick={()=>setShowNew(true)} style={{padding:"10px 16px",borderRadius:20,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:13,cursor:"pointer",fontWeight:700}}>+ Crear Clase</button>
         </div>
         <div style={{display:"flex",gap:8}}>
           {[["month","Mensual"],["week","Semanal"]].map(([k,l])=>(
