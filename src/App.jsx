@@ -1660,23 +1660,26 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
 
 function CancelModal({ cls, onClose, onSave, onReprog }) {
   const opts=[
-    {type:"cancelled",label:"Cancelar clase",desc:"La clase no se dio. No cobra.",icon:"⛔",border:"#FFCDD2",color:"#C62828",bg:"#fff"},
-    {type:"cancelled_reprog",label:"Reprogramar",desc:"No se dio. Se reprograma. Cobra cuando se dé.",icon:"🔄",border:"#90CAF9",color:"#1565C0",bg:"#fff"},
+    {type:"cancelled",label:"Cancelar clase",desc:"La clase se cancela y se cobra. Cuenta como realizada.",icon:"⛔",border:"#FFCDD2",color:"#C62828",bg:"#fff"},
+    {type:"cancelled_reprog",label:"Cancelar y Reprogramar",desc:"La clase se cancela y se reprogramará a otra fecha.",icon:"🔄",border:"#90CAF9",color:"#1565C0",bg:"#fff"},
   ];
   return (
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.4)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
       <div style={{background:"#F5F7FF",borderRadius:"24px 24px 0 0",padding:"28px 20px 44px",width:"100%",boxSizing:"border-box"}}>
         <div style={{width:40,height:4,borderRadius:2,background:"#DDE3F0",margin:"0 auto 20px"}}></div>
-        <div style={{fontWeight:900,fontSize:19,color:"#0D1B4B",marginBottom:4}}>¿Cómo cancelar esta clase?</div>
-        <div style={{fontSize:13,color:"#6B7BAD",marginBottom:20}}>{cls.title} · {cls.date}</div>
+        <div style={{fontWeight:900,fontSize:19,color:"#0D1B4B",marginBottom:4}}>Reprogramar / Cancelar</div>
+        <div style={{fontSize:13,color:"#6B7BAD",marginBottom:20}}>{cls.title} · {fmtDate(cls.date)}</div>
         {opts.map(o=>(
           <div key={o.type} onClick={()=>{
             if(o.type==="cancelled_reprog"){
-              onSave({...cls,cancelled:true,cancelType:"cancelled_reprog",applyToAll:false});
+              // Cancel and mark as pending reschedule (no date yet)
+              onSave({...cls,cancelled:true,cancelType:"cancelled_reprog",rescheduledTo:null,applyToAll:false});
               onClose();
-              onReprog&&onReprog({...cls,cancelled:true,cancelType:"cancelled_reprog"});
+              // Open reprog modal to optionally set a date now
+              onReprog&&onReprog({...cls,cancelled:true,cancelType:"cancelled_reprog",rescheduledTo:null});
             } else {
-              onSave({...cls,cancelled:true,cancelType:o.type,applyToAll:false});
+              // Pure cancel — counts as realized for billing
+              onSave({...cls,cancelled:true,cancelType:"cancelled",rescheduledTo:null,applyToAll:false});
               onClose();
             }
           }} style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:14,border:"2px solid "+o.border,background:o.bg,marginBottom:10,cursor:"pointer"}}>
@@ -1970,10 +1973,22 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
     const log=(c.attendanceLog||[]).find(e=>e.date===c.date);
     const dadaCount=(log?.ausente_dada||[]).length;
     const reprogCount=(log?.ausente_reprog||[]).length;
+    // Determine cancel/reprog state
+    const isCancelled=c.cancelled&&c.cancelType==="cancelled";
+    const isReprogWithDate=c.cancelled&&c.cancelType==="cancelled_reprog"&&c.rescheduledTo;
+    const isReprogNoDate=c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo;
+    // Card background based on state
+    const cardBg=isCancelled?"#FFF0F0":isReprogWithDate?"#E8F5E9":isReprogNoDate?"#E3F2FD":C.white;
+    const cardBorder=isCancelled?"1.5px solid #FFCDD2":isReprogWithDate?"1.5px solid #A5D6A7":isReprogNoDate?"1.5px solid #90CAF9":"1px solid rgba(44,94,247,0.06)";
+    // Status label
+    const statusLabel=isCancelled?"(Cancelada)":isReprogWithDate?"(Reprogramada)":isReprogNoDate?"(A Reprogramar)":c.rescheduled?"(Reprogramada)":"";
+    const statusColor=isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":"#2E7D32";
     return (
-    <WhiteCard style={{marginBottom:12}}>
+    <WhiteCard style={{marginBottom:12,background:cardBg,border:cardBorder}}>
       <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
-        <div><div style={{fontWeight:800,fontSize:15,color:C.text}}>{c.title}{c.cancelled&&c.cancelType!=="cancelled_reprog"?" (Cancelada)":c.cancelled&&c.cancelType==="cancelled_reprog"?" (Cancelada - Reprog.)":c.rescheduled?" (Reprogramada)":""}</div><div style={{fontSize:12,color:C.mutedDark}}>{c.time+" · "+c.court}</div></div>
+        <div><div style={{fontWeight:800,fontSize:15,color:C.text}}>{c.title}{statusLabel&&<span style={{fontSize:12,fontWeight:700,color:statusColor,marginLeft:6}}>{statusLabel}</span>}</div><div style={{fontSize:12,color:C.mutedDark}}>{c.time+" · "+c.court}</div>
+          {isReprogWithDate&&<div style={{fontSize:11,color:"#2E7D32",marginTop:2}}>📅 Reprogramada al {fmtDate(c.rescheduledTo)}</div>}
+        </div>
         <span style={{background:C.blueL,color:C.blue2,fontSize:11,padding:"4px 10px",borderRadius:20,fontWeight:600,height:"fit-content"}}>{c.days.join(" · ")}</span>
       </div>
       <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:(dadaCount||reprogCount)?6:12}}>
@@ -1990,10 +2005,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
         <button onClick={()=>setAtt({...c,attendanceLog:c.attendanceLog||[]})} style={{flex:1,padding:"9px",borderRadius:10,border:"none",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>Asistencia</button>
         <button onClick={()=>{setConfirmDelete(c);}} style={{width:38,padding:"9px",borderRadius:10,border:"none",background:"#FFEBEE",color:"#C62828",fontSize:14,cursor:"pointer",flexShrink:0}}>🗑</button>
       </div>
-      <div style={{display:"flex",gap:8}}>
-        <button onClick={()=>setReprog(c)} style={{flex:1,padding:"9px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>📅 Reprogramar</button>
-        <button onClick={()=>{if(c.cancelled){onSaveClass({...c,cancelled:false,cancelType:null,applyToAll:false},true);}else{setShowCancel(c);}}} style={{flex:1,padding:"9px",borderRadius:10,border:"1.5px solid "+(c.cancelled?"#C62828":"#FFB74D"),background:c.cancelled?"#FFEBEE":"#FFF3E0",color:c.cancelled?"#C62828":"#E65100",fontSize:12,cursor:"pointer",fontWeight:700}}>{c.cancelled?"❌ Clase Cancelada":"⛔ Cancelar clase"}</button>
-      </div>
+      <button onClick={()=>{if(c.cancelled){onSaveClass({...c,cancelled:false,cancelType:null,rescheduledTo:null,applyToAll:false},true);}else{setShowCancel(c);}}} style={{width:"100%",padding:"10px",borderRadius:10,border:"none",background:c.cancelled?"linear-gradient(135deg,#1565C0,#42A5F5)":"linear-gradient(135deg,#E65100,#FF8F00)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>{c.cancelled?"↩ Reactivar clase":"📅 Reprogramar / Cancelar"}</button>
     </WhiteCard>
     );
   };
@@ -2081,12 +2093,17 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                 <div style={{fontSize:14,fontWeight:600}}>Sin clases este día</div>
                 <div style={{fontSize:12,marginTop:4}}>Tocá + para agregar</div>
               </div>
-            ):dayC.map(c=>(
-              <div key={c._virtualId||c.id} onClick={()=>setHighlightCls((c._virtualId||c.id)===highlightCls?null:(c._virtualId||c.id))} style={{background:c.cancelled?"#FFF3E0":c.rescheduled?"#E3F2FD":isNextComboPending(c,students)?"#F5F5F5":C.white,borderRadius:16,padding:"12px 14px",marginBottom:10,boxShadow:highlightCls===(c._virtualId||c.id)?"0 4px 16px rgba(44,94,247,0.18)":"0 2px 10px rgba(44,94,247,0.07)",border:"1.5px solid "+(highlightCls===(c._virtualId||c.id)?C.blue2:isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:"pointer",opacity:isNextComboPending(c,students)?0.75:1,transition:"box-shadow 0.15s,border 0.15s"}}>
+            ):dayC.map(c=>{
+              const isCancelled=c.cancelled&&c.cancelType==="cancelled";
+              const isReprogWithDate=c.cancelled&&c.cancelType==="cancelled_reprog"&&c.rescheduledTo;
+              const isReprogNoDate=c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo;
+              const cardBg=isCancelled?"#FFF0F0":isReprogWithDate?"#E8F5E9":isReprogNoDate?"#E3F2FD":isNextComboPending(c,students)?"#F5F5F5":C.white;
+              return (
+              <div key={c._virtualId||c.id} onClick={()=>setHighlightCls((c._virtualId||c.id)===highlightCls?null:(c._virtualId||c.id))} style={{background:cardBg,borderRadius:16,padding:"12px 14px",marginBottom:10,boxShadow:highlightCls===(c._virtualId||c.id)?"0 4px 16px rgba(44,94,247,0.18)":"0 2px 10px rgba(44,94,247,0.07)",border:"1.5px solid "+(highlightCls===(c._virtualId||c.id)?C.blue2:isCancelled?"#FFCDD2":isReprogWithDate?"#A5D6A7":isReprogNoDate?"#90CAF9":isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:"pointer",opacity:isNextComboPending(c,students)?0.75:1,transition:"box-shadow 0.15s,border 0.15s"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:4}}>
-                      <div style={{fontWeight:800,fontSize:15,color:c.cancelled?"#C62828":isNextComboPending(c,students)?"#9E9E9E":C.text}}>{c.title}{c.cancelled&&c.cancelType!=="cancelled_reprog"?" (Cancelada)":c.cancelled&&c.cancelType==="cancelled_reprog"?" (Cancelada - Reprog.)":c.rescheduled?" (Reprogramada)":""}</div>
+                      <div style={{fontWeight:800,fontSize:15,color:isCancelled?"#C62828":isReprogNoDate?"#1565C0":isReprogWithDate?"#2E7D32":isNextComboPending(c,students)?"#9E9E9E":C.text}}>{c.title}{isCancelled?" (Cancelada)":isReprogWithDate?" (Reprogramada)":isReprogNoDate?" (A Reprogramar)":""}</div>
                       {isNextComboPending(c,students)&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#EEEEEE",color:"#757575",fontWeight:700}}>Sin pagar</span>}
                       {(()=>{const log=(c.attendanceLog||[]).find(e=>e.date===c.date);if(!log)return null;const dC=(log.ausente_dada||[]).length;const nC=(log.ausente_reprog||[]).length;if(!dC&&!nC)return null;return(<>{dC>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ Ausente-Dada</span>}{nC>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF8E1",color:"#F57F17",fontWeight:700}}>↩ A Reprogramar</span>}</>);})()}
                     </div>
@@ -2111,7 +2128,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                   ):null;})}
                 </div>
               </div>
-            ))}
+            );})
           </div>
 
           {/* Class action modal */}
@@ -2145,12 +2162,11 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                   </div>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                     {[
-                      {label:"Editar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,action:()=>{setEditCls(c);setHighlightCls(null);},disabled:false},
-                      {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt({...c,attendanceLog:c.attendanceLog||[]});setHighlightCls(null);},disabled:isNextComboPending(c,students)},
-                      {label:"Reprogramar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14l2 2 4-4"/></svg>,action:()=>{setReprog(c);setHighlightCls(null);},disabled:false},
-                      {label:c.cancelled?"Reactivar":"Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>,action:()=>{if(c.cancelled){onSaveClass({...c,cancelled:false,cancelType:null,applyToAll:false},true);}else{setShowCancel(c);}setHighlightCls(null);},disabled:false},
+                      {label:"Editar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,action:()=>{setEditCls(c);setHighlightCls(null);},disabled:false,color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
+                      {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt({...c,attendanceLog:c.attendanceLog||[]});setHighlightCls(null);},disabled:isNextComboPending(c,students),color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
+                      {label:c.cancelled?"Reactivar":"Reprogramar / Cancelar",icon:c.cancelled?<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 105.64-12.36L1 10"/></svg>:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="15" x2="15" y2="15"/></svg>,action:()=>{if(c.cancelled){onSaveClass({...c,cancelled:false,cancelType:null,rescheduledTo:null,applyToAll:false},true);}else{setShowCancel(c);}setHighlightCls(null);},disabled:false,color:c.cancelled?"linear-gradient(135deg,#1565C0,#42A5F5)":"linear-gradient(135deg,#E65100,#FF8F00)",span:true},
                     ].map(btn=>(
-                      <button key={btn.label} onClick={btn.disabled?null:btn.action} disabled={btn.disabled} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"13px",borderRadius:14,border:"none",background:btn.disabled?"#E0E0E0":"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)",color:btn.disabled?"#9E9E9E":"#fff",fontSize:14,cursor:btn.disabled?"not-allowed":"pointer",fontWeight:700,boxShadow:btn.disabled?"none":"0 4px 12px rgba(101,206,90,0.3)"}}>
+                      <button key={btn.label} onClick={btn.disabled?null:btn.action} disabled={btn.disabled} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"13px",borderRadius:14,border:"none",background:btn.disabled?"#E0E0E0":(btn.color||"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"),color:btn.disabled?"#9E9E9E":"#fff",fontSize:13,cursor:btn.disabled?"not-allowed":"pointer",fontWeight:700,boxShadow:btn.disabled?"none":"0 4px 12px rgba(0,0,0,0.15)",gridColumn:btn.span?"1 / -1":"auto"}}>
                         {btn.icon}{btn.label}{btn.disabled?" 🔒":""}
                       </button>
                     ))}
@@ -2325,12 +2341,11 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                       {/* Action buttons */}
                       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                         {[
-                          {label:"Editar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,action:()=>{setEditCls(c);setHighlightCls(null);}},
-                          {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt({...c,attendanceLog:c.attendanceLog||[]});setHighlightCls(null);}},
-                          {label:"Reprogramar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14l2 2 4-4"/></svg>,action:()=>{setReprog(c);setHighlightCls(null);}},
-                          {label:c.cancelled?"Reactivar":"Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>,action:()=>{if(c.cancelled){onSaveClass({...c,cancelled:false,cancelType:null,applyToAll:false},true);}else{setShowCancel(c);}setHighlightCls(null);}},
+                          {label:"Editar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,action:()=>{setEditCls(c);setHighlightCls(null);},color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
+                          {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt({...c,attendanceLog:c.attendanceLog||[]});setHighlightCls(null);},color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
+                          {label:c.cancelled?"Reactivar":"Reprogramar / Cancelar",icon:c.cancelled?<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 105.64-12.36L1 10"/></svg>:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="15" x2="15" y2="15"/></svg>,action:()=>{if(c.cancelled){onSaveClass({...c,cancelled:false,cancelType:null,rescheduledTo:null,applyToAll:false},true);}else{setShowCancel(c);}setHighlightCls(null);},color:c.cancelled?"linear-gradient(135deg,#1565C0,#42A5F5)":"linear-gradient(135deg,#E65100,#FF8F00)",span:true},
                         ].map(btn=>(
-                          <button key={btn.label} onClick={btn.action} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"13px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)",color:"#fff",fontSize:14,cursor:"pointer",fontWeight:700,boxShadow:"0 4px 12px rgba(101,206,90,0.3)"}}>
+                          <button key={btn.label} onClick={btn.action} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"13px",borderRadius:14,border:"none",background:btn.color||"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)",color:"#fff",fontSize:13,cursor:"pointer",fontWeight:700,boxShadow:"0 4px 12px rgba(0,0,0,0.15)",gridColumn:btn.span?"1 / -1":"auto"}}>
                             {btn.icon}{btn.label}
                           </button>
                         ))}
