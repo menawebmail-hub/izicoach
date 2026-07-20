@@ -114,13 +114,16 @@ const expandClasses=(classes)=>{
     if(isNewFormat&&c.occurrences&&c.occurrences.length>0){
       for(const date of c.occurrences){
         const log=(c.attendanceLog||[]).find(e=>e.date===date);
+        const cancelInfo=(c.dateCancellations||{})[date]||null;
         result.push({
           ...c,
           _seriesId:c.id,
           _virtualId:c.id+"_"+date,
           date,
-          cancelled:c.cancelledDates?.includes(date)||false,
-          rescheduled:c.rescheduledDates?.includes(date)||false,
+          cancelled:!!cancelInfo,
+          cancelType:cancelInfo?.cancelType||null,
+          rescheduledTo:cancelInfo?.rescheduledTo||null,
+          rescheduled:!!(cancelInfo?.rescheduledTo),
           attendanceLog:log?[log]:[],
         });
       }
@@ -5391,6 +5394,29 @@ export default function App() {
     if(isEdit){
       // Resolve virtual id to real series id
       const realId=cd._seriesId||cd.id;
+      const editDate=cd.date; // the specific date being edited
+
+      // Handle per-date cancellation for recurring classes
+      if(cd.cancelled!==undefined&&editDate){
+        setClasses(p=>p.map(c=>{
+          if(c.id!==realId) return c;
+          const dc={...(c.dateCancellations||{})};
+          if(cd.cancelled){
+            dc[editDate]={cancelType:cd.cancelType||"cancelled",rescheduledTo:cd.rescheduledTo||null};
+          } else {
+            delete dc[editDate]; // reactivate
+          }
+          // For legacy single-date classes without occurrences, also set top-level cancelled
+          if(!c.occurrences||c.occurrences.length===0){
+            return {...c,...cd,id:realId,dateCancellations:dc};
+          }
+          // For recurring classes, only update dateCancellations, don't set top-level cancelled
+          const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,...rest}=cd;
+          return {...c,...rest,id:realId,dateCancellations:dc};
+        }));
+        return;
+      }
+
       if(cd.applyToAll){
         // With new format, the series is a single object — just update it
         setClasses(p=>p.map(c=>{
