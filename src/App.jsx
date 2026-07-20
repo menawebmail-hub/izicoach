@@ -1662,7 +1662,7 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
 }
 
 function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent }) {
-  const [selected,setSelected]=useState(null); // null, "cancel", "reprog"
+  const [selected,setSelected]=useState(cls.cancelled&&cls.cancelType==="cancelled_reprog"&&!cls.rescheduledTo?"reprog":null); // null, "cancel", "reprog"
   const [newDate,setNewDate]=useState("");
   const [newTime,setNewTime]=useState(cls.time||"08:00");
 
@@ -1679,6 +1679,7 @@ function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent 
   const clsStudents=(cls.students||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean);
 
   const [reprogLater,setReprogLater]=useState(false);
+  const isAssigningDate=cls.cancelled&&cls.cancelType==="cancelled_reprog"&&!cls.rescheduledTo;
 
   const handleConfirm=()=>{
     if(selected==="cancel"){
@@ -1713,9 +1714,12 @@ function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent 
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.5)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
       <div style={{background:"#F5F7FF",borderRadius:"24px 24px 0 0",padding:"28px 20px",paddingBottom:"calc(40px + env(safe-area-inset-bottom, 34px))",width:"100%",maxHeight:"90vh",overflowY:"auto",boxSizing:"border-box"}}>
         <div style={{width:40,height:4,borderRadius:2,background:"#DDE3F0",margin:"0 auto 20px"}}></div>
-        <div style={{fontWeight:900,fontSize:19,color:"#0D1B4B",marginBottom:4}}>Reprogramar / Cancelar</div>
+        <div style={{fontWeight:900,fontSize:19,color:"#0D1B4B",marginBottom:4}}>{isAssigningDate?"Asignar fecha":"Reprogramar / Cancelar"}</div>
         <div style={{fontSize:13,color:"#6B7BAD",marginBottom:20}}>{cls.title} · {fmtDate(cls.date)} · {cls.time}</div>
 
+        {/* Options - hidden when assigning date to existing A Reprogramar */}
+        {!isAssigningDate&&(
+        <>
         {/* Option 1: Cancel */}
         <div onClick={()=>setSelected("cancel")} style={{display:"flex",alignItems:"center",gap:14,padding:"16px",borderRadius:14,border:"2px solid "+(selected==="cancel"?"#C62828":"#FFCDD2"),background:selected==="cancel"?"#FFF0F0":"#fff",marginBottom:10,cursor:"pointer",transition:"all 0.15s"}}>
           <div style={{width:22,height:22,borderRadius:"50%",border:"2px solid "+(selected==="cancel"?"#C62828":"#ccc"),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
@@ -1737,8 +1741,10 @@ function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent 
             <div style={{fontSize:12,color:"#6B7BAD",marginTop:2}}>Se cancela y se reprograma a otra fecha.</div>
           </div>
         </div>
+        </>
+        )}
 
-        {/* Reprog date picker - appears when reprog selected */}
+        {/* Reprog date picker - appears when reprog selected or assigning date */}
         {selected==="reprog"&&(
           <div style={{background:"#fff",borderRadius:14,padding:"16px",marginBottom:10,border:"1px solid #90CAF9"}}>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
@@ -1760,9 +1766,9 @@ function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent 
                 </div>
               ))}
             </div>
-            <button onClick={()=>setReprogLater(!reprogLater)} style={{width:"100%",padding:"10px",borderRadius:10,border:reprogLater?"2px solid #1565C0":"1.5px solid #90CAF9",background:reprogLater?"#E3F2FD":"#fff",color:"#1565C0",fontSize:12,cursor:"pointer",fontWeight:700}}>
+            {!isAssigningDate&&<button onClick={()=>setReprogLater(!reprogLater)} style={{width:"100%",padding:"10px",borderRadius:10,border:reprogLater?"2px solid #1565C0":"1.5px solid #90CAF9",background:reprogLater?"#E3F2FD":"#fff",color:"#1565C0",fontSize:12,cursor:"pointer",fontWeight:700}}>
               {reprogLater?"✓ ":""}🕐 Reprogramar luego (sin fecha)
-            </button>
+            </button>}
           </div>
         )}
 
@@ -1770,7 +1776,7 @@ function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent 
         <div style={{display:"flex",gap:10,marginTop:6}}>
           <button onClick={onClose} style={{flex:1,padding:"14px",borderRadius:14,border:"1.5px solid #DDE3F0",background:"#fff",cursor:"pointer",fontSize:14,color:"#6B7BAD",fontWeight:700}}>Volver</button>
           <button onClick={handleConfirm} disabled={!selected||(selected==="reprog"&&!targetDate&&!reprogLater)} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:!selected?"#ccc":selected==="cancel"?"linear-gradient(135deg,#C62828,#E53935)":"linear-gradient(135deg,#1565C0,#42A5F5)",color:"#fff",cursor:selected?"pointer":"not-allowed",fontSize:14,fontWeight:800,opacity:(!selected||(selected==="reprog"&&!targetDate&&!reprogLater))?0.5:1}}>
-            {selected==="cancel"?"⛔ Confirmar cancelación":selected==="reprog"?(reprogLater?"🕐 Confirmar sin fecha":"📅 Confirmar reprogramación"):"Elegí una opción"}
+            {isAssigningDate?"📅 Asignar fecha":selected==="cancel"?"⛔ Confirmar cancelación":selected==="reprog"?(reprogLater?"🕐 Confirmar sin fecha":"📅 Confirmar reprogramación"):"Elegí una opción"}
           </button>
         </div>
       </div>
