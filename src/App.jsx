@@ -1087,7 +1087,7 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
                 <div style={{fontSize:13,fontWeight:800,color:C.white}}>{c.time}</div>
               </div>
               <div style={{flex:1}}>
-                <div style={{fontWeight:700,fontSize:14,color:C.text}}>{c.title}{c.cancelled&&c.cancelType!=="cancelled_reprog"?" (Cancelada)":c.cancelled&&c.cancelType==="cancelled_reprog"?" (Cancelada - Reprog.)":c.rescheduled?" (Reprogramada)":""}</div>
+                <div style={{fontWeight:700,fontSize:14,color:C.text}}>{c.title}{c.cancelled&&c.cancelType==="cancelled"?" (Cancelada)":c.cancelled&&c.cancelType==="cancelled_reprog"&&c.rescheduledTo?" (Reprogramada)":c.cancelled&&c.cancelType==="cancelled_reprog"?" (A Reprogramar)":""}</div>
                 <div style={{fontSize:12,color:C.mutedDark}}>{c.court+" · "+c.students.length+" alumno"+(c.students.length>1?"s":"")}</div>
               </div>
               <div style={{display:"flex",flexWrap:"wrap",gap:3,maxWidth:80,justifyContent:"flex-end"}}>
@@ -2367,9 +2367,9 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                     const colL=`calc(${LEFT}px + (100% - ${LEFT}px - ${RIGHT}px) / ${c.totalCols} * ${c.col} + ${c.col*2}px)`;
                     return (
                       <div key={c._virtualId||c.id} onClick={()=>setHighlightCls((c._virtualId||c.id)===highlightCls?null:(c._virtualId||c.id))}
-                        style={{position:"absolute",top:topPx,left:colL,width:colW,height:heightPx,background:c.cancelled?"#FFF3E0":c.rescheduled?"#E3F2FD":isNextComboPending(c,students)?"#F5F5F5":C.white,borderRadius:12,padding:"6px 10px",border:"1.5px solid "+(highlightCls===(c._virtualId||c.id)?C.blue2:isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:"pointer",boxShadow:"0 2px 8px rgba(44,94,247,0.10)",overflow:"hidden",borderLeft:"4px solid "+(c.cancelled?"#E65100":c.rescheduled?"#1565C0":isNextComboPending(c,students)?"#BDBDBD":C.blue2),zIndex:2,opacity:isNextComboPending(c,students)?0.7:1}}>
+                        style={{position:"absolute",top:topPx,left:colL,width:colW,height:heightPx,background:c.cancelled&&c.cancelType==="cancelled"?"#FFF0F0":c.cancelled&&c.cancelType==="cancelled_reprog"&&c.rescheduledTo?"#E8F5E9":c.cancelled&&c.cancelType==="cancelled_reprog"?"#E3F2FD":isNextComboPending(c,students)?"#F5F5F5":C.white,borderRadius:12,padding:"6px 10px",border:"1.5px solid "+(highlightCls===(c._virtualId||c.id)?C.blue2:isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:"pointer",boxShadow:"0 2px 8px rgba(44,94,247,0.10)",overflow:"hidden",borderLeft:"4px solid "+(c.cancelled&&c.cancelType==="cancelled"?"#C62828":c.cancelled&&c.cancelType==="cancelled_reprog"&&c.rescheduledTo?"#2E7D32":c.cancelled&&c.cancelType==="cancelled_reprog"?"#1565C0":isNextComboPending(c,students)?"#BDBDBD":C.blue2),zIndex:2,opacity:isNextComboPending(c,students)?0.7:1}}>
                         <div style={{display:"flex",alignItems:"center",gap:4,overflow:"hidden"}}>
-                          <div style={{fontSize:13,fontWeight:800,color:c.cancelled?"#C62828":isNextComboPending(c,students)?"#9E9E9E":C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",flex:1}}>{c.title}{c.cancelled&&c.cancelType!=="cancelled_reprog"?" (Cancelada)":c.cancelled&&c.cancelType==="cancelled_reprog"?" (Cancelada - Reprog.)":c.rescheduled?" (Reprogramada)":""}</div>
+                          <div style={{fontSize:13,fontWeight:800,color:c.cancelled&&c.cancelType==="cancelled"?"#C62828":c.cancelled&&c.cancelType==="cancelled_reprog"&&c.rescheduledTo?"#2E7D32":c.cancelled&&c.cancelType==="cancelled_reprog"?"#1565C0":isNextComboPending(c,students)?"#9E9E9E":C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",flex:1}}>{c.title}{c.cancelled&&c.cancelType==="cancelled"?" (Cancelada)":c.cancelled&&c.cancelType==="cancelled_reprog"&&c.rescheduledTo?" (Reprogramada)":c.cancelled&&c.cancelType==="cancelled_reprog"?" (A Reprogramar)":""}</div>
                           {isNextComboPending(c,students)&&<span style={{fontSize:9,padding:"2px 5px",borderRadius:8,background:"#EEEEEE",color:"#757575",fontWeight:700,flexShrink:0}}>Sin pagar</span>}
                         </div>
                         <div style={{fontSize:11,color:C.mutedDark,marginTop:1}}>{c.time+(c.timeEnd?" – "+c.timeEnd:"")} · {c.court}</div>
@@ -2798,19 +2798,22 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
       }
       dates.slice(0,Math.max(effectiveTotal,dates.length)).forEach((ds,i)=>{
         const classOnDate=myClasses.find(cl=>cl.date===ds);
-        const isCancelled=!!(classOnDate?.cancelled&&!classOnDate?.rescheduled);
-        const isRescheduled=!!(classOnDate?.rescheduled);
-        const isPaidDate=i<paidCount&&!isCancelled;
+        const isCancelled=!!(classOnDate?.cancelled&&classOnDate?.cancelType==="cancelled");
+        const isReprogWithDate=!!(classOnDate?.cancelled&&classOnDate?.cancelType==="cancelled_reprog"&&classOnDate?.rescheduledTo);
+        const isReprogNoDate=!!(classOnDate?.cancelled&&classOnDate?.cancelType==="cancelled_reprog"&&!classOnDate?.rescheduledTo);
+        const isAnyCancelled=isCancelled||isReprogWithDate||isReprogNoDate;
+        const isPaidDate=i<paidCount;
         const attEntry=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===ds);
         const wasAusenteDada=attEntry?(attEntry.ausente_dada||[]).includes(s.id):false;
         const wasAusenteReprog=attEntry?(attEntry.ausente_reprog||[]).includes(s.id):false;
         const wasPresent=attEntry?(attEntry.present||[]).includes(s.id):false;
         const wasAbsent=attEntry?(!wasPresent&&!wasAusenteDada&&!wasAusenteReprog):false;
-        const isGiven=isCancelled?false:wasAusenteReprog?false:attEntry?(wasPresent||wasAusenteDada):isClassDone(ds,classOnDate?.timeEnd);
+        // Cancelled classes count as "given" for billing (cobra), reprog classes don't until rescheduled
+        const isGiven=isCancelled?true:isReprogWithDate?true:isReprogNoDate?false:wasAusenteReprog?false:attEntry?(wasPresent||wasAusenteDada):isClassDone(ds,classOnDate?.timeEnd);
         let status;
         if(isPaidDate){status=isGiven?"dada":"adar";}
         else{status=isGiven?"dada_unpaid":"pendiente";}
-        result.push({date:ds,status,comboId:c.id,isGiven,wasPresent,wasAbsent,wasAusenteDada,wasAusenteReprog,isCancelled,isRescheduled});
+        result.push({date:ds,status,comboId:c.id,isGiven,wasPresent,wasAbsent,wasAusenteDada,wasAusenteReprog,isCancelled,isReprogWithDate,isReprogNoDate,rescheduledTo:classOnDate?.rescheduledTo||null});
       });
     });
     // Deduplicate by date - keep first occurrence
@@ -3045,27 +3048,33 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
                 const isPaid=item.status!=="pendiente"||isPaidNow||item.isNew;
                 const wasAbsent=item.wasAbsent||false;
                 const isCancelled=item.isCancelled||false;
-                const wasRescheduled=classes.some(cls=>cls.students.includes(s.id)&&cls.date===item.date&&cls.rescheduled);
+                const isReprogWithDate=item.isReprogWithDate||false;
+                const isReprogNoDate=item.isReprogNoDate||false;
                 let leftBg,leftColor,leftLabel,rightBg,rightColor,rightLabel;
-                if(item.isNew||isPaid){
-                  leftBg=wasAbsent?"#FFF3E0":isCancelled?"#F3E5F5":"#E8F5E9";
-                  leftColor=wasAbsent?"#E65100":isCancelled?"#7B1FA2":"#2E7D32";
-                  leftLabel=wasAbsent?"🚫 Ausente":isCancelled?"❌ Cancelada":"Programada";
-                  rightBg="#E8F5E9";rightColor="#2E7D32";rightLabel="Pagada";
+                if(isCancelled){
+                  leftBg="#FFF0F0";leftColor="#C62828";leftLabel="⛔ Cancelada";
+                } else if(isReprogWithDate){
+                  leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="🔄 Reprogramada";
+                } else if(isReprogNoDate){
+                  leftBg="#E3F2FD";leftColor="#1565C0";leftLabel="🕐 A Reprogramar";
+                } else if(wasAbsent){
+                  leftBg="#FFF3E0";leftColor="#E65100";leftLabel="🚫 Ausente";
+                } else if(item.isGiven){
+                  leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="✓ Realizada";
                 } else {
-                  leftBg=wasAbsent?"#FFF3E0":isCancelled?"#F3E5F5":"#FFF3E0";
-                  leftColor=wasAbsent?"#E65100":isCancelled?"#7B1FA2":"#E65100";
-                  leftLabel=wasAbsent?"🚫 Ausente":isCancelled?"❌ Cancelada":"Programada";
-                  rightBg="#FFF3E0";rightColor="#E65100";rightLabel="No Pagada";
+                  leftBg="#FFF8E1";leftColor="#F57F17";leftLabel="Programada";
                 }
+                if(item.isNew||isPaid){rightBg="#E8F5E9";rightColor="#2E7D32";rightLabel="Pagada";}
+                else{rightBg="#FFF3E0";rightColor="#E65100";rightLabel="No Pagada";}
                 return (
                   <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid #E3F2FD"}}>
-                    <div style={{width:28,height:28,borderRadius:"50%",background:item.isNew?"#E8F5E9":C.blueL,border:"2px solid "+(item.isNew?"#43A047":C.blue2),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                      <span style={{fontSize:11,fontWeight:800,color:item.isNew?"#43A047":C.blue2}}>{i+1}</span>
+                    <div style={{width:28,height:28,borderRadius:"50%",background:isCancelled?"#FFF0F0":isReprogWithDate?"#E8F5E9":isReprogNoDate?"#E3F2FD":item.isNew?"#E8F5E9":C.blueL,border:"2px solid "+(isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":item.isNew?"#43A047":C.blue2),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                      <span style={{fontSize:11,fontWeight:800,color:isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":item.isNew?"#43A047":C.blue2}}>{i+1}</span>
                     </div>
-                    <div style={{flex:1,fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(item.date)}</div>
-                    {wasAbsent&&<span title="Alumno ausente" style={{fontSize:14,cursor:"default"}}>🚫</span>}
-                    {wasRescheduled&&<span title="Clase reprogramada" style={{fontSize:14,cursor:"default"}}>🔄</span>}
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(item.date)}</div>
+                      {isReprogWithDate&&item.rescheduledTo&&<div style={{fontSize:10,color:"#2E7D32",marginTop:1}}>→ {formatDate(item.rescheduledTo)}</div>}
+                    </div>
                     <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:leftBg,color:leftColor,fontWeight:700,flexShrink:0}}>{leftLabel}</span>
                     <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700,flexShrink:0}}>{rightLabel}</span>
                   </div>
@@ -3269,30 +3278,38 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               ).length;
               const isUnpaid=item.status==="pendiente"||item.status==="dada_unpaid";
               const alreadyPaid=item.status==="adar"||item.status==="dada";
-              const isPaidNow=!isCancelled&&(alreadyPaid||(isUnpaid&&unpaidBefore<qty));
-              const isPaid=!isCancelled&&(alreadyPaid||isPaidNow);
+              const isCancelledItem=item.isCancelled||false;
+              const isReprogWithDateItem=item.isReprogWithDate||false;
+              const isReprogNoDateItem=item.isReprogNoDate||false;
+              const isPaidNow=!isCancelledItem&&!isReprogNoDateItem&&(alreadyPaid||(isUnpaid&&unpaidBefore<qty));
+              const isPaid=!isReprogNoDateItem&&(alreadyPaid||isPaidNow);
               const isGiven=item.isGiven||item.status==="dada_unpaid"||item.status==="dada";
               // Class status label (left badge)
               let leftBg,leftColor,leftLabel;
-              if(isRescheduled){leftBg="#E3F2FD";leftColor="#1565C0";leftLabel="🔄 Reprogramada";}
-              else if(isCancelled){leftBg="#F3E5F5";leftColor="#7B1FA2";leftLabel="❌ Cancelada — Pendiente";}
+              if(isCancelledItem){leftBg="#FFF0F0";leftColor="#C62828";leftLabel="⛔ Cancelada";}
+              else if(isReprogWithDateItem){leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="🔄 Reprogramada";}
+              else if(isReprogNoDateItem){leftBg="#E3F2FD";leftColor="#1565C0";leftLabel="🕐 A Reprogramar";}
               else if(wasAusenteReprog){leftBg="#E8EAF6";leftColor="#3949AB";leftLabel="↩ A Reprogramar";}
               else if(wasAusenteDada){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="🚫 Ausente (Dada)";}
               else if(wasAbsent){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="🚫 Ausente";}
-              else if(isGiven){leftBg=C.blueL;leftColor=C.blue2;leftLabel="Realizada";}
-              else{leftBg="#FFF3E0";leftColor="#E65100";leftLabel="Programada";}
-              // Payment badge — hide for cancelled (no payment until rescheduled)
+              else if(isGiven){leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="✓ Realizada";}
+              else{leftBg="#FFF8E1";leftColor="#F57F17";leftLabel="Programada";}
+              // Payment badge
               const rightBg=isPaid?"#E8F5E9":"#FFEBEE";
               const rightColor=isPaid?"#2E7D32":"#C62828";
               const rightLabel=isPaid?"✓ Pagada":"No Pagada";
               return (
                 <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid #E3F2FD"}}>
-                  <div style={{width:28,height:28,borderRadius:"50%",background:isCancelled?"#F3E5F5":isRescheduled?"#E3F2FD":C.blueL,border:"2px solid "+(isCancelled?"#7B1FA2":isRescheduled?"#1565C0":"#1976D2"),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                    <span style={{fontSize:11,fontWeight:800,color:isCancelled?"#7B1FA2":isRescheduled?"#1565C0":C.blue2}}>{i+1}</span>
+                  <div style={{width:28,height:28,borderRadius:"50%",background:isCancelledItem?"#FFF0F0":isReprogWithDateItem?"#E8F5E9":isReprogNoDateItem?"#E3F2FD":C.blueL,border:"2px solid "+(isCancelledItem?"#C62828":isReprogWithDateItem?"#2E7D32":isReprogNoDateItem?"#1565C0":"#1976D2"),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <span style={{fontSize:11,fontWeight:800,color:isCancelledItem?"#C62828":isReprogWithDateItem?"#2E7D32":isReprogNoDateItem?"#1565C0":C.blue2}}>{i+1}</span>
                   </div>
-                  <div style={{flex:1,fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(item.date)}</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(item.date)}</div>
+                    {isReprogWithDateItem&&item.rescheduledTo&&<div style={{fontSize:10,color:"#2E7D32",marginTop:1}}>→ {formatDate(item.rescheduledTo)}</div>}
+                  </div>
                   <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:leftBg,color:leftColor,fontWeight:700,flexShrink:0}}>{leftLabel}</span>
-                  {!isCancelled&&<span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700,flexShrink:0}}>{rightLabel}</span>}
+                  <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700,flexShrink:0}}>{rightLabel}</span>
+                </div>
                 </div>
               );
             })}
@@ -3474,16 +3491,24 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             seenDates.add(d.date);
             return true;
           });
-          const noPagadas=allDatesForStudent.filter(d=>!d.isPaid).length;
-          const pagadas=allDatesForStudent.filter(d=>d.isPaid).length;
-          const programadas=allDatesForStudent.filter(d=>!d.isGiven&&!d.isPast).length;
-          const realizadas=allDatesForStudent.filter(d=>d.isGiven).length;
+          const noPagadas=allDatesForStudent.filter(d=>!d.isPaid&&!d.isCancelled&&!d.isReprogNoDate).length;
+          const pagadas=allDatesForStudent.filter(d=>d.isPaid&&!d.isCancelled).length;
+          const programadas=allDatesForStudent.filter(d=>!d.isGiven&&!d.isPast&&!d.isCancelled&&!d.isReprogWithDate&&!d.isReprogNoDate).length;
+          const realizadas=allDatesForStudent.filter(d=>d.isGiven&&!d.isCancelled&&!d.isReprogWithDate).length;
+          const canceladas=allDatesForStudent.filter(d=>d.isCancelled).length;
+          const reprogramadas=allDatesForStudent.filter(d=>d.isReprogWithDate).length;
+          const aReprogramar=allDatesForStudent.filter(d=>d.isReprogNoDate).length;
           const cols=[
             {n:noPagadas,label:"No Pagada",color:"#C62828",bg:"#FFEBEE"},
             {n:pagadas,label:"Pagada",color:"#2E7D32",bg:"#EDFBEC"},
             {n:programadas,label:"Programada",color:C.blue2,bg:C.blueL},
             {n:realizadas,label:"Realizada",color:"#555",bg:"#F5F5F5"},
           ];
+          const extraCols=[
+            canceladas>0&&{n:canceladas,label:"Cancelada",color:"#C62828",bg:"#FFF0F0"},
+            reprogramadas>0&&{n:reprogramadas,label:"Reprogramada",color:"#2E7D32",bg:"#E8F5E9"},
+            aReprogramar>0&&{n:aReprogramar,label:"A Reprog.",color:"#1565C0",bg:"#E3F2FD"},
+          ].filter(Boolean);
           const reprogCount=allDatesForStudent.filter(d=>{
             const attEntry=myClassesH.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===d.date);
             return attEntry&&(attEntry.ausente_reprog||[]).includes(s.id);
@@ -3495,7 +3520,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
           return (
             <div style={{marginBottom:12}}>
               <div style={{fontSize:11,fontWeight:800,color:C.blue2,letterSpacing:1,marginBottom:8}}>ESTADO DE CUENTAS</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:reprogCount||cancelledCount?8:0}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:extraCols.length>0?8:0}}>
                 {cols.map((col,i)=>(
                   <div key={i} style={{background:col.bg,borderRadius:12,padding:"10px 4px",textAlign:"center"}}>
                     <div style={{fontSize:26,fontWeight:900,color:col.color,lineHeight:1}}>{col.n}</div>
@@ -3503,10 +3528,14 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
                   </div>
                 ))}
               </div>
-              {(reprogCount>0||cancelledCount>0)&&(
-                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                  {reprogCount>0&&<span style={{display:"flex",alignItems:"center",gap:4,fontSize:11,color:"#3949AB",fontWeight:700}}><span style={{fontSize:13,fontWeight:900}}>{reprogCount}</span><span style={{background:"#E8EAF6",borderRadius:20,padding:"2px 8px"}}>↩ A Reprogramar</span></span>}
-                  {cancelledCount>0&&<span style={{display:"flex",alignItems:"center",gap:4,fontSize:11,color:"#7B1FA2",fontWeight:700}}><span style={{fontSize:13,fontWeight:900}}>{cancelledCount}</span><span style={{background:"#F3E5F5",borderRadius:20,padding:"2px 8px"}}>❌ Cancelada</span></span>}
+              {extraCols.length>0&&(
+                <div style={{display:"grid",gridTemplateColumns:"repeat("+extraCols.length+",1fr)",gap:6}}>
+                  {extraCols.map((col,i)=>(
+                    <div key={i} style={{background:col.bg,borderRadius:12,padding:"8px 4px",textAlign:"center"}}>
+                      <div style={{fontSize:20,fontWeight:900,color:col.color,lineHeight:1}}>{col.n}</div>
+                      <div style={{fontSize:9,fontWeight:700,color:col.color,marginTop:3,lineHeight:1.2}}>{col.label}</div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
