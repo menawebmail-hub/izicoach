@@ -2128,7 +2128,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                   ):null;})}
                 </div>
               </div>
-            );})
+            );})}
           </div>
 
           {/* Class action modal */}
