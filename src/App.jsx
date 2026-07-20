@@ -1659,19 +1659,15 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
 }
 
 function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent }) {
-  const [mode,setMode]=useState(null); // null=choose, "reprog"=show date picker
+  const [selected,setSelected]=useState(null); // null, "cancel", "reprog"
   const [newDate,setNewDate]=useState("");
   const [newTime,setNewTime]=useState(cls.time||"08:00");
 
   const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
   const classDowSet=new Set((cls.days||[]).map(d=>DAY_MAP[d]));
   const getNextClassDate=(fromDate)=>{
-    const d=new Date(fromDate+"T12:00:00");
-    d.setDate(d.getDate()+1);
-    for(let i=0;i<14;i++){
-      if(classDowSet.size===0||classDowSet.has(d.getDay())) return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
-      d.setDate(d.getDate()+1);
-    }
+    const d=new Date(fromDate+"T12:00:00");d.setDate(d.getDate()+1);
+    for(let i=0;i<14;i++){if(classDowSet.size===0||classDowSet.has(d.getDay())) return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");d.setDate(d.getDate()+1);}
     return null;
   };
   const nextAuto=getNextClassDate(cls.date);
@@ -1679,30 +1675,25 @@ function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent 
   const targetLabel=targetDate?fmtDate(targetDate):null;
   const clsStudents=(cls.students||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean);
 
-  const handleCancel=()=>{
-    onSave({...cls,cancelled:true,cancelType:"cancelled",rescheduledTo:null,applyToAll:false},true);
-    onClose();
-  };
-
-  const handleReprogNow=()=>{
-    if(!targetDate) return;
-    const oldDate=cls.date;
-    const updatedLog=(cls.attendanceLog||[]).map(e=>e.date===oldDate?{...e,ausente_reprog:[],rescheduled_to:targetDate}:e);
-    onSave({...cls,cancelled:true,cancelType:"cancelled_reprog",rescheduledTo:targetDate,rescheduled:true,attendanceLog:updatedLog,applyToAll:false},true);
-    // Update student combo dates
-    if(onUpdateStudent){
-      clsStudents.forEach(s=>{
-        const updatedCombos=s.combos.map(c=>{
-          if(!c.dates) return c;
-          const idx=c.dates.indexOf(oldDate);
-          if(idx===-1) return c;
-          const newDates=[...c.dates];newDates[idx]=targetDate;newDates.sort();
-          return {...c,dates:newDates};
+  const handleConfirm=()=>{
+    if(selected==="cancel"){
+      onSave({...cls,cancelled:true,cancelType:"cancelled",rescheduledTo:null,applyToAll:false},true);
+      onClose();
+    } else if(selected==="reprog"&&targetDate){
+      const oldDate=cls.date;
+      const updatedLog=(cls.attendanceLog||[]).map(e=>e.date===oldDate?{...e,ausente_reprog:[],rescheduled_to:targetDate}:e);
+      onSave({...cls,cancelled:true,cancelType:"cancelled_reprog",rescheduledTo:targetDate,rescheduled:true,attendanceLog:updatedLog,applyToAll:false},true);
+      if(onUpdateStudent){
+        clsStudents.forEach(s=>{
+          const updatedCombos=s.combos.map(c=>{
+            if(!c.dates) return c;const idx=c.dates.indexOf(oldDate);if(idx===-1) return c;
+            const newDates=[...c.dates];newDates[idx]=targetDate;newDates.sort();return {...c,dates:newDates};
+          });
+          if(JSON.stringify(updatedCombos)!==JSON.stringify(s.combos)) onUpdateStudent({...s,combos:updatedCombos});
         });
-        if(JSON.stringify(updatedCombos)!==JSON.stringify(s.combos)) onUpdateStudent({...s,combos:updatedCombos});
-      });
+      }
+      onClose();
     }
-    onClose();
   };
 
   const handleReprogLater=()=>{
@@ -1717,74 +1708,61 @@ function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent 
         <div style={{fontWeight:900,fontSize:19,color:"#0D1B4B",marginBottom:4}}>Reprogramar / Cancelar</div>
         <div style={{fontSize:13,color:"#6B7BAD",marginBottom:20}}>{cls.title} · {fmtDate(cls.date)} · {cls.time}</div>
 
-        {!mode&&(
-          <>
-            {/* Option 1: Cancel */}
-            <div onClick={handleCancel} style={{display:"flex",alignItems:"center",gap:14,padding:"16px",borderRadius:14,border:"2px solid #FFCDD2",background:"#fff",marginBottom:10,cursor:"pointer"}}>
-              <span style={{fontSize:24,flexShrink:0}}>⛔</span>
-              <div style={{flex:1}}>
-                <div style={{fontWeight:700,fontSize:14,color:"#C62828"}}>Cancelar clase</div>
-                <div style={{fontSize:12,color:"#6B7BAD",marginTop:2}}>La clase se cancela y se cobra. Cuenta como realizada.</div>
-              </div>
-            </div>
-            {/* Option 2: Cancel + Reprog */}
-            <div onClick={()=>setMode("reprog")} style={{display:"flex",alignItems:"center",gap:14,padding:"16px",borderRadius:14,border:"2px solid #90CAF9",background:"#fff",marginBottom:10,cursor:"pointer"}}>
-              <span style={{fontSize:24,flexShrink:0}}>🔄</span>
-              <div style={{flex:1}}>
-                <div style={{fontWeight:700,fontSize:14,color:"#1565C0"}}>Cancelar y Reprogramar</div>
-                <div style={{fontSize:12,color:"#6B7BAD",marginTop:2}}>La clase se cancela y se reprograma a otra fecha.</div>
-              </div>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#1565C0" strokeWidth="2" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
-            </div>
-          </>
-        )}
+        {/* Option 1: Cancel */}
+        <div onClick={()=>setSelected("cancel")} style={{display:"flex",alignItems:"center",gap:14,padding:"16px",borderRadius:14,border:"2px solid "+(selected==="cancel"?"#C62828":"#FFCDD2"),background:selected==="cancel"?"#FFF0F0":"#fff",marginBottom:10,cursor:"pointer",transition:"all 0.15s"}}>
+          <div style={{width:22,height:22,borderRadius:"50%",border:"2px solid "+(selected==="cancel"?"#C62828":"#ccc"),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+            {selected==="cancel"&&<div style={{width:12,height:12,borderRadius:"50%",background:"#C62828"}}></div>}
+          </div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:700,fontSize:14,color:"#C62828"}}>⛔ Cancelar clase</div>
+            <div style={{fontSize:12,color:"#6B7BAD",marginTop:2}}>Se cancela y se cobra. Cuenta como realizada.</div>
+          </div>
+        </div>
 
-        {mode==="reprog"&&(
-          <>
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16}}>
-              <button onClick={()=>setMode(null)} style={{background:"none",border:"none",cursor:"pointer",padding:4}}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6B7BAD" strokeWidth="2.5" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg>
-              </button>
-              <div style={{fontWeight:800,fontSize:16,color:"#1565C0"}}>🔄 Cancelar y Reprogramar</div>
-            </div>
+        {/* Option 2: Cancel + Reprog */}
+        <div onClick={()=>setSelected("reprog")} style={{display:"flex",alignItems:"center",gap:14,padding:"16px",borderRadius:14,border:"2px solid "+(selected==="reprog"?"#1565C0":"#90CAF9"),background:selected==="reprog"?"#E3F2FD":"#fff",marginBottom:10,cursor:"pointer",transition:"all 0.15s"}}>
+          <div style={{width:22,height:22,borderRadius:"50%",border:"2px solid "+(selected==="reprog"?"#1565C0":"#ccc"),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+            {selected==="reprog"&&<div style={{width:12,height:12,borderRadius:"50%",background:"#1565C0"}}></div>}
+          </div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:700,fontSize:14,color:"#1565C0"}}>🔄 Cancelar y Reprogramar</div>
+            <div style={{fontSize:12,color:"#6B7BAD",marginTop:2}}>Se cancela y se reprograma a otra fecha.</div>
+          </div>
+        </div>
 
-            {/* Date + Time */}
+        {/* Reprog date picker - appears when reprog selected */}
+        {selected==="reprog"&&(
+          <div style={{background:"#fff",borderRadius:14,padding:"16px",marginBottom:10,border:"1px solid #90CAF9"}}>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
               <div>
-                <label style={{fontSize:13,color:"#1565C0",fontWeight:700,display:"block",marginBottom:6}}>Nueva fecha</label>
-                <input type="date" value={newDate} onChange={e=>setNewDate(e.target.value)} style={{width:"100%",padding:"13px 12px",borderRadius:12,border:"none",fontSize:13,boxSizing:"border-box",background:"#E3F2FD",color:"#0D1B4B",outline:"none",cursor:"pointer"}}/>
+                <label style={{fontSize:12,color:"#1565C0",fontWeight:700,display:"block",marginBottom:6}}>Nueva fecha</label>
+                <input type="date" value={newDate} onChange={e=>setNewDate(e.target.value)} style={{width:"100%",padding:"12px",borderRadius:10,border:"none",fontSize:13,boxSizing:"border-box",background:"#E3F2FD",color:"#0D1B4B",outline:"none"}}/>
               </div>
               <div>
-                <label style={{fontSize:13,color:"#1565C0",fontWeight:700,display:"block",marginBottom:6}}>Nueva hora</label>
-                <input type="time" value={newTime} onChange={e=>setNewTime(e.target.value)} style={{width:"100%",padding:"13px 12px",borderRadius:12,border:"none",fontSize:13,boxSizing:"border-box",background:"#E3F2FD",color:"#0D1B4B",outline:"none",cursor:"pointer"}}/>
+                <label style={{fontSize:12,color:"#1565C0",fontWeight:700,display:"block",marginBottom:6}}>Nueva hora</label>
+                <input type="time" value={newTime} onChange={e=>setNewTime(e.target.value)} style={{width:"100%",padding:"12px",borderRadius:10,border:"none",fontSize:13,boxSizing:"border-box",background:"#E3F2FD",color:"#0D1B4B",outline:"none"}}/>
               </div>
             </div>
-
-            {/* Info */}
-            {targetLabel&&(
-              <div style={{background:"#E8F5E9",borderRadius:12,padding:"12px 14px",marginBottom:12,display:"flex",gap:10,alignItems:"flex-start"}}>
-                <span style={{fontSize:16,flexShrink:0}}>📅</span>
-                <div style={{fontSize:12,color:"#2E7D32",lineHeight:1.5}}>La clase se moverá al <b>{targetLabel}</b> a las <b>{newTime}</b></div>
-              </div>
-            )}
-
-            {/* Students */}
-            <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:16}}>
+            {targetLabel&&<div style={{fontSize:12,color:"#2E7D32",background:"#E8F5E9",borderRadius:10,padding:"10px 12px",marginBottom:10}}>📅 Se moverá al <b>{targetLabel}</b> a las <b>{newTime}</b></div>}
+            <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
               {clsStudents.map(st=>(
-                <div key={st.id} style={{display:"flex",alignItems:"center",gap:5,background:"#fff",borderRadius:20,padding:"4px 10px 4px 6px",fontSize:12,color:"#1565C0",fontWeight:600,border:"1px solid #90CAF9"}}>
-                  <div style={{width:18,height:18,borderRadius:"50%",background:"#1565C0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:"#fff",fontWeight:700}}>{st.avatar[0]}</div>
+                <div key={st.id} style={{display:"flex",alignItems:"center",gap:4,background:"#E3F2FD",borderRadius:20,padding:"3px 8px 3px 4px",fontSize:11,color:"#1565C0",fontWeight:600}}>
+                  <div style={{width:16,height:16,borderRadius:"50%",background:"#1565C0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:7,color:"#fff",fontWeight:700}}>{st.avatar[0]}</div>
                   {st.name.split(" ")[0]}
                 </div>
               ))}
             </div>
-
-            {/* Action buttons */}
-            <button onClick={handleReprogNow} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#1565C0,#42A5F5)",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:800,marginBottom:8}}>📅 Reprogramar al {targetLabel||"..."}</button>
-            <button onClick={handleReprogLater} style={{width:"100%",padding:"14px",borderRadius:14,border:"1.5px solid #90CAF9",background:"#fff",color:"#1565C0",cursor:"pointer",fontSize:14,fontWeight:700,marginBottom:8}}>🕐 Reprogramar luego</button>
-          </>
+            <button onClick={handleReprogLater} style={{width:"100%",padding:"10px",borderRadius:10,border:"1.5px solid #90CAF9",background:"#fff",color:"#1565C0",fontSize:12,cursor:"pointer",fontWeight:700}}>🕐 Reprogramar luego (sin fecha)</button>
+          </div>
         )}
 
-        <button onClick={onClose} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:"#fff",color:"#6B7BAD",fontSize:14,cursor:"pointer",fontWeight:600,marginTop:4}}>Volver</button>
+        {/* Confirm + Back buttons */}
+        <div style={{display:"flex",gap:10,marginTop:6}}>
+          <button onClick={onClose} style={{flex:1,padding:"14px",borderRadius:14,border:"1.5px solid #DDE3F0",background:"#fff",cursor:"pointer",fontSize:14,color:"#6B7BAD",fontWeight:700}}>Volver</button>
+          <button onClick={handleConfirm} disabled={!selected||(selected==="reprog"&&!targetDate)} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:!selected?"#ccc":selected==="cancel"?"linear-gradient(135deg,#C62828,#E53935)":"linear-gradient(135deg,#1565C0,#42A5F5)",color:"#fff",cursor:selected?"pointer":"not-allowed",fontSize:14,fontWeight:800}}>
+            {selected==="cancel"?"⛔ Confirmar cancelación":selected==="reprog"?"📅 Confirmar reprogramación":"Elegí una opción"}
+          </button>
+        </div>
       </div>
     </div>
   );
