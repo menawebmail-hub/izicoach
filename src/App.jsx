@@ -3310,7 +3310,6 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
                   <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:leftBg,color:leftColor,fontWeight:700,flexShrink:0}}>{leftLabel}</span>
                   <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700,flexShrink:0}}>{rightLabel}</span>
                 </div>
-                </div>
               );
             })}
             {/* New projected dates — only when existing combo is paid (cycle closed) */}
