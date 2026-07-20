@@ -1004,18 +1004,18 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
 
   // Classes that need rescheduling: ausente_reprog OR cancelled (but not already rescheduled)
   const reprogAlerts=[
-    // Ausente-reprog: student marked as needing reschedule
+    // Classes marked as "A Reprogramar" (cancelled_reprog without date)
+    ...classes.filter(c=>c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo).map(c=>({
+      cls:c,reason:"a_reprogramar",students:(c.students||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean)
+    })).filter(x=>x.students.length>0),
+    // Ausente-reprog: student marked as needing reschedule from attendance
     ...classes.filter(c=>{
-      if(c.rescheduled) return false;
+      if(c.cancelled) return false;
       return (c.attendanceLog||[]).some(e=>(e.ausente_reprog||[]).length>0);
     }).map(c=>{
       const log=(c.attendanceLog||[]).find(e=>(e.ausente_reprog||[]).length>0);
       return {cls:c,reason:"reprog",students:(log?.ausente_reprog||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean)};
     }).filter(x=>x.students.length>0),
-    // Cancelled: class was suspended
-    ...classes.filter(c=>c.cancelled&&!c.rescheduled).map(c=>({
-      cls:c,reason:"cancelled",students:(c.students||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean)
-    })).filter(x=>x.students.length>0),
   ];
   const todayC=classes.filter(c=>c.date===TODAY_DATE&&!c.cancelled&&!isClassDone(c.date,c.timeEnd));
   const mN=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
@@ -1109,12 +1109,12 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
               <button onClick={()=>onNavigate("agenda")} style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:C.blue2,fontWeight:700}}>Ver agenda →</button>
             </div>
             {reprogAlerts.slice(0,4).map(({cls,reason,students:sts},i)=>(
-              <div key={i} onClick={()=>onNavigate("agenda",{reprog:cls})} style={{background:reason==="cancelled"?"#FFF3E0":"#E8EAF6",border:"1.5px solid "+(reason==="cancelled"?"#FFB74D":"#9FA8DA"),borderRadius:12,padding:"10px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
-                <div style={{width:36,height:36,borderRadius:12,background:reason==="cancelled"?"linear-gradient(135deg,#E65100,#FF7043)":"linear-gradient(135deg,#3949AB,#5C6BC0)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,color:"#fff",flexShrink:0}}>{reason==="cancelled"?"⛔":"↩"}</div>
+              <div key={i} onClick={()=>onNavigate("agenda",{reprog:cls})} style={{background:reason==="a_reprogramar"?"#E3F2FD":"#E8EAF6",border:"1.5px solid "+(reason==="a_reprogramar"?"#90CAF9":"#9FA8DA"),borderRadius:12,padding:"10px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
+                <div style={{width:36,height:36,borderRadius:12,background:reason==="a_reprogramar"?"linear-gradient(135deg,#1565C0,#42A5F5)":"linear-gradient(135deg,#3949AB,#5C6BC0)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,color:"#fff",flexShrink:0}}>{reason==="a_reprogramar"?"🕐":"↩"}</div>
                 <div style={{flex:1}}>
                   <div style={{fontSize:13,fontWeight:700,color:C.text}}>{cls.title}</div>
-                  <div style={{fontSize:11,color:reason==="cancelled"?"#E65100":"#3949AB",fontWeight:600}}>
-                    {reason==="cancelled"?"Clase suspendida":"A reprogramar"} · {sts.map(s=>s.name.split(" ")[0]).join(", ")} · {cls.date}
+                  <div style={{fontSize:11,color:reason==="a_reprogramar"?"#1565C0":"#3949AB",fontWeight:600}}>
+                    {reason==="a_reprogramar"?"A reprogramar":"A reprogramar (asistencia)"} · {sts.map(s=>s.name.split(" ")[0]).join(", ")} · {fmtDate(cls.date)}
                   </div>
                 </div>
               </div>
@@ -2139,23 +2139,23 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                     const dd=String(d).padStart(2,"0");
                     const ds=viewYear+"-"+mm+"-"+dd;
                     const isA=selDay===ds; const isToday=ds===TODAY_DATE;
-                    const dayCls=classes.filter(c=>c.date===ds&&!c.cancelled);
-                    const cancelledCls=classes.filter(c=>c.date===ds&&c.cancelled&&!c.rescheduled);
-                    const count=dayCls.length;
-                    const cancelledCount=cancelledCls.length;
+                    const allDayCls=classes.filter(c=>c.date===ds);
+                    const normalCls=allDayCls.filter(c=>!c.cancelled);
+                    const cancelledCls=allDayCls.filter(c=>c.cancelled&&c.cancelType==="cancelled");
+                    const reprogCls=allDayCls.filter(c=>c.cancelled&&c.cancelType==="cancelled_reprog");
+                    const count=normalCls.length;
+                    const totalCount=allDayCls.length;
                     return (
                       <button key={i} onClick={()=>handleCalNav(ds)} style={{background:isA?"linear-gradient(135deg,"+C.blue2+","+C.blue3+")":isToday?C.blueL:"transparent",border:isToday&&!isA?"2px solid "+C.blue2:"2px solid transparent",borderRadius:12,padding:"6px 2px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2,minHeight:48}}>
-                        <span style={{fontSize:14,fontWeight:isA||isToday||count>0||cancelledCount>0?800:400,color:isA?C.white:isToday?C.blue2:C.text,lineHeight:1}}>{d}</span>
-                        {(count>0||cancelledCount>0)&&(
+                        <span style={{fontSize:14,fontWeight:isA||isToday||totalCount>0?800:400,color:isA?C.white:isToday?C.blue2:C.text,lineHeight:1}}>{d}</span>
+                        {totalCount>0&&(
                           <div style={{display:"flex",gap:2,justifyContent:"center",flexWrap:"wrap"}}>
-                            {count<=3?dayCls.map((_,ci)=>(
-                              <div key={ci} style={{width:5,height:5,borderRadius:"50%",background:isA?"rgba(255,255,255,0.8)":C.blue2}}/>
-                            )):(
-                              <span style={{fontSize:9,fontWeight:700,color:isA?C.white:C.blue2}}>{count}</span>
+                            {totalCount<=3?allDayCls.map((c,ci)=>{
+                              const dotColor=isA?"rgba(255,255,255,0.8)":c.cancelled&&c.cancelType==="cancelled"?"#E53935":c.cancelled&&c.cancelType==="cancelled_reprog"?"#2E7D32":C.blue2;
+                              return <div key={ci} style={{width:5,height:5,borderRadius:"50%",background:dotColor}}/>;
+                            }):(
+                              <span style={{fontSize:9,fontWeight:700,color:isA?C.white:C.blue2}}>{totalCount}</span>
                             )}
-                            {cancelledCls.map((_,ci)=>(
-                              <div key={"c"+ci} style={{width:5,height:5,borderRadius:"50%",background:isA?"rgba(255,255,255,0.8)":"#E53935"}}/>
-                            ))}
                           </div>
                         )}
                       </button>
