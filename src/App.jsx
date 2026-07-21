@@ -5414,9 +5414,20 @@ export default function App() {
         setClasses(p=>p.map(c=>{
           if(c.id!==realId) return c;
           const dc={...(c.dateCancellations||{})};
+          let occ=c.occurrences?[...c.occurrences]:[];
           if(cd.cancelled){
             dc[editDate]={cancelType:cd.cancelType||"cancelled",rescheduledTo:cd.rescheduledTo||null};
+            // Add rescheduled date to occurrences if not already there
+            if(cd.rescheduledTo&&!occ.includes(cd.rescheduledTo)){
+              occ.push(cd.rescheduledTo);
+              occ.sort();
+            }
           } else {
+            // Reactivating: remove rescheduled date from occurrences if it was added
+            const oldInfo=dc[editDate];
+            if(oldInfo?.rescheduledTo&&occ.includes(oldInfo.rescheduledTo)){
+              occ=occ.filter(d=>d!==oldInfo.rescheduledTo);
+            }
             delete dc[editDate]; // reactivate
           }
           // For legacy single-date classes without occurrences, also set top-level cancelled
@@ -5425,7 +5436,7 @@ export default function App() {
           }
           // For recurring classes, only update dateCancellations, don't set top-level cancelled
           const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,...rest}=cd;
-          return {...c,...rest,id:realId,dateCancellations:dc};
+          return {...c,...rest,id:realId,dateCancellations:dc,occurrences:occ};
         }));
         return;
       }
