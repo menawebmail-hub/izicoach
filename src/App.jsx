@@ -1692,15 +1692,8 @@ function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent 
       const oldDate=cls.date;
       const updatedLog=(cls.attendanceLog||[]).map(e=>e.date===oldDate?{...e,ausente_reprog:[],rescheduled_to:targetDate}:e);
       onSave({...cls,cancelled:true,cancelType:"cancelled_reprog",rescheduledTo:targetDate,rescheduled:true,attendanceLog:updatedLog,applyToAll:false},true);
-      if(onUpdateStudent){
-        clsStudents.forEach(s=>{
-          const updatedCombos=s.combos.map(c=>{
-            if(!c.dates) return c;const idx=c.dates.indexOf(oldDate);if(idx===-1) return c;
-            const newDates=[...c.dates];newDates[idx]=targetDate;newDates.sort();return {...c,dates:newDates};
-          });
-          if(JSON.stringify(updatedCombos)!==JSON.stringify(s.combos)) onUpdateStudent({...s,combos:updatedCombos});
-        });
-      }
+      // Combo dates are NOT changed — the original date stays as the billing slot
+      // The rescheduled class appears on the new date as a normal class instance
       onClose();
     }
   };
@@ -5432,20 +5425,6 @@ export default function App() {
               if(occ.includes(reschDate)){
                 occ=occ.filter(d=>d!==reschDate);
               }
-              // Revert student combo dates: swap rescheduled date back to original
-              setStudents(prev=>prev.map(s=>{
-                if(!(c.students||[]).includes(s.id)) return s;
-                const updatedCombos=(s.combos||[]).map(combo=>{
-                  if(!combo.dates) return combo;
-                  const idx=combo.dates.indexOf(reschDate);
-                  if(idx===-1) return combo;
-                  const newDates=[...combo.dates];
-                  newDates[idx]=editDate;
-                  newDates.sort();
-                  return {...combo,dates:newDates};
-                });
-                return {...s,combos:updatedCombos};
-              }));
             }
             delete dc[editDate]; // reactivate
           }
