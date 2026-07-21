@@ -5427,8 +5427,25 @@ export default function App() {
           } else {
             // Reactivating: remove rescheduled date from occurrences if it was added
             const oldInfo=dc[editDate];
-            if(oldInfo?.rescheduledTo&&occ.includes(oldInfo.rescheduledTo)){
-              occ=occ.filter(d=>d!==oldInfo.rescheduledTo);
+            if(oldInfo?.rescheduledTo){
+              const reschDate=oldInfo.rescheduledTo;
+              if(occ.includes(reschDate)){
+                occ=occ.filter(d=>d!==reschDate);
+              }
+              // Revert student combo dates: swap rescheduled date back to original
+              setStudents(prev=>prev.map(s=>{
+                if(!(c.students||[]).includes(s.id)) return s;
+                const updatedCombos=(s.combos||[]).map(combo=>{
+                  if(!combo.dates) return combo;
+                  const idx=combo.dates.indexOf(reschDate);
+                  if(idx===-1) return combo;
+                  const newDates=[...combo.dates];
+                  newDates[idx]=editDate;
+                  newDates.sort();
+                  return {...combo,dates:newDates};
+                });
+                return {...s,combos:updatedCombos};
+              }));
             }
             delete dc[editDate]; // reactivate
           }
