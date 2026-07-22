@@ -176,6 +176,8 @@ function getEffectiveTotal(s, c, classes=[]) {
 }
 // Check if a class date is beyond the active combo (combo done, next unpaid)
 function isNextComboPending(cls, students) {
+  // Rescheduled instances are always covered (they replace a combo date)
+  if(cls._isRescheduledInstance) return false;
   const clsStudents=(cls.students||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean);
   if(clsStudents.length===0) return false;
   return clsStudents.some(s=>{
