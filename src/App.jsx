@@ -3479,8 +3479,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
 
   return (
     <>
-      <WhiteCard style={{marginBottom:12,opacity:suspended?0.7:1,border:suspended?"1.5px solid #FFB74D":undefined}}>
-        {suspended&&<div style={{background:"#FFF3E0",borderRadius:8,padding:"4px 10px",marginBottom:8,fontSize:11,fontWeight:700,color:"#E65100"}}>⏸ Alumno suspendido — no aparece en mora</div>}
+      <WhiteCard style={{marginBottom:12,}}>
         <div style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:10}}>
           <div style={{width:48,height:48,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,color:C.white,flexShrink:0}}>{s.avatar}</div>
           <div style={{flex:1,textAlign:"left"}}>
@@ -3673,7 +3672,6 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
           )}
           <div style={{display:"flex",gap:8}}>
             <button onClick={()=>setShowRecordatorio(true)} style={{flex:1,padding:"10px",borderRadius:10,border:"1.5px solid #65CE5A",background:C.white,color:"#2E7D32",fontSize:12,cursor:"pointer",fontWeight:700}}>Enviar Recordatorio</button>
-            <button onClick={toggleSuspended} style={{flex:1,padding:"10px",borderRadius:10,border:"1.5px solid #65CE5A",background:C.white,color:"#2E7D32",fontSize:12,cursor:"pointer",fontWeight:700}}>{suspended?"▶ Activar":"⏸ Suspender"}</button>
           </div>
         </div>
           );
