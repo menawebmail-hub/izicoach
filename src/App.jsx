@@ -112,9 +112,14 @@ const expandClasses=(classes)=>{
     // New format classes have cancelledDates (added by new handleSaveClass)
     const isNewFormat=c.hasOwnProperty("cancelledDates");
     if(isNewFormat&&c.occurrences&&c.occurrences.length>0){
+      const dc=c.dateCancellations||{};
+      // Collect rescheduled-to dates that aren't already in occurrences
+      const reschDates=new Set();
+      Object.values(dc).forEach(info=>{if(info.rescheduledTo&&!c.occurrences.includes(info.rescheduledTo))reschDates.add(info.rescheduledTo);});
+      // Expand regular occurrences
       for(const date of c.occurrences){
         const log=(c.attendanceLog||[]).find(e=>e.date===date);
-        const cancelInfo=(c.dateCancellations||{})[date]||null;
+        const cancelInfo=dc[date]||null;
         result.push({
           ...c,
           _seriesId:c.id,
@@ -124,6 +129,22 @@ const expandClasses=(classes)=>{
           cancelType:cancelInfo?.cancelType||null,
           rescheduledTo:cancelInfo?.rescheduledTo||null,
           rescheduled:!!(cancelInfo?.rescheduledTo),
+          attendanceLog:log?[log]:[],
+        });
+      }
+      // Expand rescheduled-to dates (new class instances on the new day)
+      for(const date of reschDates){
+        const log=(c.attendanceLog||[]).find(e=>e.date===date);
+        result.push({
+          ...c,
+          _seriesId:c.id,
+          _virtualId:c.id+"_"+date,
+          date,
+          cancelled:false,
+          cancelType:null,
+          rescheduledTo:null,
+          rescheduled:false,
+          _isRescheduledInstance:true,
           attendanceLog:log?[log]:[],
         });
       }
@@ -5409,32 +5430,18 @@ export default function App() {
         setClasses(p=>p.map(c=>{
           if(c.id!==realId) return c;
           const dc={...(c.dateCancellations||{})};
-          let occ=c.occurrences?[...c.occurrences]:[];
           if(cd.cancelled){
             dc[editDate]={cancelType:cd.cancelType||"cancelled",rescheduledTo:cd.rescheduledTo||null};
-            // Add rescheduled date to occurrences if not already there
-            if(cd.rescheduledTo&&!occ.includes(cd.rescheduledTo)){
-              occ.push(cd.rescheduledTo);
-              occ.sort();
-            }
           } else {
-            // Reactivating: remove rescheduled date from occurrences if it was added
-            const oldInfo=dc[editDate];
-            if(oldInfo?.rescheduledTo){
-              const reschDate=oldInfo.rescheduledTo;
-              if(occ.includes(reschDate)){
-                occ=occ.filter(d=>d!==reschDate);
-              }
-            }
             delete dc[editDate]; // reactivate
           }
           // For legacy single-date classes without occurrences, also set top-level cancelled
           if(!c.occurrences||c.occurrences.length===0){
             return {...c,...cd,id:realId,dateCancellations:dc};
           }
-          // For recurring classes, only update dateCancellations, don't set top-level cancelled
-          const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,...rest}=cd;
-          return {...c,...rest,id:realId,dateCancellations:dc,occurrences:occ};
+          // For recurring classes, only update dateCancellations, don't modify occurrences
+          const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,...rest}=cd;
+          return {...c,...rest,id:realId,dateCancellations:dc};
         }));
         return;
       }
