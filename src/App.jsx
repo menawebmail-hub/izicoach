@@ -2113,7 +2113,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
       </div>
       {c.date>=TODAY_DATE&&<div style={{display:"flex",gap:8,marginBottom:8}}>
         <button onClick={()=>{
-          if(isPaused){onSaveClass({...c,cancelled:false,cancelType:null,paused:false,applyToAll:false},true);}
+          if(isPaused){onSaveClass({...c,cancelled:false,cancelType:null,paused:false,_resuming:true,applyToAll:false},true);}
           else{onSaveClass({...c,cancelled:false,cancelType:"paused",paused:true,applyToAll:false},true);}
         }} style={{flex:1,padding:"10px",borderRadius:10,border:"none",background:isPaused?"linear-gradient(135deg,#2E7D32,#43A047)":"linear-gradient(135deg,#E65100,#FF8F00)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>{isPaused?"▶ Reanudar clase":"⏸ Pausar clase"}</button>
       </div>}
@@ -2286,7 +2286,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                     {[
                       {label:"Editar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,action:()=>{setEditCls(c);setHighlightCls(null);},disabled:false,color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
                       {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt({...c,attendanceLog:c.attendanceLog||[]});setHighlightCls(null);},disabled:isNextComboPending(c,students),color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
-                      {label:c.paused||c.cancelType==="paused"?"▶ Reanudar":"⏸ Pausar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{c.paused||c.cancelType==="paused"?<polygon points="5 3 19 12 5 21 5 3"/>:<><line x1="10" y1="4" x2="10" y2="20"/><line x1="14" y1="4" x2="14" y2="20"/></>}</svg>,action:()=>{if(c.paused||c.cancelType==="paused"){onSaveClass({...c,cancelled:false,cancelType:null,paused:false,applyToAll:false},true);}else{onSaveClass({...c,cancelled:false,cancelType:"paused",paused:true,applyToAll:false},true);}setHighlightCls(null);},disabled:c.date<TODAY_DATE,color:c.date<TODAY_DATE?"#ccc":c.paused||c.cancelType==="paused"?"linear-gradient(135deg,#2E7D32,#43A047)":"linear-gradient(135deg,#E65100,#FF8F00)"},
+                      {label:c.paused||c.cancelType==="paused"?"▶ Reanudar":"⏸ Pausar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{c.paused||c.cancelType==="paused"?<polygon points="5 3 19 12 5 21 5 3"/>:<><line x1="10" y1="4" x2="10" y2="20"/><line x1="14" y1="4" x2="14" y2="20"/></>}</svg>,action:()=>{if(c.paused||c.cancelType==="paused"){onSaveClass({...c,cancelled:false,cancelType:null,paused:false,_resuming:true,applyToAll:false},true);}else{onSaveClass({...c,cancelled:false,cancelType:"paused",paused:true,applyToAll:false},true);}setHighlightCls(null);},disabled:c.date<TODAY_DATE,color:c.date<TODAY_DATE?"#ccc":c.paused||c.cancelType==="paused"?"linear-gradient(135deg,#2E7D32,#43A047)":"linear-gradient(135deg,#E65100,#FF8F00)"},
                       {label:c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo?"Asignar fecha":c.cancelled&&c.cancelType==="cancelled_reprog"&&c.rescheduledTo?"Volver a fecha original":c.cancelled?"Reactivar":"Reprogramar / Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="15" x2="15" y2="15"/></svg>,action:()=>{if(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo){setShowCancel(c);}else if(c.cancelled){onSaveClass({...c,cancelled:false,cancelType:null,rescheduledTo:null,applyToAll:false},true);}else{setShowCancel(c);}setHighlightCls(null);},disabled:c.date<TODAY_DATE,color:c.date<TODAY_DATE?"#ccc":c.cancelled&&!c.rescheduledTo?"linear-gradient(135deg,#1565C0,#42A5F5)":c.cancelled?"linear-gradient(135deg,#1565C0,#42A5F5)":"linear-gradient(135deg,#E65100,#FF8F00)",span:true},
                     ].map(btn=>(
                       <button key={btn.label} onClick={btn.disabled?null:btn.action} disabled={btn.disabled} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"13px",borderRadius:14,border:"none",background:btn.disabled?"#E0E0E0":(btn.color||"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"),color:btn.disabled?"#9E9E9E":"#fff",fontSize:13,cursor:btn.disabled?"not-allowed":"pointer",fontWeight:700,boxShadow:btn.disabled?"none":"0 4px 12px rgba(0,0,0,0.15)",gridColumn:btn.span?"1 / -1":"auto"}}>
@@ -5441,23 +5441,69 @@ export default function App() {
       const realId=cd._seriesId||cd.id;
       const editDate=cd.date; // the specific date being edited
 
-      // Handle per-date cancellation for recurring classes
-      if((cd.cancelled!==undefined||cd.cancelType==="paused")&&editDate){
+      // Handle per-date cancellation/pause for recurring classes
+      if((cd.cancelled!==undefined||cd.cancelType==="paused"||cd._resuming)&&editDate){
         setClasses(p=>p.map(c=>{
           if(c.id!==realId) return c;
           const dc={...(c.dateCancellations||{})};
-          if(cd.cancelled||cd.cancelType==="paused"){
+          let occ=c.occurrences?[...c.occurrences]:[];
+          
+          if(cd.cancelType==="paused"){
+            // PAUSE: mark editDate + ALL dates from editDate forward as paused
+            dc[editDate]={cancelType:"paused",rescheduledTo:null};
+            (c.occurrences||[]).forEach(d=>{
+              if(d>=editDate&&(!dc[d]||dc[d].cancelType==="paused")){
+                dc[d]={cancelType:"paused",rescheduledTo:null};
+              }
+            });
+          } else if(cd._resuming){
+            // RESUME: count paused dates before resume date, remove paused from resume date forward
+            const pausedBeforeResume=Object.keys(dc).filter(d=>d<editDate&&dc[d]?.cancelType==="paused");
+            const pausedCount=pausedBeforeResume.length;
+            // Remove paused from resume date forward
+            Object.keys(dc).forEach(d=>{
+              if(d>=editDate&&dc[d]?.cancelType==="paused") delete dc[d];
+            });
+            // Add new dates at end to replace paused ones
+            if(pausedCount>0){
+              const lastOcc=occ[occ.length-1];
+              const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+              const dowSet=new Set((c.days||[]).map(d=>DAY_MAP[d]));
+              let cur=new Date(lastOcc+"T12:00:00");
+              cur.setDate(cur.getDate()+1);
+              const newDates=[];
+              while(newDates.length<pausedCount){
+                if(dowSet.size===0||dowSet.has(cur.getDay())){
+                  const ds=cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0");
+                  if(!occ.includes(ds)){occ.push(ds);newDates.push(ds);}
+                }
+                cur.setDate(cur.getDate()+1);
+              }
+              // Extend student combo dates with new dates
+              if(newDates.length>0){
+                setStudents(prev=>prev.map(s=>{
+                  if(!(c.students||[]).includes(s.id)) return s;
+                  const updatedCombos=(s.combos||[]).map(combo=>{
+                    if(!combo.dates||combo.packType==="mensual") return combo;
+                    const combined=[...new Set([...combo.dates,...newDates])].sort();
+                    return {...combo,dates:combined,total:combined.length};
+                  });
+                  return {...s,combos:updatedCombos};
+                }));
+              }
+            }
+            const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,...rest}=cd;
+            return {...c,...rest,id:realId,dateCancellations:dc,occurrences:occ};
+          } else if(cd.cancelled){
             dc[editDate]={cancelType:cd.cancelType||"cancelled",rescheduledTo:cd.rescheduledTo||null};
           } else {
-            delete dc[editDate]; // reactivate or resume
+            delete dc[editDate]; // reactivate
           }
-          // For legacy single-date classes without occurrences, also set top-level cancelled
           if(!c.occurrences||c.occurrences.length===0){
             return {...c,...cd,id:realId,dateCancellations:dc};
           }
-          // For recurring classes, only update dateCancellations, don't modify occurrences
-          const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,...rest}=cd;
-          return {...c,...rest,id:realId,dateCancellations:dc};
+          const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,...rest}=cd;
+          return {...c,...rest,id:realId,dateCancellations:dc,occurrences:occ};
         }));
         return;
       }
