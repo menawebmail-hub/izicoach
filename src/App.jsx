@@ -5449,10 +5449,16 @@ export default function App() {
           let occ=c.occurrences?[...c.occurrences]:[];
           
           if(cd.cancelType==="paused"){
-            // PAUSE: mark editDate + ALL dates from editDate forward as paused
+            // PAUSE: only mark dates that are in active combos (not grey/unassigned)
             dc[editDate]={cancelType:"paused",rescheduledTo:null};
+            // Collect all combo dates for students in this class
+            const allComboDates=new Set();
+            (c.students||[]).forEach(sid=>{
+              const st=students.find(s=>s.id===sid);
+              if(st)(st.combos||[]).forEach(combo=>{(combo.dates||[]).forEach(d=>allComboDates.add(d));});
+            });
             (c.occurrences||[]).forEach(d=>{
-              if(d>=editDate&&(!dc[d]||dc[d].cancelType==="paused")){
+              if(d>=editDate&&allComboDates.has(d)&&(!dc[d]||dc[d].cancelType==="paused")){
                 dc[d]={cancelType:"paused",rescheduledTo:null};
               }
             });
