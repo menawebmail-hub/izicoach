@@ -3521,16 +3521,22 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
           });
           const allDatesForStudentRaw=activeCombosForCount.flatMap(c=>{
             const dates=c.dates||[];
-            return dates.map(d=>{
+            const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
+            return dates.map((d,idx)=>{
+              const clsForDate=myClassesH.find(cls=>cls.date===d);
+              const cancelInfo=clsForDate?{cancelled:clsForDate.cancelled,cancelType:clsForDate.cancelType,rescheduledTo:clsForDate.rescheduledTo,paused:clsForDate.paused}:{};
+              const isCancelled=!!(cancelInfo.cancelled&&cancelInfo.cancelType==="cancelled");
+              const isReprogWithDate=!!(cancelInfo.cancelled&&cancelInfo.cancelType==="cancelled_reprog"&&cancelInfo.rescheduledTo);
+              const isReprogNoDate=!!(cancelInfo.cancelled&&cancelInfo.cancelType==="cancelled_reprog"&&!cancelInfo.rescheduledTo);
+              const isPaused=!!(cancelInfo.paused||cancelInfo.cancelType==="paused");
               const attEntry=myClassesH.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===d);
-              const clsForDate=myClassesH.find(cls=>cls.date===d||((cls.occurrences||[]).includes(d)));
               const timeEnd=clsForDate?.timeEnd||"23:59";
-              const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
-              const idx=dates.indexOf(d);
               const isPaid=idx<paidCount;
               const isDone=isClassDone(d,timeEnd);
-              const isGiven=attEntry?(attEntry.present||[]).includes(s.id)||(attEntry.ausente_dada||[]).includes(s.id):isDone;
-              return {date:d,isPaid,isGiven,isPast:isDone};
+              const wasPresent=attEntry?(attEntry.present||[]).includes(s.id):false;
+              const wasAusenteDada=attEntry?(attEntry.ausente_dada||[]).includes(s.id):false;
+              const isGiven=isPaused?false:isCancelled?true:isReprogWithDate?true:isReprogNoDate?false:attEntry?(wasPresent||wasAusenteDada):isDone;
+              return {date:d,isPaid,isGiven,isPast:isDone,isCancelled,isReprogWithDate,isReprogNoDate,isPaused,rescheduledTo:cancelInfo.rescheduledTo||null};
             });
           });
           // Deduplicate by date
