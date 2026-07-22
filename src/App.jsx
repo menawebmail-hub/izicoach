@@ -2287,7 +2287,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                     {[
                       {label:"Editar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,action:()=>{setEditCls(c);setHighlightCls(null);},disabled:false,color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
                       {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt({...c,attendanceLog:c.attendanceLog||[]});setHighlightCls(null);},disabled:isNextComboPending(c,students),color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
-                      {label:c.paused||c.cancelType==="paused"?"▶ Reanudar":"⏸ Pausar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{c.paused||c.cancelType==="paused"?<polygon points="5 3 19 12 5 21 5 3"/>:<><line x1="10" y1="4" x2="10" y2="20"/><line x1="14" y1="4" x2="14" y2="20"/></>}</svg>,action:()=>{if(c.paused||c.cancelType==="paused"){onSaveClass({...c,cancelled:false,cancelType:null,paused:false,_resuming:true,applyToAll:false},true);}else{onSaveClass({...c,cancelled:false,cancelType:"paused",paused:true,applyToAll:false},true);}setHighlightCls(null);},disabled:c.date<WEEK_AGO,color:c.date<WEEK_AGO?"#ccc":c.paused||c.cancelType==="paused"?"linear-gradient(135deg,#2E7D32,#43A047)":"linear-gradient(135deg,#E65100,#FF8F00)"},
+                      {label:c.paused||c.cancelType==="paused"?"▶ Reanudar":"⏸ Pausar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{c.paused||c.cancelType==="paused"?<polygon points="5 3 19 12 5 21 5 3"/>:<g><line x1="10" y1="4" x2="10" y2="20"/><line x1="14" y1="4" x2="14" y2="20"/></g>}</svg>,action:()=>{if(c.paused||c.cancelType==="paused"){onSaveClass({...c,cancelled:false,cancelType:null,paused:false,_resuming:true,applyToAll:false},true);}else{onSaveClass({...c,cancelled:false,cancelType:"paused",paused:true,applyToAll:false},true);}setHighlightCls(null);},disabled:c.date<WEEK_AGO,color:c.date<WEEK_AGO?"#ccc":c.paused||c.cancelType==="paused"?"linear-gradient(135deg,#2E7D32,#43A047)":"linear-gradient(135deg,#E65100,#FF8F00)"},
                       {label:c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo?"Asignar fecha":c.cancelled&&c.cancelType==="cancelled_reprog"&&c.rescheduledTo?"Volver a fecha original":c.cancelled?"Reactivar":"Reprogramar / Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="15" x2="15" y2="15"/></svg>,action:()=>{if(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo){setShowCancel(c);}else if(c.cancelled){onSaveClass({...c,cancelled:false,cancelType:null,rescheduledTo:null,applyToAll:false},true);}else{setShowCancel(c);}setHighlightCls(null);},disabled:c.date<WEEK_AGO,color:c.date<WEEK_AGO?"#ccc":c.cancelled&&!c.rescheduledTo?"linear-gradient(135deg,#1565C0,#42A5F5)":c.cancelled?"linear-gradient(135deg,#1565C0,#42A5F5)":"linear-gradient(135deg,#E65100,#FF8F00)",span:true},
                     ].map(btn=>(
                       <button key={btn.label} onClick={btn.disabled?null:btn.action} disabled={btn.disabled} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"13px",borderRadius:14,border:"none",background:btn.disabled?"#E0E0E0":(btn.color||"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"),color:btn.disabled?"#9E9E9E":"#fff",fontSize:13,cursor:btn.disabled?"not-allowed":"pointer",fontWeight:700,boxShadow:btn.disabled?"none":"0 4px 12px rgba(0,0,0,0.15)",gridColumn:btn.span?"1 / -1":"auto"}}>
@@ -4143,8 +4143,55 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
   return (
     <div style={{flex:1,overflowY:"auto",background:C.bg}}>
       <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"16px 16px 20px",flexShrink:0}}>
-        <div style={{fontSize:18,fontWeight:800,color:C.white}}>{initialTab==="payments"?"Cobros":"Finanzas"}</div>
-        <div style={{fontSize:13,color:C.muted,marginTop:4}}>{initialTab==="payments"?"Estado de cobros por alumno":"Resumen financiero del mes"}</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:18,fontWeight:800,color:C.white}}>{initialTab==="payments"?"Cobros":"Finanzas"}</div>
+            <div style={{fontSize:13,color:C.muted,marginTop:4}}>{initialTab==="payments"?"Estado de cobros por alumno":"Resumen financiero del mes"}</div>
+          </div>
+          <button onClick={()=>{
+            let csv="";
+            if(tab==="payments"||initialTab==="payments"){
+              // Export cobros by student
+              csv="Alumno,Tipo,Total Clases,Pagadas,No Pagadas,Monto,Estado Pago\n";
+              students.forEach(s=>{
+                const combo=getCombo(s);
+                if(!combo) return;
+                const paidCount=combo.paidCount||0;
+                const total=combo.total||0;
+                const unpaid=Math.max(0,total-paidCount);
+                csv+='"'+s.name+'","'+(combo.packType||"combo")+'",'+total+','+paidCount+','+unpaid+','+((combo.amount||0))+','+(combo.paid?"Pagado":"Pendiente")+'\n';
+              });
+              // Add payment history
+              csv+="\nHistorial de Pagos\nAlumno,Fecha,Monto,Método,Clases\n";
+              students.forEach(s=>{
+                (s.combos||[]).forEach(c=>{
+                  (c.payments||[]).forEach(p=>{
+                    csv+='"'+s.name+'","'+p.date+'",'+p.amount+',"'+(p.method||"")+'",'+p.qty+'\n';
+                  });
+                });
+              });
+            } else {
+              // Export monthly finances
+              csv="Fecha,Tipo,Categoría,Nota,Monto\n";
+              monthFiltered.forEach(e=>{
+                csv+='"'+e.date+'","'+(e.type==="ingreso"?"Ingreso":"Gasto")+'","'+(e.category||"")+'","'+(e.note||"")+'",'+e.amount+'\n';
+              });
+              csv+='\n"","","","TOTAL INGRESOS",'+income+'\n';
+              csv+='"","","","TOTAL GASTOS",'+exp+'\n';
+              csv+='"","","","BALANCE",'+(income-exp)+'\n';
+            }
+            const blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8;"});
+            const url=URL.createObjectURL(blob);
+            const a=document.createElement("a");
+            a.href=url;
+            a.download=(tab==="payments"?"cobros":"finanzas")+"-"+selMonth+".csv";
+            a.click();
+            URL.revokeObjectURL(url);
+          }} style={{padding:"10px 16px",borderRadius:12,border:"none",background:"rgba(255,255,255,0.2)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",gap:6}}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Exportar
+          </button>
+        </div>
       </div>
       <div style={{padding:"16px",marginTop:-8}}>
         {tab==="payments"&&<PaymentsTab students={students} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance}/>}
