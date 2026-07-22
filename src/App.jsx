@@ -5442,14 +5442,14 @@ export default function App() {
       const editDate=cd.date; // the specific date being edited
 
       // Handle per-date cancellation for recurring classes
-      if(cd.cancelled!==undefined&&editDate){
+      if((cd.cancelled!==undefined||cd.cancelType==="paused")&&editDate){
         setClasses(p=>p.map(c=>{
           if(c.id!==realId) return c;
           const dc={...(c.dateCancellations||{})};
-          if(cd.cancelled){
+          if(cd.cancelled||cd.cancelType==="paused"){
             dc[editDate]={cancelType:cd.cancelType||"cancelled",rescheduledTo:cd.rescheduledTo||null};
           } else {
-            delete dc[editDate]; // reactivate
+            delete dc[editDate]; // reactivate or resume
           }
           // For legacy single-date classes without occurrences, also set top-level cancelled
           if(!c.occurrences||c.occurrences.length===0){
