@@ -2299,14 +2299,19 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                         const classCombos=combos.filter(x=>x.total>0&&x.packType!=="mensual"&&x.packType!=="individual");
                         const lastCombo=classCombos[classCombos.length-1];
                         if(!lastCombo) return;
-                        const dowSet=new Set((c.days||[]).map(d=>DAY_MAP2[d]));
-                        const newDates=[];
-                        let cur=new Date(selDay+"T12:00:00");
-                        while(newDates.length<lastCombo.total){
-                          if(dowSet.size===0||dowSet.has(cur.getDay())){
-                            newDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+                        // Use real occurrences from the class
+                        const parentCls=(rawClasses||classes).find(cl=>cl.id===(c._seriesId||c.id));
+                        const realOcc=(parentCls?.occurrences||[]).filter(d=>d>=selDay);
+                        const newDates=realOcc.slice(0,lastCombo.total);
+                        if(newDates.length===0){
+                          const dowSet=new Set((c.days||[]).map(d=>DAY_MAP2[d]));
+                          let cur=new Date(selDay+"T12:00:00");
+                          while(newDates.length<lastCombo.total){
+                            if(dowSet.size===0||dowSet.has(cur.getDay())){
+                              newDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+                            }
+                            cur.setDate(cur.getDate()+1);
                           }
-                          cur.setDate(cur.getDate()+1);
                         }
                         const newCombo={id:combos.length+1,total:lastCombo.total,packType:lastCombo.packType||"combo",used:0,paid:false,paidCount:0,date:newDates[0]||selDay,amount:lastCombo.amount,dates:newDates,payments:[]};
                         onUpdateStudent({...st,combos:[...combos,newCombo]});
@@ -5521,16 +5526,22 @@ export default function App() {
           // Create NEW combo when last combo is expired (last date is in the past)
           if(!lastDate||lastComboFullyUsed){
             const startDate=cd.date||today;
-            const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
-            const dowSet=new Set((editedClass.days||[]).map(d=>DAY_MAP[d]));
-            const newDates=[];
-            let cur=new Date(startDate+"T12:00:00");
+            // Use REAL occurrences from the class, not generated dates
+            const editedClassFull=classes.find(c=>c.id===(cd._seriesId||cd.id));
+            const realOcc=(editedClassFull?.occurrences||[]).filter(d=>d>=startDate);
             const total=qty||8;
-            while(newDates.length<total){
-              if(dowSet.size===0||dowSet.has(cur.getDay())){
-                newDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+            const newDates=realOcc.slice(0,total);
+            // Fallback: if no occurrences available, generate from days
+            if(newDates.length===0){
+              const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+              const dowSet=new Set((editedClass.days||[]).map(d=>DAY_MAP[d]));
+              let cur=new Date(startDate+"T12:00:00");
+              while(newDates.length<total){
+                if(dowSet.size===0||dowSet.has(cur.getDay())){
+                  newDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+                }
+                cur.setDate(cur.getDate()+1);
               }
-              cur.setDate(cur.getDate()+1);
             }
             combos.push({
               id:combos.length+1,
