@@ -5521,11 +5521,44 @@ export default function App() {
               const st=students.find(s=>s.id===sid);
               if(st)(st.combos||[]).forEach(combo=>{(combo.dates||[]).forEach(d=>allComboDates.add(d));});
             });
+            const pausedDatesNew=[];
             (c.occurrences||[]).forEach(d=>{
               if(d>=editDate&&allComboDates.has(d)&&(!dc[d]||dc[d].cancelType==="paused")){
                 dc[d]={cancelType:"paused",rescheduledTo:null};
+                pausedDatesNew.push(d);
               }
             });
+            // Add replacement dates at the end of occurrences immediately
+            if(pausedDatesNew.length>0){
+              const lastOcc=occ[occ.length-1];
+              const DAY_MAP2={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+              const dowSet2=new Set((c.days||[]).map(d=>DAY_MAP2[d]));
+              let cur2=new Date(lastOcc+"T12:00:00");
+              cur2.setDate(cur2.getDate()+1);
+              const addedDates=[];
+              while(addedDates.length<pausedDatesNew.length){
+                if(dowSet2.size===0||dowSet2.has(cur2.getDay())){
+                  const ds2=cur2.getFullYear()+"-"+String(cur2.getMonth()+1).padStart(2,"0")+"-"+String(cur2.getDate()).padStart(2,"0");
+                  if(!occ.includes(ds2)){occ.push(ds2);addedDates.push(ds2);}
+                }
+                cur2.setDate(cur2.getDate()+1);
+              }
+              // Extend student combo dates with new replacement dates
+              if(addedDates.length>0){
+                setStudents(prev=>prev.map(s2=>{
+                  if(!(c.students||[]).includes(s2.id)) return s2;
+                  const updatedCombos=(s2.combos||[]).map(combo=>{
+                    if(!combo.dates||combo.packType==="mensual") return combo;
+                    // Only extend the active (last) combo that has paused dates
+                    const hasPausedDate=pausedDatesNew.some(pd=>combo.dates.includes(pd));
+                    if(!hasPausedDate) return combo;
+                    const combined=[...new Set([...combo.dates,...addedDates])].sort();
+                    return {...combo,dates:combined};
+                  });
+                  return {...s2,combos:updatedCombos};
+                }));
+              }
+            }
           } else if(cd._resuming){
             // RESUME: count paused dates before resume date, remove paused from resume date forward
             const pausedBeforeResume=Object.keys(dc).filter(d=>d<editDate&&dc[d]?.cancelType==="paused");
