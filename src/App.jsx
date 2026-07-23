@@ -2821,8 +2821,9 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
       if(c.total>0){
         const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
         const allDates=c.dates||[];
-        const allRealized=allDates.length>0&&allDates.every(d=>isClassDone(d,"23:59"));
-        // Hide if fully paid AND all classes already realized
+        const coreDates=allDates.slice(0,c.total||allDates.length);
+        const allRealized=coreDates.length>0&&coreDates.every(d=>isClassDone(d,"23:59"));
+        // Hide if fully paid AND all core classes already realized
         if(paidCount>=(c.total||1)&&allRealized) return false;
         return true;
       }
@@ -3514,7 +3515,8 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             if(!(c.total>0||(c.packType&&c.packType!=="mensual"))) return false;
             const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
             const allDates=c.dates||[];
-            const allRealized=allDates.length>0&&allDates.every(d=>isClassDone(d,"23:59"));
+            const coreDates=allDates.slice(0,c.total||allDates.length);
+            const allRealized=coreDates.length>0&&coreDates.every(d=>isClassDone(d,"23:59"));
             // Exclude fully paid AND fully realized combos
             if(paidCount>=(c.total||1)&&allRealized) return false;
             return true;
@@ -3546,13 +3548,14 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             seenDates.add(d.date);
             return true;
           });
-          const noPagadas=allDatesForStudent.filter(d=>!d.isPaid&&!d.isCancelled&&!d.isReprogNoDate).length;
-          const pagadas=allDatesForStudent.filter(d=>d.isPaid&&!d.isCancelled).length;
-          const programadas=allDatesForStudent.filter(d=>!d.isGiven&&!d.isPast&&!d.isCancelled&&!d.isReprogWithDate&&!d.isReprogNoDate).length;
-          const realizadas=allDatesForStudent.filter(d=>d.isGiven&&!d.isCancelled&&!d.isReprogWithDate).length;
+          const noPagadas=allDatesForStudent.filter(d=>!d.isPaid&&!d.isCancelled&&!d.isReprogNoDate&&!d.isPaused).length;
+          const pagadas=allDatesForStudent.filter(d=>d.isPaid&&!d.isCancelled&&!d.isPaused).length;
+          const programadas=allDatesForStudent.filter(d=>!d.isGiven&&!d.isPast&&!d.isCancelled&&!d.isReprogWithDate&&!d.isReprogNoDate&&!d.isPaused).length;
+          const realizadas=allDatesForStudent.filter(d=>d.isGiven&&!d.isCancelled&&!d.isReprogWithDate&&!d.isPaused).length;
           const canceladas=allDatesForStudent.filter(d=>d.isCancelled).length;
           const reprogramadas=allDatesForStudent.filter(d=>d.isReprogWithDate).length;
           const aReprogramar=allDatesForStudent.filter(d=>d.isReprogNoDate).length;
+          const pausadas=allDatesForStudent.filter(d=>d.isPaused).length;
           const cols=[
             {n:noPagadas,label:"No Pagada",color:"#C62828",bg:"#FFEBEE"},
             {n:pagadas,label:"Pagada",color:"#2E7D32",bg:"#EDFBEC"},
@@ -3563,6 +3566,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             canceladas>0&&{n:canceladas,label:"Cancelada",color:"#C62828",bg:"#FFF0F0"},
             reprogramadas>0&&{n:reprogramadas,label:"Reprogramada",color:"#2E7D32",bg:"#E8F5E9"},
             aReprogramar>0&&{n:aReprogramar,label:"A Reprog.",color:"#1565C0",bg:"#E3F2FD"},
+            pausadas>0&&{n:pausadas,label:"Pausada",color:"#E65100",bg:"#FFF3E0"},
           ].filter(Boolean);
           const reprogCount=allDatesForStudent.filter(d=>{
             const attEntry=myClassesH.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===d.date);
@@ -5546,7 +5550,7 @@ export default function App() {
                   const updatedCombos=(s.combos||[]).map(combo=>{
                     if(!combo.dates||combo.packType==="mensual") return combo;
                     const combined=[...new Set([...combo.dates,...newDates])].sort();
-                    return {...combo,dates:combined,total:combined.length};
+                    return {...combo,dates:combined};
                   });
                   return {...s,combos:updatedCombos};
                 }));
