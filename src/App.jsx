@@ -2839,13 +2839,26 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
       // Get dates: from stored dates array, or from matching class dates, or generate
       let dates=[];
       if(c.dates&&c.dates.length>0){
-        dates=c.dates;
+        dates=[...c.dates];
       } else if(c.date){
-        // Find class on this date
         const matchingCls=myClasses.find(cls=>cls.date===c.date);
         dates=[matchingCls?matchingCls.date:c.date];
       }
-      dates.slice(0,Math.max(effectiveTotal,dates.length)).forEach((ds,i)=>{
+      // Count paused dates and extend with next occurrence dates dynamically
+      const pausedInCombo=dates.filter(d=>{
+        const clsD=myClasses.find(cl=>cl.date===d);
+        return clsD&&(clsD.paused||clsD.cancelType==="paused");
+      }).length;
+      if(pausedInCombo>0){
+        // Find the class to get its occurrences for extension dates
+        const lastComboDate=dates[dates.length-1];
+        const parentCls=myClasses.find(cl=>(cl.occurrences||[]).some(od=>dates.includes(od)));
+        if(parentCls&&parentCls.occurrences){
+          const extraDates=parentCls.occurrences.filter(d=>d>lastComboDate&&!dates.includes(d)).slice(0,pausedInCombo);
+          dates=[...dates,...extraDates];
+        }
+      }
+      dates.slice(0,Math.max(effectiveTotal+pausedInCombo,dates.length)).forEach((ds,i)=>{
         const classOnDate=myClasses.find(cl=>cl.date===ds);
         const isCancelled=!!(classOnDate?.cancelled&&classOnDate?.cancelType==="cancelled");
         const isReprogWithDate=!!(classOnDate?.cancelled&&classOnDate?.cancelType==="cancelled_reprog"&&classOnDate?.rescheduledTo);
@@ -3523,8 +3536,18 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             return true;
           });
           const allDatesForStudentRaw=activeCombosForCount.flatMap(c=>{
-            const dates=c.dates||[];
+            let dates=[...(c.dates||[])];
             const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
+            // Extend dates dynamically for paused classes
+            const pausedInCombo=dates.filter(d=>{const cl=myClassesH.find(cls=>cls.date===d);return cl&&(cl.paused||cl.cancelType==="paused");}).length;
+            if(pausedInCombo>0){
+              const lastD=dates[dates.length-1];
+              const parentCls=myClassesH.find(cl=>(cl.occurrences||[]).some(od=>dates.includes(od)));
+              if(parentCls&&parentCls.occurrences){
+                const extra=parentCls.occurrences.filter(d=>d>lastD&&!dates.includes(d)).slice(0,pausedInCombo);
+                dates=[...dates,...extra];
+              }
+            }
             return dates.map((d,idx)=>{
               const clsForDate=myClassesH.find(cls=>cls.date===d);
               const cancelInfo=clsForDate?{cancelled:clsForDate.cancelled,cancelType:clsForDate.cancelType,rescheduledTo:clsForDate.rescheduledTo,paused:clsForDate.paused}:{};
@@ -5525,17 +5548,10 @@ export default function App() {
             });
             // No replacement dates at pause time - they get added at RESUME time
           } else if(cd._resuming){
-            // RESUME: count paused dates before resume date, remove paused from resume date forward
-            const pausedBeforeResume=Object.keys(dc).filter(d=>d<editDate&&dc[d]?.cancelType==="paused");
-            const pausedCount=pausedBeforeResume.length;
-            // Remove paused from resume date forward
+            // RESUME: just remove paused status from resume date forward
             Object.keys(dc).forEach(d=>{
               if(d>=editDate&&dc[d]?.cancelType==="paused") delete dc[d];
             });
-            // Store info for adding replacement dates after setClasses
-            if(pausedCount>0){
-              window._iziResumeExtend={studentIds:c.students||[],pausedCount,days:c.days||[]};
-            }
             const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,...rest}=cd;
             return {...c,...rest,id:realId,dateCancellations:dc,occurrences:occ};
           } else if(cd.cancelled){
@@ -5549,54 +5565,6 @@ export default function App() {
           const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,...rest}=cd;
           return {...c,...rest,id:realId,dateCancellations:dc,occurrences:occ};
         }));
-        // Add replacement dates after resume (outside setClasses for correct persistence)
-        if(window._iziResumeExtend){
-          const ext=window._iziResumeExtend;
-          delete window._iziResumeExtend;
-          const DAY_MAP3={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
-          const dowSet3=new Set(ext.days.map(d=>DAY_MAP3[d]));
-          setStudents(prev=>prev.map(s2=>{
-            if(!ext.studentIds.includes(s2.id)) return s2;
-            const combos2=[...(s2.combos||[])];
-            let lastIdx=-1;
-            for(let ci=combos2.length-1;ci>=0;ci--){
-              if(combos2[ci].dates&&combos2[ci].packType!=="mensual"){lastIdx=ci;break;}
-            }
-            if(lastIdx===-1) return s2;
-            const combo=combos2[lastIdx];
-            const lastComboDate=combo.dates[combo.dates.length-1];
-            let cur3=new Date(lastComboDate+"T12:00:00");
-            cur3.setDate(cur3.getDate()+1);
-            const newDates=[];
-            while(newDates.length<ext.pausedCount){
-              if(dowSet3.size===0||dowSet3.has(cur3.getDay())){
-                newDates.push(cur3.getFullYear()+"-"+String(cur3.getMonth()+1).padStart(2,"0")+"-"+String(cur3.getDate()).padStart(2,"0"));
-              }
-              cur3.setDate(cur3.getDate()+1);
-            }
-            const combined=[...new Set([...combo.dates,...newDates])].sort();
-            combos2[lastIdx]={...combo,dates:combined};
-            return {...s2,combos:combos2};
-          }));
-          // Also add to class occurrences
-          setClasses(prev=>prev.map(c2=>{
-            const isTarget=ext.studentIds.some(sid=>(c2.students||[]).includes(sid));
-            if(!isTarget||!c2.occurrences) return c2;
-            const occ2=[...c2.occurrences];
-            const lastOcc2=occ2[occ2.length-1];
-            let cur4=new Date(lastOcc2+"T12:00:00");
-            cur4.setDate(cur4.getDate()+1);
-            let added=0;
-            while(added<ext.pausedCount){
-              if(dowSet3.size===0||dowSet3.has(cur4.getDay())){
-                const ds4=cur4.getFullYear()+"-"+String(cur4.getMonth()+1).padStart(2,"0")+"-"+String(cur4.getDate()).padStart(2,"0");
-                if(!occ2.includes(ds4)){occ2.push(ds4);added++;}
-              }
-              cur4.setDate(cur4.getDate()+1);
-            }
-            return {...c2,occurrences:occ2};
-          }));
-        }
         return;
       }
 
