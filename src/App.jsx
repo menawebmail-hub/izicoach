@@ -5543,22 +5543,9 @@ export default function App() {
                 }
                 cur2.setDate(cur2.getDate()+1);
               }
-              // Extend ONLY the last active combo with replacement dates
+              // Store info for extending combos after setClasses
               if(addedDates.length>0){
-                setStudents(prev=>prev.map(s2=>{
-                  if(!(c.students||[]).includes(s2.id)) return s2;
-                  const combos2=[...s2.combos||[]];
-                  // Find last active combo (unpaid or last one)
-                  let lastIdx=-1;
-                  for(let ci=combos2.length-1;ci>=0;ci--){
-                    if(combos2[ci].dates&&combos2[ci].packType!=="mensual"){lastIdx=ci;break;}
-                  }
-                  if(lastIdx===-1) return s2;
-                  const combo=combos2[lastIdx];
-                  const combined=[...new Set([...combo.dates,...addedDates])].sort();
-                  combos2[lastIdx]={...combo,dates:combined};
-                  return {...s2,combos:combos2};
-                }));
+                window._iziPauseExtend={studentIds:c.students||[],addedDates:addedDates};
               }
             }
           } else if(cd._resuming){
@@ -5610,6 +5597,24 @@ export default function App() {
           const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,...rest}=cd;
           return {...c,...rest,id:realId,dateCancellations:dc,occurrences:occ};
         }));
+        // Extend student combos with replacement dates (after setClasses)
+        if(window._iziPauseExtend){
+          const ext=window._iziPauseExtend;
+          delete window._iziPauseExtend;
+          setStudents(prev=>prev.map(s2=>{
+            if(!ext.studentIds.includes(s2.id)) return s2;
+            const combos2=[...(s2.combos||[])];
+            let lastIdx=-1;
+            for(let ci=combos2.length-1;ci>=0;ci--){
+              if(combos2[ci].dates&&combos2[ci].packType!=="mensual"){lastIdx=ci;break;}
+            }
+            if(lastIdx===-1) return s2;
+            const combo=combos2[lastIdx];
+            const combined=[...new Set([...combo.dates,...ext.addedDates])].sort();
+            combos2[lastIdx]={...combo,dates:combined};
+            return {...s2,combos:combos2};
+          }));
+        }
         return;
       }
 
