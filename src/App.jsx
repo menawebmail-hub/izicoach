@@ -5528,35 +5528,34 @@ export default function App() {
                 pausedDatesNew.push(d);
               }
             });
-            // Add replacement dates right after the last COMBO date (not last occurrence)
+            // Add replacement dates per student after their last combo date
             if(pausedDatesNew.length>0){
-              // Find last combo date for students in this class
-              let lastComboDate=editDate;
-              (c.students||[]).forEach(sid=>{
-                const st=students.find(s=>s.id===sid);
-                if(st)(st.combos||[]).forEach(combo=>{
-                  if(combo.dates&&combo.dates.length>0){
-                    const ld=combo.dates[combo.dates.length-1];
-                    if(ld>lastComboDate) lastComboDate=ld;
-                  }
-                });
-              });
               const DAY_MAP2={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
               const dowSet2=new Set((c.days||[]).map(d=>DAY_MAP2[d]));
-              let cur2=new Date(lastComboDate+"T12:00:00");
-              cur2.setDate(cur2.getDate()+1);
-              const addedDates=[];
-              while(addedDates.length<pausedDatesNew.length){
-                if(dowSet2.size===0||dowSet2.has(cur2.getDay())){
-                  const ds2=cur2.getFullYear()+"-"+String(cur2.getMonth()+1).padStart(2,"0")+"-"+String(cur2.getDate()).padStart(2,"0");
-                  addedDates.push(ds2);
-                  if(!occ.includes(ds2)) occ.push(ds2);
-                }
+              const perStudentDates={};
+              (c.students||[]).forEach(sid=>{
+                const st=students.find(s=>s.id===sid);
+                if(!st) return;
+                // Find the combo that contains the paused dates
+                const activeCombo=(st.combos||[]).find(combo=>combo.dates&&pausedDatesNew.some(pd=>combo.dates.includes(pd)));
+                if(!activeCombo) return;
+                const lastDate=activeCombo.dates[activeCombo.dates.length-1];
+                let cur2=new Date(lastDate+"T12:00:00");
                 cur2.setDate(cur2.getDate()+1);
-              }
-              // Store info for extending combos after setClasses
-              if(addedDates.length>0){
-                window._iziPauseExtend={studentIds:c.students||[],addedDates:addedDates};
+                const studentPausedCount=pausedDatesNew.filter(pd=>activeCombo.dates.includes(pd)).length;
+                const newDates=[];
+                while(newDates.length<studentPausedCount){
+                  if(dowSet2.size===0||dowSet2.has(cur2.getDay())){
+                    const ds2=cur2.getFullYear()+"-"+String(cur2.getMonth()+1).padStart(2,"0")+"-"+String(cur2.getDate()).padStart(2,"0");
+                    newDates.push(ds2);
+                    if(!occ.includes(ds2)) occ.push(ds2);
+                  }
+                  cur2.setDate(cur2.getDate()+1);
+                }
+                perStudentDates[sid]=newDates;
+              });
+              if(Object.keys(perStudentDates).length>0){
+                window._iziPauseExtend={perStudentDates:perStudentDates};
               }
             }
           } else if(cd._resuming){
@@ -5608,12 +5607,13 @@ export default function App() {
           const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,...rest}=cd;
           return {...c,...rest,id:realId,dateCancellations:dc,occurrences:occ};
         }));
-        // Extend student combos with replacement dates (after setClasses)
+        // Extend student combos with per-student replacement dates (after setClasses)
         if(window._iziPauseExtend){
           const ext=window._iziPauseExtend;
           delete window._iziPauseExtend;
           setStudents(prev=>prev.map(s2=>{
-            if(!ext.studentIds.includes(s2.id)) return s2;
+            const newDates=ext.perStudentDates[s2.id];
+            if(!newDates||newDates.length===0) return s2;
             const combos2=[...(s2.combos||[])];
             let lastIdx=-1;
             for(let ci=combos2.length-1;ci>=0;ci--){
@@ -5621,7 +5621,7 @@ export default function App() {
             }
             if(lastIdx===-1) return s2;
             const combo=combos2[lastIdx];
-            const combined=[...new Set([...combo.dates,...ext.addedDates])].sort();
+            const combined=[...new Set([...combo.dates,...newDates])].sort();
             combos2[lastIdx]={...combo,dates:combined};
             return {...s2,combos:combos2};
           }));
