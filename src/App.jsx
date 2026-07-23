@@ -5528,18 +5528,29 @@ export default function App() {
                 pausedDatesNew.push(d);
               }
             });
-            // Add replacement dates at the end of occurrences immediately
+            // Add replacement dates right after the last COMBO date (not last occurrence)
             if(pausedDatesNew.length>0){
-              const lastOcc=occ[occ.length-1];
+              // Find last combo date for students in this class
+              let lastComboDate=editDate;
+              (c.students||[]).forEach(sid=>{
+                const st=students.find(s=>s.id===sid);
+                if(st)(st.combos||[]).forEach(combo=>{
+                  if(combo.dates&&combo.dates.length>0){
+                    const ld=combo.dates[combo.dates.length-1];
+                    if(ld>lastComboDate) lastComboDate=ld;
+                  }
+                });
+              });
               const DAY_MAP2={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
               const dowSet2=new Set((c.days||[]).map(d=>DAY_MAP2[d]));
-              let cur2=new Date(lastOcc+"T12:00:00");
+              let cur2=new Date(lastComboDate+"T12:00:00");
               cur2.setDate(cur2.getDate()+1);
               const addedDates=[];
               while(addedDates.length<pausedDatesNew.length){
                 if(dowSet2.size===0||dowSet2.has(cur2.getDay())){
                   const ds2=cur2.getFullYear()+"-"+String(cur2.getMonth()+1).padStart(2,"0")+"-"+String(cur2.getDate()).padStart(2,"0");
-                  if(!occ.includes(ds2)){occ.push(ds2);addedDates.push(ds2);}
+                  addedDates.push(ds2);
+                  if(!occ.includes(ds2)) occ.push(ds2);
                 }
                 cur2.setDate(cur2.getDate()+1);
               }
