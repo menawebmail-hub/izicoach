@@ -3102,8 +3102,11 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
                 const isCancelled=item.isCancelled||false;
                 const isReprogWithDate=item.isReprogWithDate||false;
                 const isReprogNoDate=item.isReprogNoDate||false;
+                const isPausedItem=item.isPaused||false;
                 let leftBg,leftColor,leftLabel,rightBg,rightColor,rightLabel;
-                if(isCancelled){
+                if(isPausedItem){
+                  leftBg="#FFF3E0";leftColor="#E65100";leftLabel="⏸ Pausada";
+                } else if(isCancelled){
                   leftBg="#FFF0F0";leftColor="#C62828";leftLabel="⛔ Cancelada";
                 } else if(isReprogWithDate){
                   leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="🔄 Reprogramada";
@@ -3116,12 +3119,13 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
                 } else {
                   leftBg="#FFF8E1";leftColor="#F57F17";leftLabel="Programada";
                 }
-                if(item.isNew||isPaid){rightBg="#E8F5E9";rightColor="#2E7D32";rightLabel="Pagada";}
+                if(isPausedItem){rightBg="#FFF3E0";rightColor="#E65100";rightLabel="⏸ Pausada";}
+                else if(item.isNew||isPaid){rightBg="#E8F5E9";rightColor="#2E7D32";rightLabel="Pagada";}
                 else{rightBg="#FFF3E0";rightColor="#E65100";rightLabel="No Pagada";}
                 return (
                   <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid #E3F2FD"}}>
-                    <div style={{width:28,height:28,borderRadius:"50%",background:isCancelled?"#FFF0F0":isReprogWithDate?"#E8F5E9":isReprogNoDate?"#E3F2FD":item.isNew?"#E8F5E9":C.blueL,border:"2px solid "+(isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":item.isNew?"#43A047":C.blue2),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                      <span style={{fontSize:11,fontWeight:800,color:isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":item.isNew?"#43A047":C.blue2}}>{i+1}</span>
+                    <div style={{width:28,height:28,borderRadius:"50%",background:isPausedItem?"#FFF3E0":isCancelled?"#FFF0F0":isReprogWithDate?"#E8F5E9":isReprogNoDate?"#E3F2FD":item.isNew?"#E8F5E9":C.blueL,border:"2px solid "+(isPausedItem?"#E65100":isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":item.isNew?"#43A047":C.blue2),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                      <span style={{fontSize:11,fontWeight:800,color:isPausedItem?"#E65100":isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":item.isNew?"#43A047":C.blue2}}>{i+1}</span>
                     </div>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(item.date)}</div>
@@ -3333,12 +3337,14 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               const isCancelledItem=item.isCancelled||false;
               const isReprogWithDateItem=item.isReprogWithDate||false;
               const isReprogNoDateItem=item.isReprogNoDate||false;
-              const isPaidNow=!isCancelledItem&&!isReprogNoDateItem&&(alreadyPaid||(isUnpaid&&unpaidBefore<qty));
-              const isPaid=!isReprogNoDateItem&&(alreadyPaid||isPaidNow);
+              const isPausedItem=item.isPaused||false;
+              const isPaidNow=!isCancelledItem&&!isReprogNoDateItem&&!isPausedItem&&(alreadyPaid||(isUnpaid&&unpaidBefore<qty));
+              const isPaid=!isReprogNoDateItem&&!isPausedItem&&(alreadyPaid||isPaidNow);
               const isGiven=item.isGiven||item.status==="dada_unpaid"||item.status==="dada";
               // Class status label (left badge)
               let leftBg,leftColor,leftLabel;
-              if(isCancelledItem){leftBg="#FFF0F0";leftColor="#C62828";leftLabel="⛔ Cancelada";}
+              if(isPausedItem){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="⏸ Pausada";}
+              else if(isCancelledItem){leftBg="#FFF0F0";leftColor="#C62828";leftLabel="⛔ Cancelada";}
               else if(isReprogWithDateItem){leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="🔄 Reprogramada";}
               else if(isReprogNoDateItem){leftBg="#E3F2FD";leftColor="#1565C0";leftLabel="🕐 A Reprogramar";}
               else if(wasAusenteReprog){leftBg="#E8EAF6";leftColor="#3949AB";leftLabel="↩ A Reprogramar";}
@@ -3347,13 +3353,13 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               else if(isGiven){leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="✓ Realizada";}
               else{leftBg="#FFF8E1";leftColor="#F57F17";leftLabel="Programada";}
               // Payment badge
-              const rightBg=isPaid?"#E8F5E9":"#FFEBEE";
-              const rightColor=isPaid?"#2E7D32":"#C62828";
-              const rightLabel=isPaid?"✓ Pagada":"No Pagada";
+              const rightBg=isPausedItem?"#FFF3E0":isPaid?"#E8F5E9":"#FFEBEE";
+              const rightColor=isPausedItem?"#E65100":isPaid?"#2E7D32":"#C62828";
+              const rightLabel=isPausedItem?"⏸ Pausada":isPaid?"✓ Pagada":"No Pagada";
               return (
                 <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid #E3F2FD"}}>
-                  <div style={{width:28,height:28,borderRadius:"50%",background:isCancelledItem?"#FFF0F0":isReprogWithDateItem?"#E8F5E9":isReprogNoDateItem?"#E3F2FD":C.blueL,border:"2px solid "+(isCancelledItem?"#C62828":isReprogWithDateItem?"#2E7D32":isReprogNoDateItem?"#1565C0":"#1976D2"),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                    <span style={{fontSize:11,fontWeight:800,color:isCancelledItem?"#C62828":isReprogWithDateItem?"#2E7D32":isReprogNoDateItem?"#1565C0":C.blue2}}>{i+1}</span>
+                  <div style={{width:28,height:28,borderRadius:"50%",background:isPausedItem?"#FFF3E0":isCancelledItem?"#FFF0F0":isReprogWithDateItem?"#E8F5E9":isReprogNoDateItem?"#E3F2FD":C.blueL,border:"2px solid "+(isPausedItem?"#E65100":isCancelledItem?"#C62828":isReprogWithDateItem?"#2E7D32":isReprogNoDateItem?"#1565C0":"#1976D2"),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <span style={{fontSize:11,fontWeight:800,color:isPausedItem?"#E65100":isCancelledItem?"#C62828":isReprogWithDateItem?"#2E7D32":isReprogNoDateItem?"#1565C0":C.blue2}}>{i+1}</span>
                   </div>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(item.date)}</div>
