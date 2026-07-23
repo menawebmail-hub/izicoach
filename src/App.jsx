@@ -2844,21 +2844,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         const matchingCls=myClasses.find(cls=>cls.date===c.date);
         dates=[matchingCls?matchingCls.date:c.date];
       }
-      // Count paused dates and extend with next occurrence dates dynamically
-      const pausedInCombo=dates.filter(d=>{
-        const clsD=myClasses.find(cl=>cl.date===d);
-        return clsD&&(clsD.paused||clsD.cancelType==="paused");
-      }).length;
-      if(pausedInCombo>0){
-        // Find the class to get its occurrences for extension dates
-        const lastComboDate=dates[dates.length-1];
-        const parentCls=myClasses.find(cl=>(cl.occurrences||[]).some(od=>dates.includes(od)));
-        if(parentCls&&parentCls.occurrences){
-          const extraDates=parentCls.occurrences.filter(d=>d>lastComboDate&&!dates.includes(d)).slice(0,pausedInCombo);
-          dates=[...dates,...extraDates];
-        }
-      }
-      dates.slice(0,Math.max(effectiveTotal+pausedInCombo,dates.length)).forEach((ds,i)=>{
+      dates.slice(0,Math.max(effectiveTotal,dates.length)).forEach((ds,i)=>{
         const classOnDate=myClasses.find(cl=>cl.date===ds);
         const isCancelled=!!(classOnDate?.cancelled&&classOnDate?.cancelType==="cancelled");
         const isReprogWithDate=!!(classOnDate?.cancelled&&classOnDate?.cancelType==="cancelled_reprog"&&classOnDate?.rescheduledTo);
@@ -3536,18 +3522,8 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             return true;
           });
           const allDatesForStudentRaw=activeCombosForCount.flatMap(c=>{
-            let dates=[...(c.dates||[])];
+            const dates=[...(c.dates||[])];
             const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
-            // Extend dates dynamically for paused classes
-            const pausedInCombo=dates.filter(d=>{const cl=myClassesH.find(cls=>cls.date===d);return cl&&(cl.paused||cl.cancelType==="paused");}).length;
-            if(pausedInCombo>0){
-              const lastD=dates[dates.length-1];
-              const parentCls=myClassesH.find(cl=>(cl.occurrences||[]).some(od=>dates.includes(od)));
-              if(parentCls&&parentCls.occurrences){
-                const extra=parentCls.occurrences.filter(d=>d>lastD&&!dates.includes(d)).slice(0,pausedInCombo);
-                dates=[...dates,...extra];
-              }
-            }
             return dates.map((d,idx)=>{
               const clsForDate=myClassesH.find(cls=>cls.date===d);
               const cancelInfo=clsForDate?{cancelled:clsForDate.cancelled,cancelType:clsForDate.cancelType,rescheduledTo:clsForDate.rescheduledTo,paused:clsForDate.paused}:{};
