@@ -5269,7 +5269,10 @@ export default function App() {
   };
 
   // Wrapped setters that persist to localStorage (Supabase sync handled by debounced useEffect)
-  const setStudents=(v)=>{const next=typeof v==="function"?v(students):v;setStudentsRaw(next);lsSet("izi_students",next);};
+  const setStudents=(v)=>{const next=typeof v==="function"?v(students):v;
+    // Guard: never allow combo dates to exceed total
+    if(Array.isArray(next)){next.forEach(s=>{(s.combos||[]).forEach(c=>{if(c.dates&&c.total&&c.dates.length>c.total){console.warn("[GUARD] "+s.name+" combo dates "+c.dates.length+" > total "+c.total+". Capping.");c.dates=c.dates.slice(0,c.total);}});});}
+    setStudentsRaw(next);lsSet("izi_students",next);};
   const setClasses=(v)=>{const next=typeof v==="function"?v(classes):v;setClassesRaw(next);lsSet("izi_classes",next);};
   const setCourts=(v)=>{const next=typeof v==="function"?v(courts):v;setCourtsRaw(next);lsSet("izi_courts",next);};
   const setPackages=(v)=>{const next=typeof v==="function"?v(packages):v;setPackagesRaw(next);lsSet("izi_packages",next);};
@@ -5549,11 +5552,11 @@ export default function App() {
             // No replacement dates at pause time - they get added at RESUME time
           } else if(cd._resuming){
             // RESUME: just remove paused status from resume date forward
-            console.log("[RESUME] editDate=",editDate,"paused keys before=",Object.keys(dc).filter(d=>dc[d]?.cancelType==="paused").length);
+            
             Object.keys(dc).forEach(d=>{
               if(d>=editDate&&dc[d]?.cancelType==="paused") delete dc[d];
             });
-            console.log("[RESUME] paused keys after=",Object.keys(dc).filter(d=>dc[d]?.cancelType==="paused").length);
+            
             const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,...rest}=cd;
             return {...c,...rest,id:realId,dateCancellations:dc,occurrences:occ};
           } else if(cd.cancelled){
