@@ -5549,9 +5549,11 @@ export default function App() {
             // No replacement dates at pause time - they get added at RESUME time
           } else if(cd._resuming){
             // RESUME: just remove paused status from resume date forward
+            console.log("[RESUME] editDate=",editDate,"paused keys before=",Object.keys(dc).filter(d=>dc[d]?.cancelType==="paused").length);
             Object.keys(dc).forEach(d=>{
               if(d>=editDate&&dc[d]?.cancelType==="paused") delete dc[d];
             });
+            console.log("[RESUME] paused keys after=",Object.keys(dc).filter(d=>dc[d]?.cancelType==="paused").length);
             const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,...rest}=cd;
             return {...c,...rest,id:realId,dateCancellations:dc,occurrences:occ};
           } else if(cd.cancelled){
