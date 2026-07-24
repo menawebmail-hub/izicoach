@@ -3214,7 +3214,6 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
 
 
           {pagoTipo==="clases"&&(()=>{
-          console.log("[DATES DEBUG] allDates.length=",allDates.length,"pagoTipo=",pagoTipo);
           const hasNew=parseInt(localClasses)>0;
           const activeDates=allDates;
           // Fallback when all combos are fully paid and realized
