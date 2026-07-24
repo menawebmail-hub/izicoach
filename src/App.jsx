@@ -2844,7 +2844,20 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         const matchingCls=myClasses.find(cls=>cls.date===c.date);
         dates=[matchingCls?matchingCls.date:c.date];
       }
-      dates.slice(0,Math.max(effectiveTotal,dates.length)).forEach((ds,i)=>{
+      // Dynamic extension for paused dates
+      const _pi=dates.map(d=>{const cl=myClasses.find(x=>x.date===d);return{date:d,paused:!!(cl&&(cl.paused||cl.cancelType==="paused"))};});
+      const _pCount=_pi.filter(x=>x.paused).length;
+      const _npCount=_pi.filter(x=>!x.paused).length;
+      const _allFutPaused=_pi.filter(x=>x.date>=TODAY_DATE).length>0&&_pi.filter(x=>x.date>=TODAY_DATE).every(x=>x.paused);
+      if(_pCount>0&&_npCount>0&&!_allFutPaused){
+        const _lastD=dates[dates.length-1];
+        const _pCls=myClasses.find(cl=>(cl.occurrences||[]).some(od=>dates.includes(od)));
+        if(_pCls&&_pCls.occurrences){
+          const _extra=_pCls.occurrences.filter(d=>d>_lastD&&!dates.includes(d)).slice(0,_pCount);
+          dates=[...dates,..._extra];
+        }
+      }
+      dates.slice(0,Math.max(effectiveTotal+_pCount,dates.length)).forEach((ds,i)=>{
         const classOnDate=myClasses.find(cl=>cl.date===ds);
         const isCancelled=!!(classOnDate?.cancelled&&classOnDate?.cancelType==="cancelled");
         const isReprogWithDate=!!(classOnDate?.cancelled&&classOnDate?.cancelType==="cancelled_reprog"&&classOnDate?.rescheduledTo);
@@ -3429,8 +3442,21 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             return true;
           });
           const allDatesForStudentRaw=activeCombosForCount.flatMap(c=>{
-            const dates=[...(c.dates||[])];
+            let dates=[...(c.dates||[])];
             const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
+            // Dynamic extension for paused dates
+            const _pi2=dates.map(d=>{const cl=myClassesH.find(x=>x.date===d);return{date:d,paused:!!(cl&&(cl.paused||cl.cancelType==="paused"))};});
+            const _pC2=_pi2.filter(x=>x.paused).length;
+            const _npC2=_pi2.filter(x=>!x.paused).length;
+            const _afp2=_pi2.filter(x=>x.date>=TODAY_DATE).length>0&&_pi2.filter(x=>x.date>=TODAY_DATE).every(x=>x.paused);
+            if(_pC2>0&&_npC2>0&&!_afp2){
+              const _ld2=dates[dates.length-1];
+              const _pc2=myClassesH.find(cl=>(cl.occurrences||[]).some(od=>dates.includes(od)));
+              if(_pc2&&_pc2.occurrences){
+                const _ex2=_pc2.occurrences.filter(d=>d>_ld2&&!dates.includes(d)).slice(0,_pC2);
+                dates=[...dates,..._ex2];
+              }
+            }
             return dates.map((d,idx)=>{
               const clsForDate=myClassesH.find(cls=>cls.date===d);
               const cancelInfo=clsForDate?{cancelled:clsForDate.cancelled,cancelType:clsForDate.cancelType,rescheduledTo:clsForDate.rescheduledTo,paused:clsForDate.paused}:{};
