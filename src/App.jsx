@@ -2359,11 +2359,22 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
             <div style={{display:"flex",padding:"10px 16px",gap:4,background:C.white,flexShrink:0,borderBottom:"1px solid "+C.border}}>
               {weekDays.map((day,i)=>{
                 const ds=fmt(day); const isToday=ds===TODAY_DATE; const isSel=ds===selDay;
+                const dayCls=classes.filter(c=>c.date===ds);
                 return (
                   <div key={i} onClick={()=>setSelDay(ds)} style={{flex:1,textAlign:"center",cursor:"pointer"}}>
-                    <div style={{borderRadius:12,padding:"8px 2px",background:isSel?"linear-gradient(135deg,"+C.blue2+","+C.blue3+")":isToday?C.blueL:"transparent"}}>
+                    <div style={{borderRadius:12,padding:"8px 2px",background:isSel?"linear-gradient(135deg,"+C.blue2+","+C.blue3+")":isToday?C.blueL:"transparent",border:isToday&&!isSel?"2px solid "+C.blue2:"2px solid transparent"}}>
                       <div style={{fontSize:18,fontWeight:900,color:isSel?C.white:isToday?C.blue2:C.text,lineHeight:1}}>{day.getDate()}</div>
                       <div style={{fontSize:9,fontWeight:700,color:isSel?"rgba(255,255,255,0.8)":C.mutedDark,marginTop:2}}>{wDShort[day.getDay()].toUpperCase()}</div>
+                      {dayCls.length>0&&(
+                        <div style={{display:"flex",gap:2,justifyContent:"center",marginTop:3}}>
+                          {dayCls.length<=3?dayCls.map((c,ci)=>{
+                            const dotColor=isSel?"rgba(255,255,255,0.8)":c.paused||c.cancelType==="paused"?"#E65100":c.cancelled&&c.cancelType==="cancelled"?"#E53935":c.cancelled&&c.cancelType==="cancelled_reprog"?"#2E7D32":C.blue2;
+                            return <div key={ci} style={{width:5,height:5,borderRadius:"50%",background:dotColor}}/>;
+                          }):(
+                            <span style={{fontSize:9,fontWeight:700,color:isSel?C.white:C.blue2}}>{dayCls.length}</span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
