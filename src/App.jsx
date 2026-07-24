@@ -3063,77 +3063,78 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             </div>
           </div>
           {pagoTipo==="clases"&&(()=>{
-            const lastComboDate=allDates.length>0?allDates[allDates.length-1].date:"";
-          const allPaid=allDates.every(d=>d.status==="dada"||d.status==="adar");
-          const lastDatePassed=lastComboDate&&lastComboDate<TODAY;
-          // Keep all dates visible until all are paid AND last date has passed
-          const activeDates=allPaid&&lastDatePassed?[]:allDates.filter(d=>d.status!=="dada");
-            const qty=parseInt(localClasses)||0;
-            const reviewDates=[
-              ...activeDates.map((item,i)=>({...item,isNew:false,idx:i})),
-              ...(lastCombo?.paid?projDates.map((item,i)=>({...item,isNew:true,idx:activeDates.length+i})):[]),
-            ];
-            if(reviewDates.length===0){
-              // Fallback: show combo date for individual/unpaid
-              const fallbackDate=lastCombo?.date||TODAY;
-              return (
-                <div style={{marginBottom:20}}>
-                  <div style={{fontSize:11,fontWeight:700,color:"#5C7A9F",letterSpacing:0.5,marginBottom:8}}>FECHAS DE CLASE</div>
-                  <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0"}}>
-                    <div style={{width:28,height:28,borderRadius:"50%",background:C.blueL,border:"2px solid "+C.blue2,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                      <span style={{fontSize:11,fontWeight:800,color:C.blue2}}>1</span>
-                    </div>
-                    <div style={{flex:1,fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(fallbackDate)}</div>
-                    <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>No Pagada</span>
+          const hasNew=parseInt(localClasses)>0;
+          const activeDates=allDates;
+          // Fallback when all combos are fully paid and realized
+          if(activeDates.length===0&&!hasNew){
+            const totalPaid=allCombos.reduce((sum,c)=>sum+(c.paidCount||0),0);
+            const totalClasses=allCombos.reduce((sum,c)=>sum+(c.total||0),0);
+            const allComplete=totalPaid>0&&totalPaid>=totalClasses;
+            return (
+              <div style={{padding:"0 20px 16px",textAlign:"center"}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#5C7A9F",letterSpacing:0.5,marginBottom:12}}>FECHAS DE CLASE</div>
+                {allComplete?(
+                  <div style={{padding:"20px",borderRadius:16,background:"#EDFBEC",border:"1.5px solid #66BB6A"}}>
+                    <div style={{fontSize:28}}>✅</div>
+                    <div style={{fontSize:15,fontWeight:800,color:"#2E7D32",marginTop:8}}>No hay clases pendientes</div>
+                    <div style={{fontSize:12,color:"#4CAF50",marginTop:4}}>{totalPaid} clases pagadas · {totalClasses} realizadas</div>
                   </div>
+                ):(
+                  <div style={{padding:"20px",borderRadius:16,background:C.blueL,border:"1.5px solid "+C.border}}>
+                    <div style={{fontSize:13,color:C.mutedDark}}>No hay clases pendientes</div>
+                  </div>
+                )}
+              </div>
+            );
+          }
+          return (
+          <div style={{padding:"0 20px 16px"}}>
+            <div style={{fontSize:11,fontWeight:700,color:"#5C7A9F",letterSpacing:0.5,marginBottom:8}}>FECHAS DE CLASE</div>
+            {activeDates.map((item,i)=>{
+              const qty=parseInt(localClasses)||0;
+              const isCancelled=item.isCancelled||false;
+              const isReprogWithDate=item.isReprogWithDate||false;
+              const isReprogNoDate=item.isReprogNoDate||false;
+              const isPausedItem=item.isPaused||false;
+              const wasAbsent=item.wasAbsent||false;
+              const wasAusenteDada=item.wasAusenteDada||false;
+              const wasAusenteReprog=item.wasAusenteReprog||false;
+              const unpaidBefore=activeDates.slice(0,i).filter(d=>
+                (d.status==="pendiente"||d.status==="dada_unpaid")&&!d.isCancelled&&!d.isPaused
+              ).length;
+              const isUnpaid=item.status==="pendiente"||item.status==="dada_unpaid";
+              const alreadyPaid=item.status==="adar"||item.status==="dada";
+              const isPaidNow=!isCancelled&&!isReprogNoDate&&!isPausedItem&&(alreadyPaid||(isUnpaid&&unpaidBefore<qty));
+              const isPaid=!isReprogNoDate&&!isPausedItem&&(alreadyPaid||isPaidNow);
+              const isGiven=item.isGiven||item.status==="dada_unpaid"||item.status==="dada";
+              let leftBg,leftColor,leftLabel;
+              if(isPausedItem){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="⏸ Pausada";}
+              else if(isCancelled){leftBg="#FFF0F0";leftColor="#C62828";leftLabel="⛔ Cancelada";}
+              else if(isReprogWithDate){leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="🔄 Reprogramada";}
+              else if(isReprogNoDate){leftBg="#E3F2FD";leftColor="#1565C0";leftLabel="🕐 A Reprogramar";}
+              else if(wasAusenteReprog){leftBg="#E8EAF6";leftColor="#3949AB";leftLabel="↩ A Reprogramar";}
+              else if(wasAusenteDada){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="🚫 Ausente (Dada)";}
+              else if(wasAbsent){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="🚫 Ausente";}
+              else if(isGiven){leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="✓ Realizada";}
+              else{leftBg="#FFF8E1";leftColor="#F57F17";leftLabel="Programada";}
+              const rightBg=isPausedItem?"#FFF3E0":isPaid?"#E8F5E9":"#FFEBEE";
+              const rightColor=isPausedItem?"#E65100":isPaid?"#2E7D32":"#C62828";
+              const rightLabel=isPausedItem?"⏸ Pausada":isPaid?"✓ Pagada":"No Pagada";
+              return (
+                <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid #E3F2FD"}}>
+                  <div style={{width:28,height:28,borderRadius:"50%",background:isPausedItem?"#FFF3E0":isCancelled?"#FFF0F0":isReprogWithDate?"#E8F5E9":isReprogNoDate?"#E3F2FD":C.blueL,border:"2px solid "+(isPausedItem?"#E65100":isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":"#1976D2"),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <span style={{fontSize:11,fontWeight:800,color:isPausedItem?"#E65100":isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":C.blue2}}>{i+1}</span>
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(item.date)}</div>
+                    {isReprogWithDate&&item.rescheduledTo&&<div style={{fontSize:10,color:"#2E7D32",marginTop:1}}>→ {formatDate(item.rescheduledTo)}</div>}
+                  </div>
+                  <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:leftBg,color:leftColor,fontWeight:700,flexShrink:0}}>{leftLabel}</span>
+                  <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700,flexShrink:0}}>{rightLabel}</span>
                 </div>
               );
-            }
-            return (
-            <div style={{marginBottom:20}}>
-              <div style={{fontSize:11,fontWeight:700,color:"#5C7A9F",letterSpacing:0.5,marginBottom:8}}>FECHAS DE CLASE</div>
-              {reviewDates.map((item,i)=>{
-                const isPaidNow=lastCombo?.paid?true:i<qty;
-                const isPaid=item.status!=="pendiente"||isPaidNow||item.isNew;
-                const wasAbsent=item.wasAbsent||false;
-                const isCancelled=item.isCancelled||false;
-                const isReprogWithDate=item.isReprogWithDate||false;
-                const isReprogNoDate=item.isReprogNoDate||false;
-                const isPausedItem=item.isPaused||false;
-                let leftBg,leftColor,leftLabel,rightBg,rightColor,rightLabel;
-                if(isPausedItem){
-                  leftBg="#FFF3E0";leftColor="#E65100";leftLabel="⏸ Pausada";
-                } else if(isCancelled){
-                  leftBg="#FFF0F0";leftColor="#C62828";leftLabel="⛔ Cancelada";
-                } else if(isReprogWithDate){
-                  leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="🔄 Reprogramada";
-                } else if(isReprogNoDate){
-                  leftBg="#E3F2FD";leftColor="#1565C0";leftLabel="🕐 A Reprogramar";
-                } else if(wasAbsent){
-                  leftBg="#FFF3E0";leftColor="#E65100";leftLabel="🚫 Ausente";
-                } else if(item.isGiven){
-                  leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="✓ Realizada";
-                } else {
-                  leftBg="#FFF8E1";leftColor="#F57F17";leftLabel="Programada";
-                }
-                if(isPausedItem){rightBg="#FFF3E0";rightColor="#E65100";rightLabel="⏸ Pausada";}
-                else if(item.isNew||isPaid){rightBg="#E8F5E9";rightColor="#2E7D32";rightLabel="Pagada";}
-                else{rightBg="#FFF3E0";rightColor="#E65100";rightLabel="No Pagada";}
-                return (
-                  <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid #E3F2FD"}}>
-                    <div style={{width:28,height:28,borderRadius:"50%",background:isPausedItem?"#FFF3E0":isCancelled?"#FFF0F0":isReprogWithDate?"#E8F5E9":isReprogNoDate?"#E3F2FD":item.isNew?"#E8F5E9":C.blueL,border:"2px solid "+(isPausedItem?"#E65100":isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":item.isNew?"#43A047":C.blue2),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                      <span style={{fontSize:11,fontWeight:800,color:isPausedItem?"#E65100":isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":item.isNew?"#43A047":C.blue2}}>{i+1}</span>
-                    </div>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(item.date)}</div>
-                      {isReprogWithDate&&item.rescheduledTo&&<div style={{fontSize:10,color:"#2E7D32",marginTop:1}}>→ {formatDate(item.rescheduledTo)}</div>}
-                    </div>
-                    <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:leftBg,color:leftColor,fontWeight:700,flexShrink:0}}>{leftLabel}</span>
-                    <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700,flexShrink:0}}>{rightLabel}</span>
-                  </div>
-                );
-              })}
-            </div>
+            })}
+          </div>
           );})()}
           <button onClick={handleConfirm} style={{width:"100%",padding:"16px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:"#fff",fontSize:15,cursor:"pointer",fontWeight:900}}>
             ✓ Confirmar pago
