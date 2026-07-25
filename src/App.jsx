@@ -4671,10 +4671,14 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                   const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
                   const isPaid=i<paidCount;
                   const isPast=d<=TODAY_DATE;
+                  const clsForDate=myClasses.find(cl=>cl.date===d);
+                  const isPaused=!!(clsForDate&&(clsForDate.paused||clsForDate.cancelType==="paused"));
+                  const isCancelledClass=!!(clsForDate&&clsForDate.cancelled&&clsForDate.cancelType==="cancelled");
+                  const isReprogWithDate=!!(clsForDate&&clsForDate.cancelled&&clsForDate.cancelType==="cancelled_reprog"&&clsForDate.rescheduledTo);
+                  const isReprogNoDate=!!(clsForDate&&clsForDate.cancelled&&clsForDate.cancelType==="cancelled_reprog"&&!clsForDate.rescheduledTo);
                   const attEntry=(cls.attendanceLog||[]).find(e=>e.date===d);
-                  const isGiven=attEntry?(attEntry.present||[]).includes(student.id)||(attEntry.ausente_dada||[]).includes(student.id):isPast;
-                  const isCancelled=attEntry&&(attEntry.ausente_reprog||[]).includes(student.id);
-                  return {date:d,isPaid,isGiven,isPast,isCancelled};
+                  const isGiven=isPaused?false:isCancelledClass?true:isReprogWithDate?true:isReprogNoDate?false:attEntry?(attEntry.present||[]).includes(student.id)||(attEntry.ausente_dada||[]).includes(student.id):isPast;
+                  return {date:d,isPaid:isPaused?false:isPaid,isGiven,isPast,isPaused,isCancelledClass,isReprogWithDate,isReprogNoDate,rescheduledTo:clsForDate&&clsForDate.rescheduledTo||null};
                 });
               }).sort((a,b)=>a.date.localeCompare(b.date));
               const seen2=new Set();
@@ -4690,17 +4694,28 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                   {deduped.length===0?<div style={{fontSize:12,color:C.mutedDark}}>Sin clases asignadas</div>:(
                     <div>
                       {deduped.map((item,i)=>{
-                        let leftBg="#EDFBEC",leftColor="#2E7D32",leftLabel="Pagada";
-                        if(!item.isPaid){leftBg="#FFEBEE";leftColor="#C62828";leftLabel="No Pagada";}
-                        let rightBg="#F5F5F5",rightColor="#616161",rightLabel="Realizada";
-                        if(!item.isGiven&&item.date>TODAY_DATE){rightBg=C.blueL;rightColor=C.blue2;rightLabel="Programada";}
-                        if(item.isCancelled){rightBg="#FFF3E0";rightColor="#E65100";rightLabel="A Reprog.";}
+                        let leftBg,leftColor,leftLabel;
+                        if(item.isPaused){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="Pausada";}
+                        else if(item.isCancelledClass){leftBg="#FFF0F0";leftColor="#C62828";leftLabel="Cancelada";}
+                        else if(item.isReprogWithDate){leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="Reprogramada";}
+                        else if(item.isReprogNoDate){leftBg="#E3F2FD";leftColor="#1565C0";leftLabel="A Reprogramar";}
+                        else if(item.isGiven){leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="Realizada";}
+                        else{leftBg=C.blueL;leftColor=C.blue2;leftLabel="Programada";}
+                        let rightBg,rightColor,rightLabel;
+                        if(item.isPaused){rightBg="#FFF3E0";rightColor="#E65100";rightLabel="Pausada";}
+                        else if(item.isPaid){rightBg="#E8F5E9";rightColor="#2E7D32";rightLabel="Pagada";}
+                        else{rightBg="#FFEBEE";rightColor="#C62828";rightLabel="No Pagada";}
+                        const cBg=item.isPaused?"#FFF3E0":item.isCancelledClass?"#FFF0F0":item.isReprogWithDate?"#E8F5E9":item.isReprogNoDate?"#E3F2FD":C.blueL;
+                        const cCol=item.isPaused?"#E65100":item.isCancelledClass?"#C62828":item.isReprogWithDate?"#2E7D32":item.isReprogNoDate?"#1565C0":C.blue2;
                         return (
                           <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid "+C.border}}>
-                            <div style={{width:26,height:26,borderRadius:"50%",background:C.blueL,border:"2px solid "+C.blue2,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                              <span style={{fontSize:10,fontWeight:800,color:C.blue2}}>{i+1}</span>
+                            <div style={{width:26,height:26,borderRadius:"50%",background:cBg,border:"2px solid "+cCol,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                              <span style={{fontSize:10,fontWeight:800,color:cCol}}>{i+1}</span>
                             </div>
-                            <div style={{flex:1,fontSize:13,fontWeight:600,color:C.text}}>{fmtDate(item.date)}</div>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{fontSize:13,fontWeight:600,color:C.text}}>{fmtDate(item.date)}</div>
+                              {item.isReprogWithDate&&item.rescheduledTo&&<div style={{fontSize:10,color:"#2E7D32",marginTop:1}}>{"-> "+fmtDate(item.rescheduledTo)}</div>}
+                            </div>
                             <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:leftBg,color:leftColor,fontWeight:700}}>{leftLabel}</span>
                             <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700}}>{rightLabel}</span>
                           </div>
