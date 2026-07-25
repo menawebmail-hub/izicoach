@@ -4681,6 +4681,19 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                   return {date:d,isPaid:isPaused?false:isPaid,isGiven,isPast,isPaused,isCancelledClass,isReprogWithDate,isReprogNoDate,rescheduledTo:clsForDate&&clsForDate.rescheduledTo||null};
                 });
               }).sort((a,b)=>a.date.localeCompare(b.date));
+              // Dynamic extension for paused dates
+              const _pausedCount=allDates.filter(x=>x.isPaused).length;
+              const _nonPausedCount=allDates.filter(x=>!x.isPaused).length;
+              const _allFutPaused=allDates.filter(x=>x.date>=TODAY_DATE).length>0&&allDates.filter(x=>x.date>=TODAY_DATE).every(x=>x.isPaused);
+              if(_pausedCount>0&&_nonPausedCount>0&&!_allFutPaused){
+                const _lastD=allDates[allDates.length-1]?.date;
+                if(_lastD){
+                  const _extraDates=myClasses.filter(cl=>cl.date>_lastD&&(cl.students||[]).includes(student.id)).map(cl=>cl.date).sort().slice(0,_pausedCount);
+                  _extraDates.forEach(d=>{
+                    allDates.push({date:d,isPaid:false,isGiven:false,isPast:false,isPaused:false,isCancelledClass:false,isReprogWithDate:false,isReprogNoDate:false,rescheduledTo:null});
+                  });
+                }
+              }
               const seen2=new Set();
               const deduped=allDates.filter(d=>{if(seen2.has(d.date))return false;seen2.add(d.date);return true;});
               return (
