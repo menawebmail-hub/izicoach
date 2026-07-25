@@ -2989,16 +2989,9 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         if(remaining<=0||!c.total||c.total===null) return c;
         const prevPaid=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
         if(prevPaid>=c.total) return c; // already fully paid
-        // Count payable dates (not paused, not cancelled)
+        // Pay up to remaining, skipping paused/cancelled for payment record
         const myClsForCombo=classes.filter(cl=>(cl.students||[]).includes(s.id));
-        const payableDates=(c.dates||[]).filter((d,idx)=>{
-          if(idx<prevPaid) return false; // already paid
-          const clsD=myClsForCombo.find(cl=>cl.date===d);
-          if(clsD&&(clsD.paused||clsD.cancelType==="paused")) return false;
-          if(clsD&&clsD.cancelled&&clsD.cancelType==="cancelled") return false;
-          return true;
-        });
-        const canPay=Math.min(payableDates.length,remaining);
+        const canPay=Math.min(c.total-prevPaid,remaining);
         if(canPay<=0) return c;
         remaining-=canPay;
         const newPaidCount=prevPaid+canPay;
@@ -3011,6 +3004,13 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
           if(clsD&&clsD.cancelled&&clsD.cancelType==="cancelled_reprog"&&!clsD.rescheduledTo) return false;
           return true;
         }).length;
+        const payableDates=(c.dates||[]).filter((d,idx)=>{
+          if(idx<prevPaid) return false;
+          const clsD=myClsForCombo.find(cl=>cl.date===d);
+          if(clsD&&(clsD.paused||clsD.cancelType==="paused")) return false;
+          if(clsD&&clsD.cancelled&&clsD.cancelType==="cancelled") return false;
+          return true;
+        });
         const paymentDates=payableDates.slice(0,canPay);
         const newPayment={id:Date.now()+remaining,qty:canPay,amount:Math.round((parseInt(localAmount)||0)*(canPay/qty)),method:payMethod,date:localDate||TODAY,dates:paymentDates};
         return {...c,paid:fullyPaid,paidCount:newPaidCount,used:Math.max(c.used||0,givenCount),payments:[...(c.payments||[]),newPayment]};
