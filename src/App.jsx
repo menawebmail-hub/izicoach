@@ -2832,8 +2832,15 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
     const activeCombos=allCombos.filter(c=>{
       if(c.total>0){
         const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
-        // Hide fully paid combos
-        if(c.paid&&paidCount>=(c.total||1)) return false;
+        // Hide only if fully paid AND all non-paused dates are realized
+        if(c.paid&&paidCount>=(c.total||1)){
+          const nonPausedDates=(c.dates||[]).filter(d=>{
+            const clsD=myClasses.find(cl=>cl.date===d);
+            return !(clsD&&(clsD.paused||clsD.cancelType==="paused"));
+          });
+          const allRealized=nonPausedDates.length>0&&nonPausedDates.every(d=>isClassDone(d,"23:59"));
+          if(allRealized) return false;
+        }
         return true;
       }
       if(c.packType==="individual"||c.packType==="combo") return true;
@@ -3497,8 +3504,15 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
           const activeCombosForCount=s.combos.filter(c=>{
             if(!(c.total>0||(c.packType&&c.packType!=="mensual"))) return false;
             const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
-            // Exclude fully paid combos
-            if(c.paid&&paidCount>=(c.total||1)) return false;
+            // Exclude only if fully paid AND all non-paused dates realized
+            if(c.paid&&paidCount>=(c.total||1)){
+              const npDates=(c.dates||[]).filter(d=>{
+                const cl=myClassesH.find(cls=>cls.date===d);
+                return !(cl&&(cl.paused||cl.cancelType==="paused"));
+              });
+              const allDone=npDates.length>0&&npDates.every(d=>isClassDone(d,"23:59"));
+              if(allDone) return false;
+            }
             return true;
           });
           const allDatesForStudentRaw=activeCombosForCount.flatMap(c=>{
