@@ -3123,9 +3123,10 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
           {pagoTipo==="clases"&&allDates.length>0&&(()=>{
             const qty=parseInt(localClasses)||0;
             let unpaidCount=0;
-            const cols4={noPagada:0,pagada:0,programada:0,realizada:0};
+            const cols4={noPagada:0,pagada:0,programada:0,realizada:0,pausada:0};
             allDates.forEach((d,i)=>{
               if(d.isCancelled) return;
+              if(d.isPaused){cols4.pausada++;return;}
               const alreadyPaid=d.status==="adar"||d.status==="dada";
               const isUnpaid=d.status==="pendiente"||d.status==="dada_unpaid";
               const paidNow=alreadyPaid||(isUnpaid&&unpaidCount<qty);
@@ -3144,6 +3145,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               {n:cols4.programada,label:"Programada",color:C.blue2,bg:C.blueL},
               {n:cols4.realizada,label:"Realizada",color:"#555",bg:"#F5F5F5"},
             ];
+            if(cols4.pausada>0) cols.push({n:cols4.pausada,label:"Pausada",color:"#E65100",bg:"#FFF3E0"});
             return (
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:16}}>
                 {cols.map((col,i)=>(
