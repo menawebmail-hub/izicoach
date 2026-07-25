@@ -3403,10 +3403,22 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
       attLogs.push({date:entry.date,day:entry.day||"",month:MONTHS[d.getMonth()],year:d.getFullYear(),dayNum:d.getDate(),className:cls.title,time:cls.time,status:isAusenteDada?"ausente_dada":"presente"});
     });
     // Also include past classes with NO attendance record (default = present)
-    if(cls.date<TODAY_DATE&&!(cls.attendanceLog||[]).find(e=>e.date===cls.date)){
+    if(cls.date<TODAY_DATE&&!cls.paused&&cls.cancelType!=="paused"&&!cls.cancelled&&!(cls.attendanceLog||[]).find(e=>e.date===cls.date)){
       const d=new Date(cls.date+"T12:00:00");
       const wD=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
       attLogs.push({date:cls.date,day:wD[d.getDay()],month:MONTHS[d.getMonth()],year:d.getFullYear(),dayNum:d.getDate(),className:cls.title,time:cls.time,status:"presente"});
+    }
+    // Include paused classes
+    if(cls.paused||cls.cancelType==="paused"){
+      const d=new Date(cls.date+"T12:00:00");
+      const wD=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+      attLogs.push({date:cls.date,day:wD[d.getDay()],month:MONTHS[d.getMonth()],year:d.getFullYear(),dayNum:d.getDate(),className:cls.title,time:cls.time||"",status:"pausada"});
+    }
+    // Include cancelled classes
+    if(cls.cancelled&&cls.cancelType==="cancelled"){
+      const d=new Date(cls.date+"T12:00:00");
+      const wD=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+      attLogs.push({date:cls.date,day:wD[d.getDay()],month:MONTHS[d.getMonth()],year:d.getFullYear(),dayNum:d.getDate(),className:cls.title,time:cls.time||"",status:"cancelada"});
     }
   });
   attLogs.sort((a,b)=>b.date.localeCompare(a.date));
@@ -3941,7 +3953,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
                     {entries.map((e,i)=>(
                       <WhiteCard key={i} style={{marginBottom:8,padding:"12px 14px"}}>
                         <div style={{display:"flex",alignItems:"center",gap:12}}>
-                          <div style={{width:44,height:44,borderRadius:12,background:C.blueL,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                          <div style={{width:44,height:44,borderRadius:12,background:e.status==="pausada"?"#FFF3E0":e.status==="cancelada"?"#FFF0F0":C.blueL,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                             <div style={{fontSize:18,fontWeight:800,color:C.blue2,lineHeight:1}}>{e.dayNum}</div>
                             <div style={{fontSize:9,color:C.mutedDark,fontWeight:600}}>{e.day.slice(0,3).toUpperCase()}</div>
                           </div>
