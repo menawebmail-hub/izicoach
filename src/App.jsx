@@ -3336,8 +3336,8 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               ).length;
               const isUnpaid=item.status==="pendiente"||item.status==="dada_unpaid";
               const alreadyPaid=item.status==="adar"||item.status==="dada";
-              const isPaidNow=!isCancelled&&!isReprogNoDate&&!isPausedItem&&(alreadyPaid||(isUnpaid&&unpaidBefore<qty));
-              const isPaid=!isReprogNoDate&&!isPausedItem&&(alreadyPaid||isPaidNow);
+              const isPaidNow=!isCancelled&&!isPausedItem&&(alreadyPaid||(isUnpaid&&unpaidBefore<qty));
+              const isPaid=!isPausedItem&&(alreadyPaid||isPaidNow);
               const isGiven=item.isGiven||item.status==="dada_unpaid"||item.status==="dada";
               let leftBg,leftColor,leftLabel;
               if(isPausedItem){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="⏸ Pausada";}
@@ -3573,7 +3573,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             seenDates.add(d.date);
             return true;
           });
-          const noPagadas=allDatesForStudent.filter(d=>!d.isPaid&&!d.isCancelled&&!d.isReprogNoDate&&!d.isPaused).length;
+          const noPagadas=allDatesForStudent.filter(d=>!d.isPaid&&!d.isCancelled&&!d.isPaused).length;
           const pagadas=allDatesForStudent.filter(d=>d.isPaid&&!d.isCancelled&&!d.isPaused).length;
           const programadas=allDatesForStudent.filter(d=>!d.isGiven&&!d.isPast&&!d.isCancelled&&!d.isReprogWithDate&&!d.isReprogNoDate&&!d.isPaused).length;
           const realizadas=allDatesForStudent.filter(d=>d.isGiven&&!d.isCancelled&&!d.isReprogWithDate&&!d.isPaused).length;
