@@ -2893,9 +2893,9 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         // Count non-paused dates before this one for isPaid
         const nonPausedBeforeThis=dates.slice(0,i).filter(dd=>{
           const cl2=myClasses.find(cl=>cl.date===dd);
-          return !(cl2&&(cl2.paused||cl2.cancelType==="paused"));
+          return !(cl2&&(cl2.paused||cl2.cancelType==="paused"))&&!(cl2&&cl2.cancelled&&cl2.cancelType==="cancelled");
         }).length;
-        const isPaidDate=isPaused?false:nonPausedBeforeThis<paidCount;
+        const isPaidDate=(isPaused||isCancelled)?false:nonPausedBeforeThis<paidCount;
         const attEntry=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===ds);
         const wasAusenteDada=attEntry?(attEntry.ausente_dada||[]).includes(s.id):false;
         const wasAusenteReprog=attEntry?(attEntry.ausente_reprog||[]).includes(s.id):false;
@@ -3556,9 +3556,9 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
               // Count non-paused dates before this one for isPaid
               const nonPausedBefore=dates.slice(0,idx).filter((dd,ii)=>{
                 const cl2=myClassesH.find(cls=>cls.date===dd);
-                return !(cl2&&(cl2.paused||cl2.cancelType==="paused"));
+                return !(cl2&&(cl2.paused||cl2.cancelType==="paused"))&&!(cl2&&cl2.cancelled&&cl2.cancelType==="cancelled");
               }).length;
-              const isPaid=isPaused?false:nonPausedBefore<paidCount;
+              const isPaid=(isPaused||isCancelled)?false:nonPausedBefore<paidCount;
               const isDone=isClassDone(d,timeEnd);
               const wasPresent=attEntry?(attEntry.present||[]).includes(s.id):false;
               const wasAusenteDada=attEntry?(attEntry.ausente_dada||[]).includes(s.id):false;
@@ -4666,8 +4666,8 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                   const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
                   const clsChk=myClasses.find(cl=>cl.date===d);
                   const isPausedChk=!!(clsChk&&(clsChk.paused||clsChk.cancelType==="paused"));
-                  const npBefore=(c.dates||[]).slice(0,i).filter(dd=>{const cl3=myClasses.find(cl=>cl.date===dd);return !(cl3&&(cl3.paused||cl3.cancelType==="paused"));}).length;
-                  const isPaid=isPausedChk?false:npBefore<paidCount;
+                  const npBefore=(c.dates||[]).slice(0,i).filter(dd=>{const cl3=myClasses.find(cl=>cl.date===dd);return !(cl3&&(cl3.paused||cl3.cancelType==="paused"))&&!(cl3&&cl3.cancelled&&cl3.cancelType==="cancelled");}).length;
+                  const isPaid=(isPausedChk||isCancelledClass)?false:npBefore<paidCount;
                   const isPast=d<=TODAY_DATE;
                   const attEntry=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===d);
                   const isGiven=attEntry?(attEntry.present||[]).includes(student.id)||(attEntry.ausente_dada||[]).includes(student.id):isPast;
@@ -4743,8 +4743,8 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                   const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
                   const clsChk=myClasses.find(cl=>cl.date===d);
                   const isPausedChk=!!(clsChk&&(clsChk.paused||clsChk.cancelType==="paused"));
-                  const npBefore=(c.dates||[]).slice(0,i).filter(dd=>{const cl3=myClasses.find(cl=>cl.date===dd);return !(cl3&&(cl3.paused||cl3.cancelType==="paused"));}).length;
-                  const isPaid=isPausedChk?false:npBefore<paidCount;
+                  const npBefore=(c.dates||[]).slice(0,i).filter(dd=>{const cl3=myClasses.find(cl=>cl.date===dd);return !(cl3&&(cl3.paused||cl3.cancelType==="paused"))&&!(cl3&&cl3.cancelled&&cl3.cancelType==="cancelled");}).length;
+                  const isPaid=(isPausedChk||isCancelledClass)?false:npBefore<paidCount;
                   const isPast=d<=TODAY_DATE;
                   const clsForDate=myClasses.find(cl=>cl.date===d);
                   const isPaused=!!(clsForDate&&(clsForDate.paused||clsForDate.cancelType==="paused"));
