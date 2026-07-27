@@ -2846,8 +2846,12 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             const clsD=myClasses.find(cl=>cl.date===d);
             return !(clsD&&(clsD.paused||clsD.cancelType==="paused"));
           });
+          const hasPausedDates=(c.dates||[]).some(d=>{
+            const clsD=myClasses.find(cl=>cl.date===d);
+            return clsD&&(clsD.paused||clsD.cancelType==="paused");
+          });
           const allRealized=nonPausedDates.length>0&&nonPausedDates.every(d=>isClassDone(d,"23:59"));
-          if(allRealized) return false;
+          if(allRealized&&!hasPausedDates) return false;
         }
         return true;
       }
@@ -3523,8 +3527,12 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
                 const cl=myClassesH.find(cls=>cls.date===d);
                 return !(cl&&(cl.paused||cl.cancelType==="paused"));
               });
+              const hasPaused=(c.dates||[]).some(d=>{
+                const cl=myClassesH.find(cls=>cls.date===d);
+                return cl&&(cl.paused||cl.cancelType==="paused");
+              });
               const allDone=npDates.length>0&&npDates.every(d=>isClassDone(d,"23:59"));
-              if(allDone) return false;
+              if(allDone&&!hasPaused) return false;
             }
             return true;
           });
