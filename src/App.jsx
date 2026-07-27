@@ -3194,7 +3194,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               else if(!d.isPast&&d.date>=TODAY_DATE) cols4.programada++;
             });
             const cols=[
-              {n:cols4.noPagada,label:"No Pagada",color:"#C62828",bg:"#FFEBEE"},
+              {n:cols4.noPagada,label:"Pendiente",color:"#C62828",bg:"#FFEBEE"},
               {n:cols4.pagada,label:"Pagada",color:"#2E7D32",bg:"#EDFBEC"},
               {n:cols4.programada,label:"Programada",color:C.blue2,bg:C.blueL},
               {n:cols4.realizada,label:"Realizada",color:"#555",bg:"#F5F5F5"},
@@ -3351,7 +3351,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               else{leftBg="#FFF8E1";leftColor="#F57F17";leftLabel="Programada";}
               const rightBg=isPausedItem?"#FFF3E0":isPaid?"#E8F5E9":"#FFEBEE";
               const rightColor=isPausedItem?"#E65100":isPaid?"#2E7D32":"#C62828";
-              const rightLabel=isPausedItem?"⏸ Pausada":isPaid?"✓ Pagada":"No Pagada";
+              const rightLabel=isPausedItem?"⏸ Pausada":isPaid?"✓ Pagada":"Pendiente";
               return (
                 <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid #E3F2FD"}}>
                   <div style={{width:28,height:28,borderRadius:"50%",background:isPausedItem?"#FFF3E0":isCancelled?"#FFF0F0":isReprogWithDate?"#E8F5E9":isReprogNoDate?"#E3F2FD":C.blueL,border:"2px solid "+(isPausedItem?"#E65100":isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":"#1976D2"),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
@@ -3582,7 +3582,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
           const aReprogramar=allDatesForStudent.filter(d=>d.isReprogNoDate).length;
           const pausadas=allDatesForStudent.filter(d=>d.isPaused).length;
           const cols=[
-            {n:noPagadas,label:"No Pagada",color:"#C62828",bg:"#FFEBEE"},
+            {n:noPagadas,label:"Pendiente",color:"#C62828",bg:"#FFEBEE"},
             {n:pagadas,label:"Pagada",color:"#2E7D32",bg:"#EDFBEC"},
             {n:programadas,label:"Programada",color:C.blue2,bg:C.blueL},
             {n:realizadas,label:"Realizada",color:"#555",bg:"#F5F5F5"},
@@ -4681,7 +4681,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
               const programada=deduped.filter(d=>!d.isGiven&&d.date>TODAY_DATE).length;
               const realizada=deduped.filter(d=>d.isGiven||d.date<=TODAY_DATE).length;
               const boxes=[
-                {label:"No Pagada",val:noPagada,bg:"#FFEBEE",color:"#C62828"},
+                {label:"Pendiente",val:noPagada,bg:"#FFEBEE",color:"#C62828"},
                 {label:"Pagada",val:pagada,bg:C.greenL,color:"#2E7D32"},
                 {label:"Programada",val:programada,bg:C.blueL,color:C.blue2},
                 {label:"Realizada",val:realizada,bg:"#F5F5F5",color:"#616161"},
@@ -4792,7 +4792,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                         let rightBg,rightColor,rightLabel;
                         if(item.isPaused){rightBg="#FFF3E0";rightColor="#E65100";rightLabel="Pausada";}
                         else if(item.isPaid){rightBg="#E8F5E9";rightColor="#2E7D32";rightLabel="Pagada";}
-                        else{rightBg="#FFEBEE";rightColor="#C62828";rightLabel="No Pagada";}
+                        else{rightBg="#FFEBEE";rightColor="#C62828";rightLabel="Pendiente";}
                         const cBg=item.isPaused?"#FFF3E0":item.isCancelledClass?"#FFF0F0":item.isReprogWithDate?"#E8F5E9":item.isReprogNoDate?"#E3F2FD":C.blueL;
                         const cCol=item.isPaused?"#E65100":item.isCancelledClass?"#C62828":item.isReprogWithDate?"#2E7D32":item.isReprogNoDate?"#1565C0":C.blue2;
                         return (
