@@ -2902,7 +2902,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         const wasPresent=attEntry?(attEntry.present||[]).includes(s.id):false;
         const wasAbsent=attEntry?(!wasPresent&&!wasAusenteDada&&!wasAusenteReprog):false;
         // Cancelled classes count as "given" for billing, paused classes DON'T count
-        const isGiven=isPaused?false:isCancelled?true:isReprogWithDate?true:isReprogNoDate?false:wasAusenteReprog?false:attEntry?(wasPresent||wasAusenteDada):isClassDone(ds,classOnDate?.timeEnd);
+        const isGiven=isPaused?false:isCancelled?false:isReprogWithDate?true:isReprogNoDate?false:wasAusenteReprog?false:attEntry?(wasPresent||wasAusenteDada):isClassDone(ds,classOnDate?.timeEnd);
         let status;
         if(isPaidDate){status=isGiven?"dada":"adar";}
         else{status=isGiven?"dada_unpaid":"pendiente";}
@@ -3562,7 +3562,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
               const isDone=isClassDone(d,timeEnd);
               const wasPresent=attEntry?(attEntry.present||[]).includes(s.id):false;
               const wasAusenteDada=attEntry?(attEntry.ausente_dada||[]).includes(s.id):false;
-              const isGiven=isPaused?false:isCancelled?true:isReprogWithDate?true:isReprogNoDate?false:attEntry?(wasPresent||wasAusenteDada):isDone;
+              const isGiven=isPaused?false:isCancelled?false:isReprogWithDate?true:isReprogNoDate?false:attEntry?(wasPresent||wasAusenteDada):isDone;
               return {date:d,isPaid,isGiven,isPast:isDone,isCancelled,isReprogWithDate,isReprogNoDate,isPaused,rescheduledTo:cancelInfo.rescheduledTo||null};
             });
           });
