@@ -3071,7 +3071,8 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
       const _npCount=_pi.filter(x=>!x.paused).length;
       const _firstPausedIdx=_pi.findIndex(x=>x.paused);
       const _allAfterFirstPaused=_firstPausedIdx>=0&&_pi.slice(_firstPausedIdx).every(x=>x.paused);
-      if(_pCount>0&&_npCount>0&&!_allAfterFirstPaused){
+      const _alreadyExtended=dates.length>=(effectiveTotal+_pCount);
+      if(_pCount>0&&_npCount>0&&!_allAfterFirstPaused&&!_alreadyExtended){
         const _lastD=dates[dates.length-1];
         const _pCls=myClasses.find(cl=>(cl.occurrences||[]).some(od=>dates.includes(od)));
         if(_pCls&&_pCls.occurrences){
@@ -3736,7 +3737,8 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             const _pC2=_pi2.filter(x=>x.paused).length;
             const _npC2=_pi2.filter(x=>!x.paused).length;
             const _fpi2=_pi2.findIndex(x=>x.paused);const _afp2=_fpi2>=0&&_pi2.slice(_fpi2).every(x=>x.paused);
-            if(_pC2>0&&_npC2>0&&!_afp2){
+            const _ae2=dates.length>=(c.total||8)+_pC2;
+            if(_pC2>0&&_npC2>0&&!_afp2&&!_ae2){
               const _ld2=dates[dates.length-1];
               const _pc2=myClassesH.find(cl=>(cl.occurrences||[]).some(od=>dates.includes(od)));
               if(_pc2&&_pc2.occurrences){
@@ -4961,7 +4963,8 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
               const _nonPausedCount=allDates.filter(x=>!x.isPaused).length;
               const _fpIdx2=allDates.findIndex(x=>x.isPaused);
               const _allFutPaused=_fpIdx2>=0&&allDates.slice(_fpIdx2).every(x=>x.isPaused);
-              if(_pausedCount>0&&_nonPausedCount>0&&!_allFutPaused){
+              const _ae3=allDates.length>=8+_pausedCount;
+              if(_pausedCount>0&&_nonPausedCount>0&&!_allFutPaused&&!_ae3){
                 const _lastD=allDates[allDates.length-1]?.date;
                 if(_lastD){
                   const _extraDates=myClasses.filter(cl=>cl.date>_lastD&&(cl.students||[]).includes(student.id)).map(cl=>cl.date).sort().slice(0,_pausedCount);
