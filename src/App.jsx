@@ -1695,6 +1695,86 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
   }
 }
 
+function ResumeModal({ cls, onClose, onResume, students=[], classes=[] }) {
+  const [resumeDate,setResumeDate]=useState("");
+  const [warning,setWarning]=useState("");
+
+  const studentId=(cls.students||[])[0];
+  const student=students.find(s=>s.id===studentId);
+  const combos=(student?.combos||[]).filter(c=>c.total>0&&c.packType!=="mensual");
+  const lastCombo=combos[combos.length-1];
+
+  // Count total paused dates in combo
+  const dc=cls.dateCancellations||{};
+  const pausedDates=(lastCombo?.dates||[]).filter(d=>dc[d]&&dc[d].cancelType==="paused");
+  const pausedCount=pausedDates.length;
+
+  const validate=(date)=>{
+    setResumeDate(date);
+    if(!date){setWarning("");return;}
+    // Check if there are already non-paused programmed dates after resume date
+    const existingAfter=(lastCombo?.dates||[]).filter(d=>d>=date&&(!dc[d]||dc[d].cancelType!=="paused"));
+    if(existingAfter.length>0){
+      setWarning("Ya existen "+existingAfter.length+" clases programadas para este paquete despu\u00e9s de la fecha seleccionada. Revisa el calendario antes de continuar.");
+    } else {
+      setWarning("");
+    }
+  };
+
+  const handleConfirm=()=>{
+    if(!resumeDate) return;
+    onResume({cls,resumeDate,pausedCount});
+    onClose();
+  };
+
+  return (
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.5)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
+      <div style={{background:"#F5F7FF",borderRadius:"24px 24px 0 0",padding:"28px 20px",paddingBottom:"calc(40px + env(safe-area-inset-bottom, 34px))",width:"100%",maxHeight:"90vh",overflowY:"auto",boxSizing:"border-box"}}>
+        <div style={{width:40,height:4,borderRadius:2,background:"#DDE3F0",margin:"0 auto 20px"}}></div>
+        <div style={{fontWeight:900,fontSize:19,color:"#0D1B4B",marginBottom:4}}>\u25b6 Reanudar paquete</div>
+        <div style={{fontSize:13,color:"#6B7BAD",marginBottom:6}}>{cls.title}</div>
+        <div style={{fontSize:12,color:"#E65100",background:"#FFF3E0",borderRadius:10,padding:"8px 12px",marginBottom:16,fontWeight:600}}>\u23f8 {pausedCount} clases pausadas</div>
+
+        {/* Paused dates list */}
+        <div style={{marginBottom:16,maxHeight:120,overflowY:"auto"}}>
+          {pausedDates.map((d,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"4px 0",fontSize:12,color:"#E65100"}}>
+              <div style={{width:6,height:6,borderRadius:"50%",background:"#E65100",flexShrink:0}}></div>
+              {fmtDate(d)} — Pausada
+            </div>
+          ))}
+        </div>
+
+        {/* Date picker */}
+        <div style={{marginBottom:16}}>
+          <label style={{fontSize:13,color:"#2E7D32",fontWeight:700,display:"block",marginBottom:6}}>Fecha de reanudaci\u00f3n:</label>
+          <input type="date" value={resumeDate} onChange={e=>validate(e.target.value)} style={{width:"100%",padding:"14px 12px",borderRadius:12,border:"none",fontSize:14,boxSizing:"border-box",background:"#E8F5E9",color:"#0D1B4B",outline:"none"}}/>
+        </div>
+
+        {/* Warning */}
+        {warning&&(
+          <div style={{background:"#FFF3E0",border:"1.5px solid #FFB74D",borderRadius:12,padding:"12px 14px",marginBottom:16,fontSize:12,color:"#E65100",lineHeight:1.4}}>
+            \u26a0\ufe0f {warning}
+          </div>
+        )}
+
+        {/* Info */}
+        {resumeDate&&!warning&&(
+          <div style={{background:"#E8F5E9",borderRadius:12,padding:"12px 14px",marginBottom:16,fontSize:12,color:"#2E7D32",lineHeight:1.4}}>
+            Se generar\u00e1n <b>{pausedCount} clases nuevas</b> a partir del <b>{fmtDate(resumeDate)}</b> respetando el horario habitual.
+          </div>
+        )}
+
+        {/* Buttons */}
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={onClose} style={{flex:1,padding:"14px",borderRadius:14,border:"1.5px solid #DDE3F0",background:"#fff",cursor:"pointer",fontSize:14,color:"#6B7BAD",fontWeight:700}}>Cancelar</button>
+          <button onClick={handleConfirm} disabled={!resumeDate} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:!resumeDate?"#ccc":"linear-gradient(135deg,#2E7D32,#43A047)",color:"#fff",cursor:!resumeDate?"not-allowed":"pointer",fontSize:14,fontWeight:800,opacity:!resumeDate?0.5:1}}>\u25b6 Reanudar paquete</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PauseModal({ cls, onClose, onPause }) {
   const [resumeDate,setResumeDate]=useState("");
   const [noDate,setNoDate]=useState(false);
@@ -2139,6 +2219,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
   const [reprog,setReprog]=useState(pendingReprog||null);
   const [showCancel,setShowCancel]=useState(null);
   const [showPause,setShowPause]=useState(null);
+  const [showResume,setShowResume]=useState(null);
   // Auto-open reprog modal if navigated from dashboard
   useEffect(()=>{if(pendingReprog){setShowCancel(pendingReprog);onClearPendingReprog&&onClearPendingReprog();}},[pendingReprog]); // class to reschedule
 
@@ -2181,7 +2262,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
       </div>
       {c.date>=WEEK_AGO&&<div style={{display:"flex",gap:8,marginBottom:8}}>
         <button onClick={()=>{
-          if(isPaused){onSaveClass({...c,cancelled:false,cancelType:null,paused:false,_resuming:true,applyToAll:false},true);}
+          if(isPaused){setShowResume(c);}
           else{setShowPause(c);}
         }} style={{flex:1,padding:"10px",borderRadius:10,border:"none",background:isPaused?"linear-gradient(135deg,#2E7D32,#43A047)":"linear-gradient(135deg,#E65100,#FF8F00)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>{isPaused?"▶ Reanudar clase":"⏸ Pausar clase"}</button>
       </div>}
@@ -2354,7 +2435,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                     {[
                       {label:"Editar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,action:()=>{setEditCls(c);setHighlightCls(null);},disabled:false,color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
                       {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt({...c,attendanceLog:c.attendanceLog||[]});setHighlightCls(null);},disabled:isNextComboPending(c,students),color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
-                      {label:c.paused||c.cancelType==="paused"?"▶ Reanudar":"⏸ Pausar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{c.paused||c.cancelType==="paused"?<polygon points="5 3 19 12 5 21 5 3"/>:<g><line x1="10" y1="4" x2="10" y2="20"/><line x1="14" y1="4" x2="14" y2="20"/></g>}</svg>,action:()=>{if(c.paused||c.cancelType==="paused"){onSaveClass({...c,cancelled:false,cancelType:null,paused:false,_resuming:true,applyToAll:false},true);}else{setShowPause(c);}setHighlightCls(null);},disabled:c.date<WEEK_AGO,color:c.date<WEEK_AGO?"#ccc":c.paused||c.cancelType==="paused"?"linear-gradient(135deg,#2E7D32,#43A047)":"linear-gradient(135deg,#E65100,#FF8F00)"},
+                      {label:c.paused||c.cancelType==="paused"?"▶ Reanudar":"⏸ Pausar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{c.paused||c.cancelType==="paused"?<polygon points="5 3 19 12 5 21 5 3"/>:<g><line x1="10" y1="4" x2="10" y2="20"/><line x1="14" y1="4" x2="14" y2="20"/></g>}</svg>,action:()=>{if(c.paused||c.cancelType==="paused"){setShowResume(c);}else{setShowPause(c);}setHighlightCls(null);},disabled:c.date<WEEK_AGO,color:c.date<WEEK_AGO?"#ccc":c.paused||c.cancelType==="paused"?"linear-gradient(135deg,#2E7D32,#43A047)":"linear-gradient(135deg,#E65100,#FF8F00)"},
                       {label:c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo?"Asignar fecha":c.cancelled&&c.cancelType==="cancelled_reprog"&&c.rescheduledTo?"Volver a fecha original":c.cancelled?"Reactivar":"Reprogramar / Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="15" x2="15" y2="15"/></svg>,action:()=>{if(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo){setShowCancel(c);}else if(c.cancelled){onSaveClass({...c,cancelled:false,cancelType:null,rescheduledTo:null,applyToAll:false},true);}else{setShowCancel(c);}setHighlightCls(null);},disabled:c.date<WEEK_AGO,color:c.date<WEEK_AGO?"#ccc":c.cancelled&&!c.rescheduledTo?"linear-gradient(135deg,#1565C0,#42A5F5)":c.cancelled?"linear-gradient(135deg,#1565C0,#42A5F5)":"linear-gradient(135deg,#E65100,#FF8F00)"},
                     ].map(btn=>(
                       <button key={btn.label} onClick={btn.disabled?null:btn.action} disabled={btn.disabled} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"13px",borderRadius:14,border:"none",background:btn.disabled?"#E0E0E0":(btn.color||"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"),color:btn.disabled?"#9E9E9E":"#fff",fontSize:13,cursor:btn.disabled?"not-allowed":"pointer",fontWeight:700,boxShadow:btn.disabled?"none":"0 4px 12px rgba(0,0,0,0.15)"}}>
@@ -2550,7 +2631,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                         {[
                           {label:"Editar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,action:()=>{setEditCls(c);setHighlightCls(null);},color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
                           {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt({...c,attendanceLog:c.attendanceLog||[]});setHighlightCls(null);},color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
-                          {label:c.paused||c.cancelType==="paused"?"▶ Reanudar":"⏸ Pausar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{c.paused||c.cancelType==="paused"?<polygon points="5 3 19 12 5 21 5 3"/>:<g><line x1="10" y1="4" x2="10" y2="20"/><line x1="14" y1="4" x2="14" y2="20"/></g>}</svg>,action:()=>{if(c.paused||c.cancelType==="paused"){onSaveClass({...c,cancelled:false,cancelType:null,paused:false,_resuming:true,applyToAll:false},true);}else{setShowPause(c);}setHighlightCls(null);},disabled:c.date<WEEK_AGO,color:c.date<WEEK_AGO?"#ccc":c.paused||c.cancelType==="paused"?"linear-gradient(135deg,#2E7D32,#43A047)":"linear-gradient(135deg,#E65100,#FF8F00)"},
+                          {label:c.paused||c.cancelType==="paused"?"▶ Reanudar":"⏸ Pausar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{c.paused||c.cancelType==="paused"?<polygon points="5 3 19 12 5 21 5 3"/>:<g><line x1="10" y1="4" x2="10" y2="20"/><line x1="14" y1="4" x2="14" y2="20"/></g>}</svg>,action:()=>{if(c.paused||c.cancelType==="paused"){setShowResume(c);}else{setShowPause(c);}setHighlightCls(null);},disabled:c.date<WEEK_AGO,color:c.date<WEEK_AGO?"#ccc":c.paused||c.cancelType==="paused"?"linear-gradient(135deg,#2E7D32,#43A047)":"linear-gradient(135deg,#E65100,#FF8F00)"},
                           {label:c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo?"Asignar fecha":c.cancelled&&c.cancelType==="cancelled_reprog"&&c.rescheduledTo?"Volver a fecha original":c.cancelled?"Reactivar":"Reprogramar / Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="15" x2="15" y2="15"/></svg>,action:()=>{if(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo){setShowCancel(c);}else if(c.cancelled){onSaveClass({...c,cancelled:false,cancelType:null,rescheduledTo:null,applyToAll:false},true);}else{setShowCancel(c);}setHighlightCls(null);},disabled:c.date<WEEK_AGO,color:c.date<WEEK_AGO?"#ccc":c.cancelled&&!c.rescheduledTo?"linear-gradient(135deg,#1565C0,#42A5F5)":c.cancelled?"linear-gradient(135deg,#1565C0,#42A5F5)":"linear-gradient(135deg,#E65100,#FF8F00)"},
                         ].map(btn=>(
                           <button key={btn.label} onClick={btn.action} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"13px",borderRadius:14,border:"none",background:btn.color||"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)",color:"#fff",fontSize:13,cursor:"pointer",fontWeight:700,boxShadow:"0 4px 12px rgba(0,0,0,0.15)"}}>
@@ -2619,6 +2700,44 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
           </div>
         </div>
       )}
+      {showResume&&<ResumeModal cls={showResume} onClose={()=>setShowResume(null)} students={students} classes={classes} onResume={({cls:rCls,resumeDate:rDate,pausedCount:pCount})=>{
+        // Generate new dates from resumeDate respecting class schedule
+        const DAY_MAP_R={"Dom":0,"Lun":1,"Mar":2,"Mie":3,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+        const dowSet_R=new Set((rCls.days||[]).map(d=>DAY_MAP_R[d]));
+        const newDates=[];
+        let cur_R=new Date(rDate+"T12:00:00");
+        while(newDates.length<pCount){
+          if(dowSet_R.size===0||dowSet_R.has(cur_R.getDay())){
+            const ds_R=cur_R.getFullYear()+"-"+String(cur_R.getMonth()+1).padStart(2,"0")+"-"+String(cur_R.getDate()).padStart(2,"0");
+            newDates.push(ds_R);
+          }
+          cur_R.setDate(cur_R.getDate()+1);
+        }
+        // Add new dates to student combo
+        const studentIds=(rCls.students||[]);
+        setStudents(prev=>prev.map(s=>{
+          if(!studentIds.includes(s.id)) return s;
+          const combos2=[...(s.combos||[])];
+          let lastIdx=-1;
+          for(let ci=combos2.length-1;ci>=0;ci--){
+            if(combos2[ci].dates&&combos2[ci].packType!=="mensual"){lastIdx=ci;break;}
+          }
+          if(lastIdx===-1) return s;
+          const combo=combos2[lastIdx];
+          const combined=[...new Set([...combo.dates,...newDates])].sort();
+          combos2[lastIdx]={...combo,dates:combined};
+          return {...s,combos:combos2};
+        }));
+        // Add new dates to class occurrences
+        const realId=rCls._seriesId||rCls.id;
+        setClasses(prev=>prev.map(c=>{
+          if(c.id!==realId) return c;
+          const occ=[...(c.occurrences||[])];
+          newDates.forEach(d=>{if(!occ.includes(d))occ.push(d);});
+          occ.sort();
+          return {...c,occurrences:occ};
+        }));
+      }}/>}
       {showPause&&<PauseModal cls={showPause} onClose={()=>setShowPause(null)} onPause={({cls:pauseCls,resumeDate:rDate})=>{
         if(rDate){
           // Pause with resume date: pause dates from cls.date to rDate, resume after
