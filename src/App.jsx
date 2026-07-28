@@ -193,7 +193,8 @@ function isNextComboPending(cls, students) {
     const dc=cls.dateCancellations||{};
     const pausedInCombo=allDates.filter(d=>dc[d]&&dc[d].cancelType==="paused").length;
     const nonPausedInCombo=allDates.filter(d=>!dc[d]||dc[d].cancelType!=="paused").length;
-    const allFutPaused=allDates.filter(d=>d>=TODAY_DATE).length>0&&allDates.filter(d=>d>=TODAY_DATE).every(d=>dc[d]&&dc[d].cancelType==="paused");
+    const _fpIdx=allDates.findIndex(d=>dc[d]&&dc[d].cancelType==="paused");
+    const allFutPaused=_fpIdx>=0&&allDates.slice(_fpIdx).every(d=>dc[d]&&dc[d].cancelType==="paused");
     // Extend effective last date by paused count using class occurrences
     let effectiveLastDate=lastDate;
     if(pausedInCombo>0&&nonPausedInCombo>0&&!allFutPaused){
@@ -2950,8 +2951,9 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
       const _pi=dates.map(d=>{const cl=myClasses.find(x=>x.date===d);return{date:d,paused:!!(cl&&(cl.paused||cl.cancelType==="paused"))};});
       const _pCount=_pi.filter(x=>x.paused).length;
       const _npCount=_pi.filter(x=>!x.paused).length;
-      const _allFutPaused=_pi.filter(x=>x.date>=TODAY_DATE).length>0&&_pi.filter(x=>x.date>=TODAY_DATE).every(x=>x.paused);
-      if(_pCount>0&&_npCount>0&&!_allFutPaused){
+      const _firstPausedIdx=_pi.findIndex(x=>x.paused);
+      const _allAfterFirstPaused=_firstPausedIdx>=0&&_pi.slice(_firstPausedIdx).every(x=>x.paused);
+      if(_pCount>0&&_npCount>0&&!_allAfterFirstPaused){
         const _lastD=dates[dates.length-1];
         const _pCls=myClasses.find(cl=>(cl.occurrences||[]).some(od=>dates.includes(od)));
         if(_pCls&&_pCls.occurrences){
@@ -3615,7 +3617,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             const _pi2=dates.map(d=>{const cl=myClassesH.find(x=>x.date===d);return{date:d,paused:!!(cl&&(cl.paused||cl.cancelType==="paused"))};});
             const _pC2=_pi2.filter(x=>x.paused).length;
             const _npC2=_pi2.filter(x=>!x.paused).length;
-            const _afp2=_pi2.filter(x=>x.date>=TODAY_DATE).length>0&&_pi2.filter(x=>x.date>=TODAY_DATE).every(x=>x.paused);
+            const _fpi2=_pi2.findIndex(x=>x.paused);const _afp2=_fpi2>=0&&_pi2.slice(_fpi2).every(x=>x.paused);
             if(_pC2>0&&_npC2>0&&!_afp2){
               const _ld2=dates[dates.length-1];
               const _pc2=myClassesH.find(cl=>(cl.occurrences||[]).some(od=>dates.includes(od)));
@@ -4839,7 +4841,8 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
               // Dynamic extension for paused dates
               const _pausedCount=allDates.filter(x=>x.isPaused).length;
               const _nonPausedCount=allDates.filter(x=>!x.isPaused).length;
-              const _allFutPaused=allDates.filter(x=>x.date>=TODAY_DATE).length>0&&allDates.filter(x=>x.date>=TODAY_DATE).every(x=>x.isPaused);
+              const _fpIdx2=allDates.findIndex(x=>x.isPaused);
+              const _allFutPaused=_fpIdx2>=0&&allDates.slice(_fpIdx2).every(x=>x.isPaused);
               if(_pausedCount>0&&_nonPausedCount>0&&!_allFutPaused){
                 const _lastD=allDates[allDates.length-1]?.date;
                 if(_lastD){
