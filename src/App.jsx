@@ -1043,6 +1043,21 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
       return {cls:c,reason:"reprog",students:(log?.ausente_reprog||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean)};
     }).filter(x=>x.students.length>0),
   ];
+  // Paused packages alert
+  const pauseAlerts=[];
+  const seenPaused=new Set();
+  classes.filter(c=>c.paused||c.cancelType==="paused").forEach(c=>{
+    (c.students||[]).forEach(sid=>{
+      const key=sid+"_"+(c._seriesId||c.id);
+      if(seenPaused.has(key)) return;
+      seenPaused.add(key);
+      const st=students.find(s=>s.id===sid);
+      if(!st) return;
+      const dc=c.dateCancellations||{};
+      const pausedCount=Object.keys(dc).filter(d=>dc[d].cancelType==="paused").length;
+      if(pausedCount>0) pauseAlerts.push({student:st,cls:c,pausedCount});
+    });
+  });
   const todayC=classes.filter(c=>c.date===TODAY_DATE&&!c.cancelled&&!isClassDone(c.date,c.timeEnd));
   const mN=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
   const todayLabel=new Date(TODAY_DATE+"T12:00:00").getDate()+" de "+mN[new Date(TODAY_DATE+"T12:00:00").getMonth()];
@@ -1146,6 +1161,26 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
               </div>
             ))}
             {reprogAlerts.length>4&&<div style={{fontSize:12,color:C.mutedDark,textAlign:"center",marginBottom:4}}>+{reprogAlerts.length-4} más</div>}
+          </div>
+        )}
+
+        {/* Paused packages alert */}
+        {pauseAlerts.length>0&&(
+          <div style={{marginTop:8,marginBottom:8}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+              <div style={{fontSize:13,fontWeight:800,color:C.text}}>⏸ Paquetes pausados</div>
+              <button onClick={()=>onNavigate("agenda")} style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:C.blue2,fontWeight:600}}>Ver agenda →</button>
+            </div>
+            {pauseAlerts.slice(0,4).map(({student:st,cls:pc,pausedCount:pCnt},i)=>(
+              <div key={i} onClick={()=>onNavigate("cobros")} style={{background:"#FFF3E0",border:"1.5px solid #FFB74D",borderRadius:12,padding:"10px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
+                <div style={{width:36,height:36,borderRadius:12,background:"linear-gradient(135deg,#E65100,#FF8F00)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,color:"#fff",flexShrink:0}}>⏸</div>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:13,fontWeight:700,color:C.text}}>{st.name}</div>
+                  <div style={{fontSize:11,color:"#E65100",fontWeight:600}}>{pCnt} clases pausadas · {pc.title}</div>
+                </div>
+              </div>
+            ))}
+            {pauseAlerts.length>4&&<div style={{fontSize:12,color:C.mutedDark,textAlign:"center",marginBottom:4}}>+{pauseAlerts.length-4} más</div>}
           </div>
         )}
 
