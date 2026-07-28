@@ -3364,7 +3364,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               ))}
             </div>
           </div>
-          <button onClick={handleConfirm} style={{width:"100%",padding:"16px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:"#fff",fontSize:15,cursor:"pointer",fontWeight:900}}>
+          <button onClick={handleConfirm} disabled={parseInt(localClasses)===0&&pagoTipo==="clases"} style={{width:"100%",padding:"16px",borderRadius:14,border:"none",background:(parseInt(localClasses)===0&&pagoTipo==="clases")?"#ccc":"linear-gradient(135deg,#52C048,#65CE5A)",color:"#fff",fontSize:15,cursor:(parseInt(localClasses)===0&&pagoTipo==="clases")?"not-allowed":"pointer",fontWeight:900,opacity:(parseInt(localClasses)===0&&pagoTipo==="clases")?0.5:1}}>
             ✓ Confirmar pago
           </button>
         </div>
@@ -3456,7 +3456,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
                     const alreadyPaid=d.status==="adar"||d.status==="dada";
                     return !alreadyPaid;
                   }).length;
-                  const maxUnpaid=totalUnpaidAll>0?totalUnpaidAll:20;                  return (
+                  const maxUnpaid=totalUnpaidAll;                  return (
                     <div style={{display:"flex",alignItems:"center",background:C.blueL,borderRadius:12,overflow:"hidden"}}>
                       <button onClick={()=>setLocalClasses(Math.max(0,(parseInt(localClasses)||0)-1))} style={{width:44,height:46,border:"none",background:"#2C5EF7",color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>◀</button>
                       <div style={{flex:1,textAlign:"center",fontSize:22,fontWeight:800,color:"#1A237E"}}>{parseInt(localClasses)||0}</div>
