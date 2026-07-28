@@ -4313,26 +4313,21 @@ function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], send
     const diffDays=Math.floor((today-nextDue)/(1000*60*60*24))+1;
     return !isPaid||diffDays>0;
   });
-  // Summary
+  // Summary stats
+  const activeStudents=allList.filter(s=>s.status==="active").length;
   const enMora=allList.filter(s=>{if(s.suspended)return false;const r=getRem(s,classes);return r!==null&&r<0;});
-  const programadas=allList.filter(s=>{const r=getRem(s,classes);return r!==null&&r>0;}).length;
-  const alDia=allList.length-enMora.length-programadas;
+  const mensuales=allList.filter(s=>(s.combos||[]).some(c=>c.packType==="mensual")).length;
+  const paquetes=allList.filter(s=>(s.combos||[]).some(c=>c.packType==="combo"&&c.total>1)).length;
+  const individuales=allList.filter(s=>(s.combos||[]).some(c=>c.packType==="individual"||(c.total===1))).length;
   return (
     <div style={{flex:1,overflowY:"auto",padding:"0 16px",paddingBottom:"calc(120px + env(safe-area-inset-bottom, 34px))"}}>
       {allList.length>0&&(
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:16,marginTop:8}}>
-          <div style={{background:"#FFEBEE",borderRadius:14,padding:"12px 10px",textAlign:"center"}}>
-            <div style={{fontSize:22,fontWeight:900,color:"#C62828"}}>{enMora.length}</div>
-            <div style={{fontSize:10,fontWeight:700,color:"#C62828",marginTop:2}}>EN MORA</div>
-          </div>
-          <div style={{background:C.blueL,borderRadius:14,padding:"12px 10px",textAlign:"center"}}>
-            <div style={{fontSize:22,fontWeight:900,color:C.blue2}}>{programadas}</div>
-            <div style={{fontSize:10,fontWeight:700,color:C.blue2,marginTop:2}}>PROGRAMADAS</div>
-          </div>
-          <div style={{background:"#EDFBEC",borderRadius:14,padding:"12px 10px",textAlign:"center"}}>
-            <div style={{fontSize:22,fontWeight:900,color:"#2E7D32"}}>{alDia}</div>
-            <div style={{fontSize:10,fontWeight:700,color:"#2E7D32",marginTop:2}}>AL DÍA</div>
-          </div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12,marginTop:8}}>
+          <span style={{fontSize:11,fontWeight:700,padding:"5px 10px",borderRadius:20,background:C.blueL,color:C.blue2}}>{activeStudents} Activos</span>
+          {enMora.length>0&&<span style={{fontSize:11,fontWeight:700,padding:"5px 10px",borderRadius:20,background:"#FFEBEE",color:"#C62828"}}>{enMora.length} En mora</span>}
+          {mensuales>0&&<span style={{fontSize:11,fontWeight:700,padding:"5px 10px",borderRadius:20,background:"#E8F5E9",color:"#2E7D32"}}>{mensuales} Mensuales</span>}
+          {paquetes>0&&<span style={{fontSize:11,fontWeight:700,padding:"5px 10px",borderRadius:20,background:"#FFF3E0",color:"#E65100"}}>{paquetes} Paquetes</span>}
+          {individuales>0&&<span style={{fontSize:11,fontWeight:700,padding:"5px 10px",borderRadius:20,background:"#F3E5F5",color:"#7B1FA2"}}>{individuales} Individuales</span>}
         </div>
       )}
       <div style={{position:"relative",marginBottom:12}}>
