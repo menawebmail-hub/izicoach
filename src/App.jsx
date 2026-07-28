@@ -4895,6 +4895,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                   const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
                   const clsChk=myClasses.find(cl=>cl.date===d);
                   const isPausedChk=!!(clsChk&&(clsChk.paused||clsChk.cancelType==="paused"));
+                  const isCancelledClass=!!(clsChk&&clsChk.cancelled&&clsChk.cancelType==="cancelled");
                   const npBefore=(c.dates||[]).slice(0,i).filter(dd=>{const cl3=myClasses.find(cl=>cl.date===dd);return !(cl3&&(cl3.paused||cl3.cancelType==="paused"))&&!(cl3&&cl3.cancelled&&cl3.cancelType==="cancelled");}).length;
                   const isPaid=(isPausedChk||isCancelledClass)?false:npBefore<paidCount;
                   const isPast=d<=TODAY_DATE;
@@ -4972,12 +4973,12 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                   const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
                   const clsChk=myClasses.find(cl=>cl.date===d);
                   const isPausedChk=!!(clsChk&&(clsChk.paused||clsChk.cancelType==="paused"));
+                  const isCancelledClass=!!(clsChk&&clsChk.cancelled&&clsChk.cancelType==="cancelled");
                   const npBefore=(c.dates||[]).slice(0,i).filter(dd=>{const cl3=myClasses.find(cl=>cl.date===dd);return !(cl3&&(cl3.paused||cl3.cancelType==="paused"))&&!(cl3&&cl3.cancelled&&cl3.cancelType==="cancelled");}).length;
                   const isPaid=(isPausedChk||isCancelledClass)?false:npBefore<paidCount;
                   const isPast=d<=TODAY_DATE;
                   const clsForDate=myClasses.find(cl=>cl.date===d);
                   const isPaused=!!(clsForDate&&(clsForDate.paused||clsForDate.cancelType==="paused"));
-                  const isCancelledClass=!!(clsForDate&&clsForDate.cancelled&&clsForDate.cancelType==="cancelled");
                   const isReprogWithDate=!!(clsForDate&&clsForDate.cancelled&&clsForDate.cancelType==="cancelled_reprog"&&clsForDate.rescheduledTo);
                   const isReprogNoDate=!!(clsForDate&&clsForDate.cancelled&&clsForDate.cancelType==="cancelled_reprog"&&!clsForDate.rescheduledTo);
                   const attEntry=(cls.attendanceLog||[]).find(e=>e.date===d);
