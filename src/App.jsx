@@ -5508,7 +5508,12 @@ export default function App() {
   // Wrapped setters that persist to localStorage (Supabase sync handled by debounced useEffect)
   const setStudents=(v)=>{const next=typeof v==="function"?v(students):v;
     // Guard: never allow combo dates to exceed total
-    if(Array.isArray(next)){next.forEach(s=>{(s.combos||[]).forEach(c=>{if(c.dates&&c.total&&c.dates.length>c.total){console.warn("[GUARD] "+s.name+" combo dates "+c.dates.length+" > total "+c.total+". Capping.");c.dates=c.dates.slice(0,c.total);}});});}
+    if(Array.isArray(next)){next.forEach(s=>{(s.combos||[]).forEach(c=>{if(c.dates&&c.total&&c.dates.length>c.total){
+      // Allow extra dates if there are paused dates (they need replacements)
+      const pausedInDates=c.dates.filter(d=>{const cls2=classes.find(cl=>cl.students&&cl.students.includes(s.id)&&cl.dateCancellations&&cl.dateCancellations[d]&&cl.dateCancellations[d].cancelType==="paused");return !!cls2;}).length;
+      const maxAllowed=c.total+pausedInDates;
+      if(c.dates.length>maxAllowed){console.warn("[GUARD] "+s.name+" combo dates "+c.dates.length+" > max "+maxAllowed+". Capping.");c.dates=c.dates.slice(0,maxAllowed);}
+    }});});}
     setStudentsRaw(next);lsSet("izi_students",next);};
   const setClasses=(v)=>{const next=typeof v==="function"?v(classes):v;setClassesRaw(next);lsSet("izi_classes",next);};
   const setCourts=(v)=>{const next=typeof v==="function"?v(courts):v;setCourtsRaw(next);lsSet("izi_courts",next);};
