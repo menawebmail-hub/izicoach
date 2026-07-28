@@ -185,24 +185,16 @@ function isNextComboPending(cls, students) {
     const combos=(s.combos||[]).filter(c=>c.total>0||(c.packType&&c.packType!=="mensual"));
     if(combos.length===0) return false;
     const coveredDates=new Set(combos.flatMap(c=>c.dates||[]));
+    // If the date is in the combo → not grey
     if(coveredDates.has(cls.date)) return false;
     const allDates=combos.flatMap(c=>c.dates||[]).sort();
     const lastDate=allDates[allDates.length-1]||"";
     if(!lastDate) return false;
-    // Count paused dates in combo to extend the effective range
-    const dc=cls.dateCancellations||{};
-    const pausedInCombo=allDates.filter(d=>dc[d]&&dc[d].cancelType==="paused").length;
-    const nonPausedInCombo=allDates.filter(d=>!dc[d]||dc[d].cancelType!=="paused").length;
-    const _fpIdx=allDates.findIndex(d=>dc[d]&&dc[d].cancelType==="paused");
-    const allFutPaused=_fpIdx>=0&&allDates.slice(_fpIdx).every(d=>dc[d]&&dc[d].cancelType==="paused");
-    // Extend effective last date by paused count using class occurrences
-    let effectiveLastDate=lastDate;
-    if(pausedInCombo>0&&nonPausedInCombo>0&&!allFutPaused){
-      const occ=cls.occurrences||[];
-      const extensionDates=occ.filter(d=>d>lastDate).slice(0,pausedInCombo);
-      if(extensionDates.length>0) effectiveLastDate=extensionDates[extensionDates.length-1];
-    }
-    return cls.date>effectiveLastDate||(!coveredDates.has(cls.date)&&cls.date>allDates[0]&&cls.date>effectiveLastDate);
+    // If date is after the last combo date → grey
+    if(cls.date>lastDate) return true;
+    // If date is between first and last combo date but NOT in combo → grey (gap)
+    if(cls.date>allDates[0]&&cls.date<lastDate) return true;
+    return false;
   });
 }
 function getRem(s, classes=[]) {
