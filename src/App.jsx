@@ -4411,23 +4411,15 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
             let csv="";
             if(tab==="payments"||initialTab==="payments"){
               // Export cobros by student
-              csv="Alumno,Tipo,Total Clases,Pagadas,No Pagadas,Monto,Estado Pago\n";
+              csv="Alumno,Tipo,Fecha Inicio,Total Clases,Pagadas,Pendientes,Monto,Estado Pago\n";
               students.forEach(s=>{
                 const combo=getCombo(s);
                 if(!combo) return;
                 const paidCount=combo.paidCount||0;
                 const total=combo.total||0;
                 const unpaid=Math.max(0,total-paidCount);
-                csv+='"'+s.name+'","'+(combo.packType||"combo")+'",'+total+','+paidCount+','+unpaid+','+((combo.amount||0))+','+(combo.paid?"Pagado":"Pendiente")+'\n';
-              });
-              // Add payment history
-              csv+="\nHistorial de Pagos\nAlumno,Fecha,Monto,Método,Clases\n";
-              students.forEach(s=>{
-                (s.combos||[]).forEach(c=>{
-                  (c.payments||[]).forEach(p=>{
-                    csv+='"'+s.name+'","'+p.date+'",'+p.amount+',"'+(p.method||"")+'",'+p.qty+'\n';
-                  });
-                });
+                const startDate=combo.dates&&combo.dates.length>0?combo.dates[0]:(combo.date||"—");
+                csv+='"'+s.name+'","'+(combo.packType||"combo")+'","'+startDate+'",'+total+','+paidCount+','+unpaid+','+((combo.amount||0))+','+(combo.paid?"Pagado":"Pendiente")+'\n';
               });
             } else {
               // Export monthly finances
@@ -4443,7 +4435,7 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
             const url=URL.createObjectURL(blob);
             const a=document.createElement("a");
             a.href=url;
-            a.download=(tab==="payments"?"cobros":"finanzas")+"-"+selMonth+".csv";
+            a.download=(tab==="payments"?"Combos Activos al "+TODAY_DATE:"finanzas-"+selMonth)+".csv";
             a.click();
             URL.revokeObjectURL(url);
           }} style={{padding:"10px 16px",borderRadius:12,border:"none",background:"rgba(255,255,255,0.2)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",gap:6}}>
