@@ -746,7 +746,7 @@ function StudentSearch({ students, selected, onAdd }) {
   );
 }
 
-function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, onCreateStudent, prefill, courts=[], packages=[], onAddPackage }) {
+function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, onCreateStudent, prefill, courts=[], packages=[], onAddPackage, existingClasses=[] }) {
   const [title,setTitle]=useState(""); const [court,setCourt]=useState("");
   const [sel,setSel]=useState([]);
   const [startDate,setStartDate]=useState(prefill?.date||"");
@@ -833,9 +833,22 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
         <div style={{fontWeight:900,fontSize:22,color:C.text,marginBottom:4}}>Nueva clase</div>
         <div style={{fontSize:14,color:C.mutedDark,marginBottom:20}}>{dateLabel}</div>
 
-        <div style={{marginBottom:14}}>
+        <div style={{marginBottom:14,position:"relative"}}>
           <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Título</label>
-          <input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Ej: Tenis - Mañana" style={iS}/>
+          <input value={title} onChange={e=>{setTitle(e.target.value);}} placeholder="Ej: Tenis - Mañana" style={iS} autoComplete="off"/>
+          {title.length>=2&&(()=>{
+            const suggestions=[...new Set((existingClasses||[]).map(c=>c.title))].filter(t=>t.toLowerCase().includes(title.toLowerCase())&&t.toLowerCase()!==title.toLowerCase());
+            if(suggestions.length===0) return null;
+            return (
+              <div style={{position:"absolute",top:"100%",left:0,right:0,background:C.white,border:"1.5px solid "+C.border,borderRadius:12,boxShadow:"0 4px 16px rgba(0,0,0,0.12)",zIndex:10,maxHeight:150,overflowY:"auto",marginTop:4}}>
+                {suggestions.slice(0,5).map((s,i)=>(
+                  <div key={i} onClick={()=>setTitle(s)} style={{padding:"10px 14px",cursor:"pointer",fontSize:13,fontWeight:600,color:C.text,borderBottom:i<suggestions.length-1?"1px solid "+C.border:"none"}}>
+                    {s}
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
         </div>
 
         <div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:14}}>
@@ -2779,7 +2792,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
         }
       }}/>}
       {showCancel&&<CancelReprogModal cls={showCancel} onClose={()=>setShowCancel(null)} onSave={(u)=>{onSaveClass(u,true);setShowCancel(null);}} students={students} onUpdateStudent={onUpdateStudent}/>}
-      {showNew&&<NewClassModal onClose={()=>{setShowNew(false);setGridNewTime(null);setWeekOffset(0);}} onSave={onSaveClass} students={students} dateLabel={viewMode==="month"?selLabel:weekLabel()} onCreateStudent={onAddStudent} prefill={gridNewTime||(viewMode==="month"?{date:selDay}:null)} courts={courts} packages={packages} onAddPackage={(pkg)=>{if(typeof onAddPackage==="function")onAddPackage(pkg);}}/>}
+      {showNew&&<NewClassModal onClose={()=>{setShowNew(false);setGridNewTime(null);setWeekOffset(0);}} onSave={onSaveClass} existingClasses={classes} students={students} dateLabel={viewMode==="month"?selLabel:weekLabel()} onCreateStudent={onAddStudent} prefill={gridNewTime||(viewMode==="month"?{date:selDay}:null)} courts={courts} packages={packages} onAddPackage={(pkg)=>{if(typeof onAddPackage==="function")onAddPackage(pkg);}}/>}
       {att&&<AttModal att={att} students={students} onAttendance={onAttendance} onClose={()=>setAtt(null)}/>}
     </div>
   );
@@ -6249,7 +6262,7 @@ export default function App() {
         {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification} userId={user?.id} unreadChats={unreadChats} onMarkRead={(sid)=>setUnreadChats(p=>{const n={...p};delete n[String(sid)];return n;})}/>}
         {tab==="cobros"&&<Finances students={students} classes={xClasses} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance}/>}
         {tab==="finanzas"&&<Finances students={students} classes={xClasses} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages}/>}
-        {showNewClass&&<NewClassModal onClose={()=>{setShowNewClass(false);if(classes.length===0)setTab("agenda");}} onSave={handleSaveClass} students={students} dateLabel="Nueva clase" onCreateStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])}/>}
+        {showNewClass&&<NewClassModal onClose={()=>{setShowNewClass(false);if(classes.length===0)setTab("agenda");}} onSave={handleSaveClass} existingClasses={xClasses} students={students} dateLabel="Nueva clase" onCreateStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])}/>}
         {showNewStudent&&<NewStudentModal onClose={()=>setShowNewStudent(false)} onSave={(d)=>setStudents(p=>[...p,{id:Date.now(),...d}])}/>}
         {showConfig&&<ConfigScreen onClose={()=>setShowConfig(false)} courts={courts} setCourts={setCourts} packages={packages} setPackages={setPackages} coachProfile={coachProfile} setCoachProfile={setCoachProfile}/>}
         {showInvite&&(
