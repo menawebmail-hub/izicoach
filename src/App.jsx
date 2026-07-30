@@ -1146,8 +1146,18 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
     const mc=(s.combos||[]).find(c=>c.packType==="mensual"&&c.cobroDia);
     if(!mc) return;
     const est=getMensualEstado(mc);
-    if(est.mora>0) mensualAlerts.push({student:s,mora:est.mora,pendiente:est.pendiente});
-    else if(est.pendiente>0) mensualAlerts.push({student:s,mora:0,pendiente:est.pendiente});
+    if(est.mora>0){
+      // Calculate days overdue from the oldest mora mensualidad
+      const oldestMora=est.mensualidades.find(m=>m.estado==="mora");
+      let diasV=0;
+      if(oldestMora){
+        const venc=new Date(oldestMora.fechaVencimiento+"T12:00:00");
+        const hoy=new Date(TODAY_DATE+"T12:00:00");
+        diasV=Math.floor((hoy-venc)/(1000*60*60*24));
+      }
+      mensualAlerts.push({student:s,mora:est.mora,pendiente:est.pendiente,diasVencidos:diasV});
+    }
+    else if(est.pendiente>0) mensualAlerts.push({student:s,mora:0,pendiente:est.pendiente,diasVencidos:0});
   });
   const todayC=classes.filter(c=>c.date===TODAY_DATE&&!c.cancelled&&!isClassDone(c.date,c.timeEnd));
   const mN=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
@@ -1213,12 +1223,12 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
         {mensualAlerts.filter(a=>a.mora>0).length>0&&(
           <div style={{marginTop:8,marginBottom:8}}>
             <div style={{fontSize:13,fontWeight:800,color:C.text,marginBottom:10}}>💰 Pagos mensuales vencidos</div>
-            {mensualAlerts.filter(a=>a.mora>0).slice(0,4).map(({student:st,mora:mr},i)=>(
+            {mensualAlerts.filter(a=>a.mora>0).slice(0,4).map(({student:st,mora:mr,diasVencidos:dv},i)=>(
               <div key={i} onClick={()=>onNavigate("cobros")} style={{background:"#FFEBEE",border:"1.5px solid #EF9A9A",borderRadius:12,padding:"10px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
                 <div style={{width:36,height:36,borderRadius:12,background:"linear-gradient(135deg,#C62828,#E53935)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,color:"#fff",flexShrink:0}}>💰</div>
                 <div style={{flex:1}}>
                   <div style={{fontSize:13,fontWeight:700,color:C.text}}>{st.name}</div>
-                  <div style={{fontSize:11,color:"#C62828",fontWeight:600}}>{mr} {mr===1?"mes vencido":"meses vencidos"}</div>
+                  <div style={{fontSize:11,color:"#C62828",fontWeight:600}}>{dv} {dv===1?"día vencido":"días vencidos"}</div>
                 </div>
               </div>
             ))}
@@ -3522,11 +3532,25 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
 
 
           {/* Due date banner for mensual */}
-          {pagoTipo==="mensual"&&lastCombo?.date&&(
-            <div style={{background:C.blueL,borderRadius:12,padding:"11px 16px",marginBottom:16,textAlign:"center"}}>
-              <span style={{fontSize:14,fontWeight:700,color:C.blue2}}>
-                {"📅 Fecha de pago es el "+new Date(lastCombo.date+"T12:00:00").getDate()+" de cada mes."}
+          {pagoTipo==="mensual"&&lastCombo&&(lastCombo.cobroDia||lastCombo.date)&&(
+            <div style={{background:lastCombo.cobroDia?"#E8F5E9":C.blueL,borderRadius:12,padding:"11px 16px",marginBottom:16,textAlign:"center"}}>
+              <span style={{fontSize:14,fontWeight:700,color:lastCombo.cobroDia?"#2E7D32":C.blue2}}>
+                {"📅 Día de cobro: "+( lastCombo.cobroDia||new Date(lastCombo.date+"T12:00:00").getDate() )+" de cada mes"}
               </span>
+              {lastCombo.graciaDias&&<div style={{fontSize:11,color:C.mutedDark,marginTop:4}}>Período de gracia: {lastCombo.graciaDias} días</div>}
+              {(()=>{
+                if(!lastCombo.cobroDia) return null;
+                const est=getMensualEstado(lastCombo);
+                const moraM=est.mensualidades.filter(m=>m.estado==="mora");
+                if(moraM.length>0){
+                  const oldest=moraM[0];
+                  const venc=new Date(oldest.fechaVencimiento+"T12:00:00");
+                  const hoy=new Date(TODAY_DATE+"T12:00:00");
+                  const diasV=Math.floor((hoy-venc)/(1000*60*60*24));
+                  return <div style={{fontSize:12,color:"#C62828",fontWeight:700,marginTop:4}}>⚠️ {diasV} días vencidos ({moraM.length} {moraM.length===1?"mes":"meses"} en mora)</div>;
+                }
+                return null;
+              })()}
             </div>
           )}
 
@@ -3868,8 +3892,38 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             return <span style={{fontSize:12,padding:"6px 14px",borderRadius:20,background:"#F5F5F5",color:C.text,fontWeight:400}}>GRUPOS: <strong>{groupNames.join(", ")}</strong></span>;
           })()}
         </div>
-        {/* ESTADO DE CUENTAS - 4 columns */}
+        {/* ESTADO DE CUENTAS */}
         {combo&&rem!==null&&(()=>{
+          // MENSUAL: show different UI
+          if(combo.packType==="mensual"&&combo.cobroDia){
+            const est=getMensualEstado(combo);
+            const oldestMora=est.mensualidades.find(m=>m.estado==="mora");
+            let diasV=0;
+            if(oldestMora){
+              const venc=new Date(oldestMora.fechaVencimiento+"T12:00:00");
+              const hoy=new Date(TODAY_DATE+"T12:00:00");
+              diasV=Math.floor((hoy-venc)/(1000*60*60*24));
+            }
+            const isMora=est.mora>0;
+            const isPendiente=est.pendiente>0&&!isMora;
+            const isAlDia=!isMora&&!isPendiente;
+            return (
+              <div style={{marginBottom:12}}>
+                <div style={{display:"flex",gap:8,marginBottom:8}}>
+                  <div style={{flex:1,background:isAlDia?"#E8F5E9":isMora?"#FFEBEE":"#FFF8E1",borderRadius:12,padding:"12px",textAlign:"center",border:"1.5px solid "+(isAlDia?"#66BB6A":isMora?"#EF5350":"#FFB74D")}}>
+                    <div style={{fontSize:22,fontWeight:900,color:isAlDia?"#2E7D32":isMora?"#C62828":"#F57F17"}}>{isAlDia?"✓":isMora?diasV+"d":"⏳"}</div>
+                    <div style={{fontSize:10,fontWeight:700,color:isAlDia?"#2E7D32":isMora?"#C62828":"#F57F17",marginTop:2}}>{isAlDia?"Al día":isMora?"En mora":"Pendiente"}</div>
+                  </div>
+                  <div style={{flex:1,background:C.blueL,borderRadius:12,padding:"12px",textAlign:"center",border:"1.5px solid "+C.border}}>
+                    <div style={{fontSize:22,fontWeight:900,color:C.blue2}}>{est.pagado}</div>
+                    <div style={{fontSize:10,fontWeight:700,color:C.blue2,marginTop:2}}>Meses pagados</div>
+                  </div>
+                </div>
+                <div style={{fontSize:11,color:C.mutedDark,textAlign:"center"}}>Cobro: día {combo.cobroDia} de cada mes · Gracia: {combo.graciaDias||5} días</div>
+              </div>
+            );
+          }
+          // CLASES: existing logic
           // Only count dates from ACTIVE combos (not fully paid+realized)
           const activeCombosForCount=s.combos.filter(c=>{
             if(!(c.total>0||(c.packType&&c.packType!=="mensual"))) return false;
