@@ -36,6 +36,65 @@ const C = {
 
 
 const TODAY_DATE=(()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
+
+// --- MENSUAL HELPERS ---
+function getMensualidades(combo) {
+  if(!combo||combo.packType!=="mensual"||!combo.cobroDia) return [];
+  const existing=combo.mensualidades||[];
+  const cobroDia=combo.cobroDia||1;
+  const gracia=combo.graciaDias||5;
+  const monto=combo.amount||0;
+  const currency=combo.currency||"PYG";
+  // Find first month from combo date or first mensualidad
+  const startDate=combo.date||TODAY_DATE;
+  const startY=parseInt(startDate.split("-")[0]);
+  const startM=parseInt(startDate.split("-")[1]);
+  // Generate up to current month
+  const nowY=parseInt(TODAY_DATE.split("-")[0]);
+  const nowM=parseInt(TODAY_DATE.split("-")[1]);
+  const result=[];
+  let y=startY,m=startM;
+  while(y<nowY||(y===nowY&&m<=nowM)){
+    const mm=String(m).padStart(2,"0");
+    const mesKey=y+"-"+mm;
+    const id="M-"+mesKey;
+    const maxDay=new Date(y,m,0).getDate();
+    const dia=Math.min(cobroDia,maxDay);
+    const fechaVenc=y+"-"+mm+"-"+String(dia).padStart(2,"0");
+    // Check if existing
+    const ex=existing.find(x=>x.mes===mesKey||x.id===id);
+    if(ex){
+      // Recalculate estado based on current date
+      let estado=ex.estado;
+      if(ex.fechaPago){estado="pagado";}
+      else{
+        const vencDate=new Date(fechaVenc+"T12:00:00");
+        vencDate.setDate(vencDate.getDate()+gracia);
+        const limiteStr=vencDate.getFullYear()+"-"+String(vencDate.getMonth()+1).padStart(2,"0")+"-"+String(vencDate.getDate()).padStart(2,"0");
+        estado=TODAY_DATE>limiteStr?"mora":"pendiente";
+      }
+      result.push({...ex,id,mes:mesKey,fechaVencimiento:fechaVenc,estado});
+    } else {
+      // Auto-generate
+      const vencDate=new Date(fechaVenc+"T12:00:00");
+      vencDate.setDate(vencDate.getDate()+gracia);
+      const limiteStr=vencDate.getFullYear()+"-"+String(vencDate.getMonth()+1).padStart(2,"0")+"-"+String(vencDate.getDate()).padStart(2,"0");
+      const estado=TODAY_DATE>limiteStr?"mora":"pendiente";
+      result.push({id,mes:mesKey,estado,fechaVencimiento:fechaVenc,fechaPago:null,monto,method:null});
+    }
+    m++;if(m>12){m=1;y++;}
+  }
+  return result;
+}
+function getMensualEstado(combo){
+  const mens=getMensualidades(combo);
+  const mora=mens.filter(m=>m.estado==="mora").length;
+  const pendiente=mens.filter(m=>m.estado==="pendiente").length;
+  const pagado=mens.filter(m=>m.estado==="pagado").length;
+  return {mora,pendiente,pagado,total:mens.length,mensualidades:mens};
+}
+// --- END MENSUAL HELPERS ---
+
 const WEEK_AGO=(()=>{const d=new Date();d.setDate(d.getDate()-7);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
 
 // Check if a class date+timeEnd has passed (dynamic - called at render time)
@@ -199,6 +258,15 @@ function isNextComboPending(cls, students) {
 }
 function getRem(s, classes=[]) {
   const combos=s.combos||[];
+  // Check mensual combos first
+  const mensualCombos=combos.filter(x=>x.packType==="mensual"&&x.cobroDia);
+  if(mensualCombos.length>0){
+    const lastM=mensualCombos[mensualCombos.length-1];
+    const est=getMensualEstado(lastM);
+    if(est.mora>0) return -est.mora; // negative = en mora (count of months)
+    if(est.pendiente>0) return est.pendiente; // positive = por dar/pendiente
+    return 0; // al día
+  }
   // All combos that are "clases" type (total>0 OR packType individual/combo)
   const classCombos=combos.filter(x=>{
     if(x.total>0) return true;
@@ -933,8 +1001,9 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                     {sd.pack==="mensual"?(
                       <div>
-                        <label style={{fontSize:11,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>INICIO DE PAGO</label>
-                        <input type="date" value={sd.payDate||TODAY_DATE} onChange={e=>upd(s.id,"payDate",e.target.value)} style={{width:"100%",padding:"8px 10px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:12,boxSizing:"border-box",background:C.bg,color:C.text,outline:"none"}}/>
+                        <label style={{fontSize:11,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>DÍA DE COBRO MENSUAL</label>
+                        <input type="number" min="1" max="31" value={sd.cobroDia||(sd.payDate?parseInt(sd.payDate.split("-")[2]):new Date().getDate())} onChange={e=>upd(s.id,"cobroDia",parseInt(e.target.value)||1)} style={{width:"100%",padding:"8px 10px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:12,boxSizing:"border-box",background:C.bg,color:C.text,outline:"none"}} placeholder="Día 1-31"/>
+                        <div style={{fontSize:10,color:C.mutedDark,marginTop:3}}>El cobro se genera cada mes en este día</div>
                       </div>
                     ):<div/>}
                     <div>
@@ -1071,6 +1140,15 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
       if(pausedCount>0) pauseAlerts.push({student:st,cls:c,pausedCount});
     });
   });
+  // Mensual mora alerts
+  const mensualAlerts=[];
+  students.forEach(s=>{
+    const mc=(s.combos||[]).find(c=>c.packType==="mensual"&&c.cobroDia);
+    if(!mc) return;
+    const est=getMensualEstado(mc);
+    if(est.mora>0) mensualAlerts.push({student:s,mora:est.mora,pendiente:est.pendiente});
+    else if(est.pendiente>0) mensualAlerts.push({student:s,mora:0,pendiente:est.pendiente});
+  });
   const todayC=classes.filter(c=>c.date===TODAY_DATE&&!c.cancelled&&!isClassDone(c.date,c.timeEnd));
   const mN=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
   const todayLabel=new Date(TODAY_DATE+"T12:00:00").getDate()+" de "+mN[new Date(TODAY_DATE+"T12:00:00").getMonth()];
@@ -1130,6 +1208,22 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
             </div>
           ))}
         </div>
+
+        {/* Mensual mora alerts */}
+        {mensualAlerts.filter(a=>a.mora>0).length>0&&(
+          <div style={{marginTop:8,marginBottom:8}}>
+            <div style={{fontSize:13,fontWeight:800,color:C.text,marginBottom:10}}>💰 Pagos mensuales vencidos</div>
+            {mensualAlerts.filter(a=>a.mora>0).slice(0,4).map(({student:st,mora:mr},i)=>(
+              <div key={i} onClick={()=>onNavigate("cobros")} style={{background:"#FFEBEE",border:"1.5px solid #EF9A9A",borderRadius:12,padding:"10px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
+                <div style={{width:36,height:36,borderRadius:12,background:"linear-gradient(135deg,#C62828,#E53935)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,color:"#fff",flexShrink:0}}>💰</div>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:13,fontWeight:700,color:C.text}}>{st.name}</div>
+                  <div style={{fontSize:11,color:"#C62828",fontWeight:600}}>{mr} {mr===1?"mes vencido":"meses vencidos"}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Clases de hoy */}
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
@@ -3299,9 +3393,31 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
       const payment={id:Date.now(),qty,amount:parseInt(localAmount)||0,method:payMethod,date:localDate||TODAY,dates:newDates};
       updatedCombos.push({id:s.combos.length+1,total:qty,used:0,paid:true,paidCount:qty,date:localDate||TODAY,amount:parseInt(localAmount)||0,method:payMethod,dates:newDates,payments:[payment]});
     } else {
-      // Mensual
-      const mensualPayment={id:Date.now(),qty:1,amount:parseInt(localAmount)||0,method:payMethod,date:localPayDate||TODAY,payMonth:localPayMonth,dates:[]};
-      updatedCombos.push({id:s.combos.length+1,total:null,packType:"mensual",used:0,paid:true,date:localDate||TODAY,payDate:localPayDate||TODAY,amount:parseInt(localAmount)||0,method:payMethod,payments:[mensualPayment]});
+      // Mensual - update existing combo or create new
+      const existingMensual=updatedCombos.findIndex(c=>c.packType==="mensual"&&c.cobroDia);
+      if(existingMensual>=0){
+        // Add payment to existing mensual combo
+        const mc={...updatedCombos[existingMensual]};
+        const mens=[...(mc.mensualidades||[])];
+        const payMonth=localPayMonth||TODAY_DATE.slice(0,7);
+        const existingIdx=mens.findIndex(m=>m.mes===payMonth);
+        if(existingIdx>=0){
+          mens[existingIdx]={...mens[existingIdx],estado:"pagado",fechaPago:localPayDate||TODAY_DATE,monto:parseInt(localAmount)||mc.amount||0,method:payMethod};
+        } else {
+          const cobroDia=mc.cobroDia||1;
+          const [py,pm]=payMonth.split("-").map(Number);
+          const maxDay=new Date(py,pm,0).getDate();
+          const dia=Math.min(cobroDia,maxDay);
+          mens.push({id:"M-"+payMonth,mes:payMonth,estado:"pagado",fechaVencimiento:py+"-"+String(pm).padStart(2,"0")+"-"+String(dia).padStart(2,"0"),fechaPago:localPayDate||TODAY_DATE,monto:parseInt(localAmount)||mc.amount||0,method:payMethod});
+        }
+        mc.mensualidades=mens;
+        updatedCombos[existingMensual]=mc;
+      } else {
+        // Create new mensual combo (legacy support)
+        const cobroDia=parseInt(localDate?.split("-")[2])||new Date().getDate();
+        const payMonth=localPayMonth||TODAY_DATE.slice(0,7);
+        updatedCombos.push({id:s.combos.length+1,total:null,packType:"mensual",used:0,date:localDate||TODAY_DATE,amount:parseInt(localAmount)||0,currency:"PYG",cobroDia,graciaDias:5,mensualidades:[{id:"M-"+payMonth,mes:payMonth,estado:"pagado",fechaVencimiento:localDate||TODAY_DATE,fechaPago:localPayDate||TODAY_DATE,monto:parseInt(localAmount)||0,method:payMethod}]});
+      }
     }
 
     onUpdate({...s,combos:updatedCombos});
@@ -6068,13 +6184,28 @@ export default function App() {
           packType,
           packId:sd.packId||sd.pack||"",
           used:0,
-          paid:sd.paid,
-          paidCount:sd.paid?(pn||0):0,
-          date:sd.pack==="mensual"?(sd.payDate||cd.date||TODAY_DATE):(cd.date||TODAY_DATE),
-          payDate:sd.pack==="mensual"?(sd.payDate||cd.date||TODAY_DATE):undefined,
+          paid:packType==="mensual"?undefined:sd.paid,
+          paidCount:packType==="mensual"?undefined:(sd.paid?(pn||0):0),
+          date:packType==="mensual"?(cd.date||TODAY_DATE):(cd.date||TODAY_DATE),
+          payDate:packType==="mensual"?undefined:undefined,
           amount,
+          // Mensual-specific fields
+          ...(packType==="mensual"?{
+            cobroDia:sd.cobroDia||parseInt((cd.date||TODAY_DATE).split("-")[2])||1,
+            graciaDias:5,
+            currency:"PYG",
+            mensualidades:sd.paid?[{
+              id:"M-"+(cd.date||TODAY_DATE).slice(0,7),
+              mes:(cd.date||TODAY_DATE).slice(0,7),
+              estado:"pagado",
+              fechaVencimiento:(cd.date||TODAY_DATE),
+              fechaPago:TODAY_DATE,
+              monto:amount,
+              method:sd.method||"Efectivo"
+            }]:[]
+          }:{}),
           dates:projectedClassDates,
-          payments:paymentEntry,
+          payments:packType==="mensual"?[]:paymentEntry,
         }]};
       }));
       // Register income in Finanzas for paid students who chose to save payment
