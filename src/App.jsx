@@ -3547,7 +3547,9 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
                   const venc=new Date(oldest.fechaVencimiento+"T12:00:00");
                   const hoy=new Date(TODAY_DATE+"T12:00:00");
                   const diasV=Math.floor((hoy-venc)/(1000*60*60*24));
-                  return <div style={{fontSize:12,color:"#C62828",fontWeight:700,marginTop:4}}>⚠️ {diasV} días vencidos ({moraM.length} {moraM.length===1?"mes":"meses"} en mora)</div>;
+                  const MESES_N=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+                  const moraNames=moraM.map(m=>{const [,mm]=m.mes.split("-");return MESES_N[parseInt(mm)-1];});
+                  return <div style={{fontSize:12,color:"#C62828",fontWeight:700,marginTop:4}}>⚠️ {diasV} días vencidos (Del mes de {moraNames.join(", ")})</div>;
                 }
                 return null;
               })()}
@@ -3634,11 +3636,15 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             </div>
           )}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
-            {pagoTipo==="mensual"&&(
+            {pagoTipo==="mensual"&&lastCombo?.cobroDia&&(
+              <div style={{gridColumn:"1/-1",background:"#E8F5E9",borderRadius:10,padding:"10px 14px"}}>
+                <div style={{fontSize:12,fontWeight:700,color:"#2E7D32"}}>📅 Día de cobro: {lastCombo.cobroDia} de cada mes</div>
+              </div>
+            )}
+            {pagoTipo==="mensual"&&!lastCombo?.cobroDia&&(
               <div style={{gridColumn:"1/-1"}}>
-                <div style={{fontSize:12,fontWeight:700,color:C.blue2,marginBottom:6}}>📅 Inicio de pago mensual</div>
+                <div style={{fontSize:12,fontWeight:700,color:C.blue2,marginBottom:6}}>📅 Fecha de pago</div>
                 <input type="date" value={localDate||TODAY_DATE} onChange={e=>setLocalDate(e.target.value)} style={{...iSp,cursor:"pointer",width:"100%",boxSizing:"border-box",borderColor:C.blue2}}/>
-                <div style={{fontSize:11,color:C.mutedDark,marginTop:4}}>Se usa para calcular días de atraso en Cobros</div>
               </div>
             )}
             {pagoTipo==="mensual"&&(
@@ -3907,19 +3913,18 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             const isMora=est.mora>0;
             const isPendiente=est.pendiente>0&&!isMora;
             const isAlDia=!isMora&&!isPendiente;
+            const MESES_LABEL=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+            const moraMonths=est.mensualidades.filter(m=>m.estado==="mora").map(m=>{const [,mm]=m.mes.split("-");return MESES_LABEL[parseInt(mm)-1];});
             return (
               <div style={{marginBottom:12}}>
-                <div style={{display:"flex",gap:8,marginBottom:8}}>
-                  <div style={{flex:1,background:isAlDia?"#E8F5E9":isMora?"#FFEBEE":"#FFF8E1",borderRadius:12,padding:"12px",textAlign:"center",border:"1.5px solid "+(isAlDia?"#66BB6A":isMora?"#EF5350":"#FFB74D")}}>
-                    <div style={{fontSize:22,fontWeight:900,color:isAlDia?"#2E7D32":isMora?"#C62828":"#F57F17"}}>{isAlDia?"✓":isMora?diasV+"d":"⏳"}</div>
-                    <div style={{fontSize:10,fontWeight:700,color:isAlDia?"#2E7D32":isMora?"#C62828":"#F57F17",marginTop:2}}>{isAlDia?"Al día":isMora?"En mora":"Pendiente"}</div>
-                  </div>
-                  <div style={{flex:1,background:C.blueL,borderRadius:12,padding:"12px",textAlign:"center",border:"1.5px solid "+C.border}}>
-                    <div style={{fontSize:22,fontWeight:900,color:C.blue2}}>{est.pagado}</div>
-                    <div style={{fontSize:10,fontWeight:700,color:C.blue2,marginTop:2}}>Meses pagados</div>
-                  </div>
+                <div style={{background:isAlDia?"#E8F5E9":isMora?"#FFEBEE":"#FFF8E1",borderRadius:12,padding:"14px",textAlign:"center",border:"1.5px solid "+(isAlDia?"#66BB6A":isMora?"#EF5350":"#FFB74D"),marginBottom:8}}>
+                  <div style={{fontSize:28,fontWeight:900,color:isAlDia?"#2E7D32":isMora?"#C62828":"#F57F17"}}>{isAlDia?"✓":isMora?diasV+"d":"⏳"}</div>
+                  <div style={{fontSize:13,fontWeight:700,color:isAlDia?"#2E7D32":isMora?"#C62828":"#F57F17",marginTop:4}}>{isAlDia?"Al día":isMora?"En mora":"Pendiente"}</div>
                 </div>
-                <div style={{fontSize:11,color:C.mutedDark,textAlign:"center"}}>Cobro: día {combo.cobroDia} de cada mes · Gracia: {combo.graciaDias||5} días</div>
+                <div style={{fontSize:11,color:C.mutedDark,textAlign:"center",lineHeight:1.5}}>
+                  Cobro: día {combo.cobroDia} de cada mes · Gracia: {combo.graciaDias||5} días
+                  {isMora&&<span style={{color:"#C62828",fontWeight:700}}> — Debe {moraMonths.join(", ")}</span>}
+                </div>
               </div>
             );
           }
