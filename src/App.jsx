@@ -4157,7 +4157,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             {/* Left tabs - one per payment transaction */}
             <div style={{width:110,borderRight:"1px solid "+C.border,overflowY:"auto",background:C.white,flexShrink:0}}>
               {(()=>{
-                const allPayments=s.combos.flatMap(c=>(c.payments||[]).map(p=>({...p,comboTotal:c.total})));
+                const allPayments=s.combos.flatMap(c=>{const reg=(c.payments||[]).map(p=>({...p,comboTotal:c.total}));const mens=(c.mensualidades||[]).filter(m=>m.estado==="pagado"&&m.fechaPago).map(m=>{const MH=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];const [,mm]=m.mes.split("-");return{id:m.id,qty:1,amount:m.monto,method:m.method||"",date:m.fechaPago,comboTotal:null,detail:"Mensualidad "+MH[parseInt(mm)-1]};});return[...reg,...mens];});
                 if(allPayments.length===0) return <div style={{padding:12,fontSize:11,color:C.mutedDark,textAlign:"center"}}>Sin pagos</div>;
                 return [...allPayments].reverse().map((p,i)=>{
                   const idx=allPayments.length-1-i;
@@ -4177,7 +4177,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             {/* Right detail */}
             <div style={{flex:1,overflowY:"auto",padding:16}}>
               {(()=>{
-                const allPayments=s.combos.flatMap(c=>(c.payments||[]).map(p=>({...p,comboTotal:c.total})));
+                const allPayments=s.combos.flatMap(c=>{const reg=(c.payments||[]).map(p=>({...p,comboTotal:c.total}));const mens=(c.mensualidades||[]).filter(m=>m.estado==="pagado"&&m.fechaPago).map(m=>{const MH=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];const [,mm]=m.mes.split("-");return{id:m.id,qty:1,amount:m.monto,method:m.method||"",date:m.fechaPago,comboTotal:null,detail:"Mensualidad "+MH[parseInt(mm)-1]};});return[...reg,...mens];});
                 if(allPayments.length===0) return <div style={{textAlign:"center",padding:"40px 0",color:C.mutedDark}}>Sin historial de pagos</div>;
                 const p=allPayments[histTab]||allPayments[allPayments.length-1];
                 const wDFull=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
