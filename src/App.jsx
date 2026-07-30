@@ -4421,7 +4421,7 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
             <div style={{fontSize:18,fontWeight:800,color:C.white}}>{initialTab==="payments"?"Cobros":"Finanzas"}</div>
             <div style={{fontSize:13,color:C.muted,marginTop:4}}>{initialTab==="payments"?"Estado de cobros por alumno":"Resumen financiero del mes"}</div>
           </div>
-          <button onClick={()=>{
+          {initialTab==="payments"&&<button onClick={()=>{
             let csv="";
             if(tab==="payments"||initialTab==="payments"){
               // Export cobros by student
@@ -4455,7 +4455,7 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
           }} style={{padding:"10px 16px",borderRadius:12,border:"none",background:"rgba(255,255,255,0.2)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",gap:6}}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             Exportar
-          </button>
+          </button>}
         </div>
       </div>
       <div style={{padding:"16px",marginTop:-8}}>
@@ -4629,65 +4629,27 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
                 })()}
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,marginTop:6}}>
                   <div style={{fontSize:13,fontWeight:700,color:C.text}}>Movimientos</div>
-                  <button onClick={async()=>{
+                  <button onClick={()=>{
                     const [yr2,mn2]=selMonth.split("-").map(Number);
                     const mNames=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
                     const selMonthLabel=mNames[mn2-1]+" "+yr2;
-                    const canvas=document.createElement("canvas");
-                    const rowH=36; const headerH=120; const footerH=40;
-                    canvas.width=800; canvas.height=headerH+sorted.length*rowH+footerH+40;
-                    const ctx=canvas.getContext("2d");
-                    // Background
-                    ctx.fillStyle="#ffffff"; ctx.fillRect(0,0,canvas.width,canvas.height);
-                    // Header
-                    ctx.fillStyle="#0D1B4B"; ctx.fillRect(0,0,800,headerH);
-                    ctx.fillStyle="#ffffff"; ctx.font="bold 24px Arial"; ctx.textAlign="left";
-                    ctx.fillText("Reporte de Movimientos",30,45);
-                    ctx.font="14px Arial"; ctx.fillStyle="rgba(255,255,255,0.8)";
-                    ctx.fillText(selMonthLabel,30,70);
-                    // Summary
-                    const inc=monthFiltered.filter(e=>e.type==="ingreso").reduce((a,e)=>a+e.amount,0);
-                    const exp=monthFiltered.filter(e=>e.type==="gasto").reduce((a,e)=>a+e.amount,0);
-                    ctx.font="bold 13px Arial"; ctx.fillStyle="#65CE5A";
-                    ctx.fillText("Ingresos: "+fmtMoneyShort(inc),30,95);
-                    ctx.fillStyle="#EF5350";
-                    ctx.fillText("Gastos: "+fmtMoneyShort(exp),220,95);
-                    ctx.fillStyle="#fff";
-                    ctx.fillText("Balance: "+fmtMoneyShort(inc-exp),410,95);
-                    // Column headers
-                    ctx.fillStyle="#EEF2FF"; ctx.fillRect(0,headerH,800,30);
-                    ctx.fillStyle="#0D1B4B"; ctx.font="bold 12px Arial";
-                    ctx.fillText("FECHA",20,headerH+20);
-                    ctx.fillText("CATEGORÍA",120,headerH+20);
-                    ctx.fillText("NOTA",360,headerH+20);
-                    ctx.fillText("TIPO",560,headerH+20);
-                    ctx.textAlign="right"; ctx.fillText("MONTO",780,headerH+20);
-                    // Rows
-                    sorted.forEach((e,i)=>{
-                      const y=headerH+30+i*rowH;
-                      ctx.fillStyle=i%2===0?"#F8F9FF":"#ffffff"; ctx.fillRect(0,y,800,rowH);
-                      ctx.fillStyle="#0D1B4B"; ctx.font="13px Arial"; ctx.textAlign="left";
-                      ctx.fillText(e.date,20,y+22);
-                      ctx.fillText(e.category.slice(0,28),120,y+22);
-                      ctx.fillText((e.note||"").slice(0,25),360,y+22);
-                      ctx.fillStyle=e.type==="ingreso"?"#2E7D32":"#C62828";
-                      ctx.font="bold 12px Arial";
-                      ctx.fillText(e.type==="ingreso"?"↑ Ingreso":"↓ Gasto",560,y+22);
-                      ctx.textAlign="right";
-                      ctx.fillText((e.type==="ingreso"?"+":"-")+fmtMoneyShort(e.amount),780,y+22);
-                      // Divider
-                      ctx.strokeStyle="#EEF2FF"; ctx.lineWidth=1;
-                      ctx.beginPath(); ctx.moveTo(0,y+rowH); ctx.lineTo(800,y+rowH); ctx.stroke();
+                    let csv="Fecha,Tipo,Categoría,Nota,Monto\n";
+                    const sorted2=[...monthFiltered].sort((a,b)=>b.date.localeCompare(a.date));
+                    sorted2.forEach(e=>{
+                      csv+='"'+e.date+'","'+(e.type==="ingreso"?"Ingreso":"Gasto")+'","'+(e.category||"")+'","'+(e.note||"").replace(/"/g,"'")+'",'+e.amount+'\n';
                     });
-                    // Footer
-                    const fy=headerH+30+sorted.length*rowH+10;
-                    ctx.fillStyle="#9BACCB"; ctx.font="11px Arial"; ctx.textAlign="center";
-                    ctx.fillText("izicoach · Generado el "+TODAY_DATE,400,fy+20);
-                    // Download
+                    const inc2=monthFiltered.filter(e=>e.type==="ingreso").reduce((a,e)=>a+e.amount,0);
+                    const exp2=monthFiltered.filter(e=>e.type==="gasto").reduce((a,e)=>a+e.amount,0);
+                    csv+='\n"","","","Total Ingresos",'+inc2+'\n';
+                    csv+='"","","","Total Gastos",'+exp2+'\n';
+                    csv+='"","","","Balance Neto",'+(inc2-exp2)+'\n';
+                    const blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8;"});
+                    const url=URL.createObjectURL(blob);
                     const a=document.createElement("a");
-                    a.href=canvas.toDataURL("image/png");
-                    a.download="movimientos-"+selMonthLabel+".png";
+                    a.href=url;
+                    a.download="Movimientos "+selMonthLabel+".csv";
                     a.click();
+                    URL.revokeObjectURL(url);
                   }} style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:10,border:"1px solid "+C.border,background:C.white,cursor:"pointer",fontSize:12,color:C.blue2,fontWeight:700}}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                     Exportar
