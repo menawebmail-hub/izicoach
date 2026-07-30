@@ -1701,9 +1701,11 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
           )}
         </div>
         <button onClick={()=>{
-          // Regenerate occurrences if days changed
+          // Regenerate occurrences if days changed OR if current occurrences are too few for the days selected
           let newOccurrences=cls.occurrences||[];
-          if(JSON.stringify(days)!==JSON.stringify(cls.days)&&days.length>0){
+          const daysChanged=JSON.stringify(days)!==JSON.stringify(cls.days);
+          const tooFewOccurrences=days.length>0&&newOccurrences.length<days.length*4; // less than ~1 month of classes
+          if((daysChanged||tooFewOccurrences)&&days.length>0){
             const DAY_MAP2={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
             const dowSet=new Set(days.map(d=>DAY_MAP2[d]));
             const result=[];
@@ -1717,7 +1719,9 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
               }
               cur.setDate(cur.getDate()+1);
             }
-            newOccurrences=result;
+            // Preserve existing occurrences that have attendance/cancellation data
+            const preserved=(cls.occurrences||[]).filter(d=>d<sd);
+            newOccurrences=[...new Set([...preserved,...result])].sort();
           }
           onSave({...cls,title,court,days,time:t1,timeEnd:t2,students:clsSt,studentPacks,occurrences:newOccurrences});
         }} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:10}}>Actualizar Clase</button>
