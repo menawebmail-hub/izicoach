@@ -5893,7 +5893,8 @@ export default function App() {
 
   const handleLogout=async()=>{
     await supabase.auth.signOut();
-    localStorage.clear();
+    // Only clear session-related keys, preserve user data
+    ["izi_mode","izi_onboarded"].forEach(k=>localStorage.removeItem(k));
     setUserWithRef(null);
     window._iziUserId=null;
     setStudentsRaw([]);setClassesRaw([]);setCourtsRaw([]);setPackagesRaw([]);
