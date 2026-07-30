@@ -5810,7 +5810,9 @@ export default function App() {
 
   const loadData=async(userId)=>{
     try {
+      console.log("[LOAD] Loading data for coach:", userId);
       const allData=await loadAllFromSupabase(userId);
+      console.log("[LOAD] Got keys:", Object.keys(allData), "students:", (allData.students||[]).length);
       if(Object.keys(allData).length>0){
         if(allData.students){setStudentsRaw(allData.students);lsSet("izi_students",allData.students);}
         if(allData.classes){setClassesRaw(allData.classes);lsSet("izi_classes",allData.classes);}
