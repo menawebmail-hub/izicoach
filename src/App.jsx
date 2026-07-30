@@ -5695,7 +5695,7 @@ export default function App() {
   const [checkingProfile,setCheckingProfile]=useState(false);
 
   const [mode,setMode]=useState(null);
-  const [onboarded,setOnboarded]=useState(false);
+  const [onboarded,setOnboarded]=useState(()=>ls("izi_onboarded",false));
   const [showInvite,setShowInvite]=useState(false);
   const [inviteTarget,setInviteTarget]=useState(null);
   const [tab,setTab]=useState("dashboard");
