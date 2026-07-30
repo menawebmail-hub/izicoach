@@ -4468,7 +4468,7 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
               const ic=expenses.filter(e=>e.date&&e.date.startsWith(selMonth)&&e.type==="ingreso").reduce((a,b)=>a+b.amount,0);
               const pc=students.reduce((sum,s)=>{const r=getRem(s,classes);return sum+(r!==null&&r<0?Math.abs(r):0);},0);
               const aa=students.filter(s=>s.status==="active").length;
-              const cu=coachProfile.currency||"$";
+              const cu="₡";
               return (<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
                 <span style={{fontSize:11,fontWeight:700,padding:"5px 10px",borderRadius:20,background:C.blueL,color:C.blue2}}>{cr} Clases este mes</span>
                 <span style={{fontSize:11,fontWeight:700,padding:"5px 10px",borderRadius:20,background:"#E8F5E9",color:"#2E7D32"}}>{cu}{ic.toLocaleString()} Cobrado</span>
@@ -4484,7 +4484,7 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
               const year=parseInt(selMonth.split("-")[0]);
               const ms=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
               const md=ms.map((m,mi)=>{const pf=year+"-"+String(mi+1).padStart(2,"0");const ig=expenses.filter(e=>e.date&&e.date.startsWith(pf)&&e.type==="ingreso").reduce((a,b)=>a+b.amount,0);const gs=expenses.filter(e=>e.date&&e.date.startsWith(pf)&&e.type==="gasto").reduce((a,b)=>a+b.amount,0);return{month:m,ing:ig,gas:gs,bal:ig-gs};});
-              const ti=md.reduce((a,b)=>a+b.ing,0);const tg=md.reduce((a,b)=>a+b.gas,0);const cu=coachProfile.currency||"$";const mx=Math.max(...md.map(d=>Math.max(d.ing,d.gas)),1);
+              const ti=md.reduce((a,b)=>a+b.ing,0);const tg=md.reduce((a,b)=>a+b.gas,0);const cu="₡";const mx=Math.max(...md.map(d=>Math.max(d.ing,d.gas)),1);
               return (<div>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:C.white,borderRadius:14,padding:"12px 16px",marginBottom:14,border:"1px solid "+C.border}}>
                   <button onClick={()=>setSelMonth((year-1)+"-01")} style={{background:C.blueL,border:"none",borderRadius:10,width:34,height:34,cursor:"pointer",color:C.blue2,fontWeight:800,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>{"\u2039"}</button>
