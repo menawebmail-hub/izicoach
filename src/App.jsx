@@ -4466,7 +4466,16 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
             {(()=>{
               const cr=classes.filter(c=>c.date&&c.date.startsWith(selMonth)&&c.date<=TODAY_DATE&&!c.paused&&!c.cancelled).length;
               const ic=expenses.filter(e=>e.date&&e.date.startsWith(selMonth)&&e.type==="ingreso").reduce((a,b)=>a+b.amount,0);
-              const pc=students.reduce((sum,s)=>{const r=getRem(s,classes);return sum+(r!==null&&r<0?Math.abs(r):0);},0);
+              const pc=students.reduce((sum,s)=>{
+                const combos=(s.combos||[]).filter(c=>c.total>0||(c.packType&&c.packType!=="mensual"));
+                return sum+combos.reduce((s2,c)=>{
+                  const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
+                  const unpaid=Math.max(0,(c.total||0)-paidCount);
+                  if(unpaid<=0) return s2;
+                  const perClass=c.total>0?(c.amount||0)/c.total:0;
+                  return s2+Math.round(unpaid*perClass);
+                },0);
+              },0);
               const aa=students.filter(s=>s.status==="active").length;
               const cu="₡";
               return (<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
