@@ -4394,6 +4394,7 @@ function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], send
 function Finances({ students, classes, initialTab="payments", onUpdate, expenses=[], setExpenses, addIncome, packages=[], sendNotification, onAttendance }) {
   const [tab,setTab]=useState(initialTab);
   const [selMonth,setSelMonth]=useState((()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");})());
+  const [finView,setFinView]=useState("mensual");
   const [showMovModal,setShowMovModal]=useState(null);
   const [movCat,setMovCat]=useState(""); const [movAmount,setMovAmount]=useState(""); const [movDate,setMovDate]=useState("");
   const [editMovId,setEditMovId]=useState(null);
@@ -4461,6 +4462,65 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
         {tab==="payments"&&<PaymentsTab students={students} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance}/>}
         {tab==="expenses"&&(
           <div>
+            {/* Stats badges */}
+            {(()=>{
+              const cr=classes.filter(c=>c.date&&c.date.startsWith(selMonth)&&c.date<=TODAY_DATE&&!c.paused&&!c.cancelled).length;
+              const ic=expenses.filter(e=>e.date&&e.date.startsWith(selMonth)&&e.type==="ingreso").reduce((a,b)=>a+b.amount,0);
+              const pc=students.reduce((sum,s)=>{const r=getRem(s,classes);return sum+(r!==null&&r<0?Math.abs(r):0);},0);
+              const aa=students.filter(s=>s.status==="active").length;
+              const cu=coachProfile.currency||"$";
+              return (<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
+                <span style={{fontSize:11,fontWeight:700,padding:"5px 10px",borderRadius:20,background:C.blueL,color:C.blue2}}>{cr} Clases este mes</span>
+                <span style={{fontSize:11,fontWeight:700,padding:"5px 10px",borderRadius:20,background:"#E8F5E9",color:"#2E7D32"}}>{cu}{ic.toLocaleString()} Cobrado</span>
+                {pc>0&&<span style={{fontSize:11,fontWeight:700,padding:"5px 10px",borderRadius:20,background:"#FFEBEE",color:"#C62828"}}>{cu}{pc.toLocaleString()} Pendiente</span>}
+                <span style={{fontSize:11,fontWeight:700,padding:"5px 10px",borderRadius:20,background:"#F3E5F5",color:"#7B1FA2"}}>{aa} Alumnos</span>
+              </div>);
+            })()}
+            <div style={{display:"flex",gap:8,marginBottom:12}}>
+              <button onClick={()=>setFinView("mensual")} style={{flex:1,padding:"10px",borderRadius:12,border:finView==="mensual"?"2px solid "+C.blue2:"2px solid "+C.border,background:finView==="mensual"?C.blueL:C.white,color:finView==="mensual"?C.blue2:C.mutedDark,fontSize:13,fontWeight:700,cursor:"pointer"}}>Vista Mensual</button>
+              <button onClick={()=>setFinView("anual")} style={{flex:1,padding:"10px",borderRadius:12,border:finView==="anual"?"2px solid "+C.blue2:"2px solid "+C.border,background:finView==="anual"?C.blueL:C.white,color:finView==="anual"?C.blue2:C.mutedDark,fontSize:13,fontWeight:700,cursor:"pointer"}}>Vista Anual</button>
+            </div>
+            {finView==="anual"&&(()=>{
+              const year=parseInt(selMonth.split("-")[0]);
+              const ms=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+              const md=ms.map((m,mi)=>{const pf=year+"-"+String(mi+1).padStart(2,"0");const ig=expenses.filter(e=>e.date&&e.date.startsWith(pf)&&e.type==="ingreso").reduce((a,b)=>a+b.amount,0);const gs=expenses.filter(e=>e.date&&e.date.startsWith(pf)&&e.type==="gasto").reduce((a,b)=>a+b.amount,0);return{month:m,ing:ig,gas:gs,bal:ig-gs};});
+              const ti=md.reduce((a,b)=>a+b.ing,0);const tg=md.reduce((a,b)=>a+b.gas,0);const cu=coachProfile.currency||"$";const mx=Math.max(...md.map(d=>Math.max(d.ing,d.gas)),1);
+              return (<div>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:C.white,borderRadius:14,padding:"12px 16px",marginBottom:14,border:"1px solid "+C.border}}>
+                  <button onClick={()=>setSelMonth((year-1)+"-01")} style={{background:C.blueL,border:"none",borderRadius:10,width:34,height:34,cursor:"pointer",color:C.blue2,fontWeight:800,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>{"\u2039"}</button>
+                  <div style={{fontSize:18,fontWeight:800,color:C.text}}>{year}</div>
+                  <button onClick={()=>setSelMonth((year+1)+"-01")} style={{background:C.blueL,border:"none",borderRadius:10,width:34,height:34,cursor:"pointer",color:C.blue2,fontWeight:800,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>{"\u203a"}</button>
+                </div>
+                <div style={{background:C.white,borderRadius:14,padding:"16px 12px",marginBottom:14,border:"1px solid "+C.border}}>
+                  <div style={{display:"flex",justifyContent:"flex-end",gap:12,marginBottom:12}}>
+                    <span style={{fontSize:10,fontWeight:700,display:"flex",alignItems:"center",gap:4}}><div style={{width:8,height:8,borderRadius:2,background:"#52C048"}}></div>Ingresos</span>
+                    <span style={{fontSize:10,fontWeight:700,display:"flex",alignItems:"center",gap:4}}><div style={{width:8,height:8,borderRadius:2,background:"#E53935"}}></div>Gastos</span>
+                  </div>
+                  <div style={{display:"flex",alignItems:"flex-end",gap:4,height:120}}>
+                    {md.map((d,i)=>(<div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}><div style={{width:"100%",display:"flex",gap:1,alignItems:"flex-end",height:100}}><div style={{flex:1,background:"#52C048",borderRadius:"3px 3px 0 0",height:Math.max(2,d.ing/mx*100)}}></div><div style={{flex:1,background:"#E53935",borderRadius:"3px 3px 0 0",height:Math.max(d.gas>0?2:0,d.gas/mx*100)}}></div></div><span style={{fontSize:8,fontWeight:700,color:C.mutedDark}}>{d.month}</span></div>))}
+                  </div>
+                </div>
+                <div style={{background:C.white,borderRadius:14,padding:"14px",marginBottom:14,border:"1px solid "+C.border}}>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:4,marginBottom:8}}>
+                    <span style={{fontSize:10,fontWeight:700,color:C.mutedDark}}>Mes</span><span style={{fontSize:10,fontWeight:700,color:"#2E7D32",textAlign:"right"}}>Ingresos</span><span style={{fontSize:10,fontWeight:700,color:"#C62828",textAlign:"right"}}>Gastos</span><span style={{fontSize:10,fontWeight:700,color:C.blue2,textAlign:"right"}}>Balance</span>
+                  </div>
+                  {md.map((d,i)=>(<div key={i} onClick={()=>{setSelMonth(year+"-"+String(i+1).padStart(2,"0"));setFinView("mensual");}} style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:4,padding:"8px 0",borderTop:"1px solid "+C.border,cursor:"pointer"}}>
+                    <span style={{fontSize:12,fontWeight:600,color:C.text}}>{d.month}</span>
+                    <span style={{fontSize:12,fontWeight:600,color:"#2E7D32",textAlign:"right"}}>{d.ing>0?cu+d.ing.toLocaleString():"-"}</span>
+                    <span style={{fontSize:12,fontWeight:600,color:"#C62828",textAlign:"right"}}>{d.gas>0?cu+d.gas.toLocaleString():"-"}</span>
+                    <span style={{fontSize:12,fontWeight:700,color:d.bal>=0?"#2E7D32":"#C62828",textAlign:"right"}}>{d.bal!==0?cu+d.bal.toLocaleString():"-"}</span>
+                  </div>))}
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:4,padding:"10px 0",borderTop:"2px solid "+C.text}}>
+                    <span style={{fontSize:12,fontWeight:800,color:C.text}}>Total</span>
+                    <span style={{fontSize:12,fontWeight:800,color:"#2E7D32",textAlign:"right"}}>{cu}{ti.toLocaleString()}</span>
+                    <span style={{fontSize:12,fontWeight:800,color:"#C62828",textAlign:"right"}}>{cu}{tg.toLocaleString()}</span>
+                    <span style={{fontSize:12,fontWeight:800,color:ti-tg>=0?"#2E7D32":"#C62828",textAlign:"right"}}>{cu}{(ti-tg).toLocaleString()}</span>
+                  </div>
+                </div>
+              </div>);
+            })()}
+            {finView==="mensual"&&(
+            <div>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:C.white,borderRadius:14,padding:"12px 16px",marginBottom:14,border:"1px solid "+C.border}}>
               <button onClick={prevMonth} style={{background:C.blueL,border:"none",borderRadius:10,width:34,height:34,cursor:"pointer",color:C.blue2,fontWeight:800,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
               <div style={{textAlign:"center"}}>
@@ -4652,6 +4712,8 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
                 ))}
           </div>
         )}
+            </div>
+            )}
       </div>
       {showCatModal&&(
         <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
