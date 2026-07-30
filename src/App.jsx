@@ -35,6 +35,42 @@ const C = {
 };
 
 
+
+// --- SUPABASE SYNC HELPERS ---
+async function syncToSupabase(coachId, key, value) {
+  if(!coachId) return;
+  try {
+    await supabase.from("coach_data").upsert({
+      coach_id: coachId,
+      data_key: key,
+      data_value: value,
+      updated_at: new Date().toISOString()
+    }, { onConflict: "coach_id,data_key" });
+  } catch(e) { console.warn("Sync error:", key, e); }
+}
+async function loadFromSupabase(coachId, key) {
+  if(!coachId) return null;
+  try {
+    const {data} = await supabase.from("coach_data")
+      .select("data_value")
+      .eq("coach_id", coachId)
+      .eq("data_key", key)
+      .single();
+    return data?.data_value || null;
+  } catch(e) { return null; }
+}
+async function loadAllFromSupabase(coachId) {
+  if(!coachId) return {};
+  try {
+    const {data} = await supabase.from("coach_data")
+      .select("data_key,data_value")
+      .eq("coach_id", coachId);
+    const result = {};
+    (data||[]).forEach(r => { result[r.data_key] = r.data_value; });
+    return result;
+  } catch(e) { return {}; }
+}
+// --- END SYNC HELPERS ---
 const TODAY_DATE=(()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
 
 // --- MENSUAL HELPERS ---
@@ -5765,31 +5801,22 @@ export default function App() {
       const maxAllowed=c.total+pausedInDates;
       if(c.dates.length>maxAllowed){console.warn("[GUARD] "+s.name+" combo dates "+c.dates.length+" > max "+maxAllowed+". Capping.");c.dates=c.dates.slice(0,maxAllowed);}
     }});});}
-    setStudentsRaw(next);lsSet("izi_students",next);};
-  const setClasses=(v)=>{const next=typeof v==="function"?v(classes):v;setClassesRaw(next);lsSet("izi_classes",next);};
-  const setCourts=(v)=>{const next=typeof v==="function"?v(courts):v;setCourtsRaw(next);lsSet("izi_courts",next);};
-  const setPackages=(v)=>{const next=typeof v==="function"?v(packages):v;setPackagesRaw(next);lsSet("izi_packages",next);};
+    setStudentsRaw(next);lsSet("izi_students",next);syncToSupabase(window._iziUserId,"students",next);};
+  const setClasses=(v)=>{const next=typeof v==="function"?v(classes):v;setClassesRaw(next);lsSet("izi_classes",next);syncToSupabase(window._iziUserId,"classes",next);};
+  const setCourts=(v)=>{const next=typeof v==="function"?v(courts):v;setCourtsRaw(next);lsSet("izi_courts",next);syncToSupabase(window._iziUserId,"courts",next);};
+  const setPackages=(v)=>{const next=typeof v==="function"?v(packages):v;setPackagesRaw(next);lsSet("izi_packages",next);syncToSupabase(window._iziUserId,"packages",next);};
   const setCoachProfile=(v)=>{const next=typeof v==="function"?v(coachProfile):v;setCoachProfileRaw(next);lsSet("izi_profile",next);if(window._iziUserId)supabase.from("coaches").upsert({id:window._iziUserId,...next}).then(res=>{if(res.error)console.error("Coach profile upsert error:",res.error.message);else console.log("Coach profile saved to Supabase");});};
-  const setExpenses=(v)=>{const next=typeof v==="function"?v(expenses):v;setExpensesRaw(next);lsSet("izi_expenses",next);};
+  const setExpenses=(v)=>{const next=typeof v==="function"?v(expenses):v;setExpensesRaw(next);lsSet("izi_expenses",next);syncToSupabase(window._iziUserId,"expenses",next);};
 
   const loadData=async(userId)=>{
     try {
-      const {data}=await supabase.from("coach_data").select("*").eq("coach_id",userId).single();
-      if(data){
-        const tryParse=(str,fallback=[])=>{
-          try{const p=JSON.parse(str);return Array.isArray(p)?p:fallback;}catch{return fallback;}
-        };
-        const students=tryParse(data.students);
-        const classes=tryParse(data.classes);
-        const expenses=tryParse(data.expenses);
-        const courts=tryParse(data.courts);
-        const packages=tryParse(data.packages);
-        // Always trust server data — including empty arrays (e.g. coach deleted all students)
-        setStudentsRaw(students);lsSet("izi_students",students);
-        setClassesRaw(classes);lsSet("izi_classes",classes);
-        setExpensesRaw(expenses);lsSet("izi_expenses",expenses);
-        setCourtsRaw(courts);lsSet("izi_courts",courts);
-        setPackagesRaw(packages);lsSet("izi_packages",packages);
+      const allData=await loadAllFromSupabase(userId);
+      if(Object.keys(allData).length>0){
+        if(allData.students){setStudentsRaw(allData.students);lsSet("izi_students",allData.students);}
+        if(allData.classes){setClassesRaw(allData.classes);lsSet("izi_classes",allData.classes);}
+        if(allData.expenses){setExpensesRaw(allData.expenses);lsSet("izi_expenses",allData.expenses);}
+        if(allData.courts){setCourtsRaw(allData.courts);lsSet("izi_courts",allData.courts);}
+        if(allData.packages){setPackagesRaw(allData.packages);lsSet("izi_packages",allData.packages);}
       }
       // Also load coach profile (name, phone, email, sport, photo, currency)
       const {data:profileData}=await supabase.from("coaches").select("*").eq("id",userId).single();
@@ -5893,8 +5920,8 @@ export default function App() {
 
   const handleLogout=async()=>{
     await supabase.auth.signOut();
-    // Only clear session-related keys, preserve user data
-    ["izi_mode","izi_onboarded"].forEach(k=>localStorage.removeItem(k));
+    // Clear all izi_ keys so next user gets fresh data from Supabase
+    Object.keys(localStorage).filter(k=>k.startsWith("izi_")).forEach(k=>localStorage.removeItem(k));
     setUserWithRef(null);
     window._iziUserId=null;
     setStudentsRaw([]);setClassesRaw([]);setCourtsRaw([]);setPackagesRaw([]);
