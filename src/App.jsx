@@ -3433,7 +3433,15 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
     onUpdate({...s,combos:updatedCombos});
     if(addIncome&&parseInt(localAmount)>0){
       const qty=parseInt(localClasses)||0;
-      const detail=pagoTipo==="mensual"?"Plan Mensual":qty===1?"1 clase":qty+" clases";
+      const MESES_FIN=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+      let detail="";
+      if(pagoTipo==="mensual"){
+        const pm=localPayMonth||TODAY_DATE.slice(0,7);
+        const [,pmm]=pm.split("-");
+        detail="Mensualidad "+MESES_FIN[parseInt(pmm)-1];
+      } else {
+        detail=qty===1?"1 clase":qty+" clases";
+      }
       addIncome(parseInt(localAmount), localPayDate||TODAY, s.name, detail);
     }
     setStep("success");
