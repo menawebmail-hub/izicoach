@@ -4188,7 +4188,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
                   <>
                     <WhiteCard style={{marginBottom:14}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-                        <div style={{fontSize:15,fontWeight:800,color:C.text}}>{"📦 "+p.qty+" clase"+(p.qty>1?"s":"")+" pagadas"}</div>
+                        <div style={{fontSize:15,fontWeight:800,color:C.text}}>{p.detail?("📅 "+p.detail):("📦 "+p.qty+" clase"+(p.qty>1?"s":"")+" pagadas")}</div>
                         <button onClick={()=>setShowComprobante({...p,studentName:s.name})} style={{background:C.blueL,border:"1px solid "+C.border,borderRadius:10,padding:"6px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
                           <span style={{fontSize:11,fontWeight:700,color:C.blue2}}>Compartir</span>
@@ -4199,6 +4199,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
                           {l:"Fecha de pago",v:fmtDate(p.date||TODAY_DATE)},
                           {l:"Monto",v:fmtMoneyShort(p.amount)},
                           {l:"Forma de pago",v:methodLabel[p.method]||"💵 Efectivo"},
+                          ...(p.detail?[{l:"Período",v:p.detail}]:[]),
                           {l:"Estado",v:"✓ Pagado"},
                         ].map(f=>(
                           <div key={f.l}>
