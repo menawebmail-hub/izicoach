@@ -1712,6 +1712,7 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
   const [clsSt,setClsSt]=useState(()=>(cls.students||[]).filter(sid=>initialStudents.some(s=>s.id===sid)));
   const [query,setQuery]=useState("");
   const [showCreateStudent,setShowCreateStudent]=useState(false);
+  const [searchSt,setSearchSt]=useState("");
   const [allStudents,setAllStudents]=useState(initialStudents);
   // Per-student package/amount editing
   const [studentPacks,setStudentPacks]=useState(()=>{
@@ -1773,6 +1774,29 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
             <label style={{fontSize:13,color:C.blue,fontWeight:700}}>Alumnos</label>
             <button onClick={()=>setShowCreateStudent(true)} style={{padding:"6px 12px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:11,cursor:"pointer",fontWeight:800,letterSpacing:0.3}}>+ CREAR ALUMNO</button>
           </div>
+          {/* Search existing students */}
+          {(()=>{
+            const available=allStudents.filter(s=>!clsSt.includes(s.id));
+            if(available.length===0) return null;
+            return (
+              <div style={{marginBottom:10}}>
+                <input value={searchSt||""} onChange={e=>setSearchSt(e.target.value)} placeholder="Buscar alumno existente..." style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:12,boxSizing:"border-box",background:C.bg,color:C.text,outline:"none"}}/>
+                {searchSt&&searchSt.length>=1&&(
+                  <div style={{background:C.white,border:"1.5px solid "+C.border,borderRadius:10,marginTop:4,maxHeight:120,overflowY:"auto"}}>
+                    {available.filter(s=>s.name.toLowerCase().includes(searchSt.toLowerCase())).slice(0,5).map(s=>(
+                      <div key={s.id} onClick={()=>{setClsSt(prev=>[...prev,s.id]);setSearchSt("");}} style={{padding:"10px 12px",cursor:"pointer",fontSize:13,fontWeight:600,color:C.text,borderBottom:"1px solid "+C.border,display:"flex",alignItems:"center",gap:8}}>
+                        <div style={{width:24,height:24,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:C.white}}>{s.avatar}</div>
+                        {s.name}
+                      </div>
+                    ))}
+                    {available.filter(s=>s.name.toLowerCase().includes(searchSt.toLowerCase())).length===0&&(
+                      <div style={{padding:"10px 12px",fontSize:12,color:C.mutedDark}}>No encontrado</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           {clsSt.map(sid=>{const st=allStudents.find(s=>s.id===sid);return st?(
             <div key={sid} style={{borderRadius:12,background:C.white,border:"1.5px solid "+C.border,marginBottom:8,overflow:"hidden"}}>
               <div style={{display:"flex",alignItems:"center",gap:12,padding:"10px 12px"}}>
@@ -6103,7 +6127,7 @@ export default function App() {
         // With new format, the series is a single object — just update it
         setClasses(p=>p.map(c=>{
           if(c.id===realId){
-            return {...c,...cd,id:realId,date:c.date,occurrences:c.occurrences};
+            return {...c,...cd,id:realId,date:c.date,occurrences:cd.occurrences||c.occurrences};
           }
           return c;
         }));
@@ -6168,7 +6192,15 @@ export default function App() {
             combos[combos.length-1]={...lastCombo,paid:true,paidCount:lastCombo.total||0,payments:[...(lastCombo.payments||[]),paymentRecord]};
             return {...s,combos};
           }
-          if(hasActiveCombo) return s; // don't modify - just editing the class
+          // If active combo exists but has no package or different package, update it
+          if(hasActiveCombo&&lastCombo){
+            const needsUpdate=!lastCombo.packType||lastCombo.packType!==packType||(lastCombo.total!==qty&&qty!==null);
+            if(needsUpdate){
+              combos[combos.length-1]={...lastCombo,total:qty,packType,packId:sp.packId||sp.pack||"",amount:sp.amount||pkg?.price||lastCombo.amount||0,...(isMensual?{cobroDia:sp.cobroDia||parseInt((cd.date||TODAY_DATE).split("-")[2])||1,graciaDias:5,currency:"PYG",mensualidades:[]}:{})};
+              return {...s,combos};
+            }
+            return s;
+          }
           // Create NEW combo when last combo is expired (last date is in the past)
           if(!lastDate||lastComboFullyUsed){
             const startDate=cd.date||today;
