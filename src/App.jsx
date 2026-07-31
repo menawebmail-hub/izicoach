@@ -5830,12 +5830,28 @@ export default function App() {
   const loadData=async(userId)=>{
     try {
       const allData=await loadAllFromSupabase(userId);
-      if(Object.keys(allData).length>0){
-        if(allData.students){setStudentsRaw(allData.students);lsSet("izi_students",allData.students);}
-        if(allData.classes){setClassesRaw(allData.classes);lsSet("izi_classes",allData.classes);}
-        if(allData.expenses){setExpensesRaw(allData.expenses);lsSet("izi_expenses",allData.expenses);}
-        if(allData.courts){setCourtsRaw(allData.courts);lsSet("izi_courts",allData.courts);}
-        if(allData.packages){setPackagesRaw(allData.packages);lsSet("izi_packages",allData.packages);}
+      const hasRemoteData=Object.keys(allData).length>0&&Object.values(allData).some(v=>Array.isArray(v)&&v.length>0);
+      if(hasRemoteData){
+        // Supabase has data → use it
+        if(allData.students&&allData.students.length>0){setStudentsRaw(allData.students);lsSet("izi_students",allData.students);}
+        if(allData.classes&&allData.classes.length>0){setClassesRaw(allData.classes);lsSet("izi_classes",allData.classes);}
+        if(allData.expenses&&allData.expenses.length>0){setExpensesRaw(allData.expenses);lsSet("izi_expenses",allData.expenses);}
+        if(allData.courts&&allData.courts.length>0){setCourtsRaw(allData.courts);lsSet("izi_courts",allData.courts);}
+        if(allData.packages&&allData.packages.length>0){setPackagesRaw(allData.packages);lsSet("izi_packages",allData.packages);}
+      } else {
+        // Supabase is empty but localStorage has data → push local to Supabase
+        const localStudents=ls("izi_students",[]);
+        const localClasses=ls("izi_classes",[]);
+        const localExpenses=ls("izi_expenses",[]);
+        const localCourts=ls("izi_courts",[]);
+        const localPackages=ls("izi_packages",[]);
+        if(localStudents.length>0||localClasses.length>0){
+          syncToSupabase(userId,"students",localStudents);
+          syncToSupabase(userId,"classes",localClasses);
+          syncToSupabase(userId,"expenses",localExpenses);
+          syncToSupabase(userId,"courts",localCourts);
+          syncToSupabase(userId,"packages",localPackages);
+        }
       }
       // Also load coach profile (name, phone, email, sport, photo, currency)
       const {data:profileData}=await supabase.from("coaches").select("*").eq("id",userId).single();
@@ -5936,8 +5952,21 @@ export default function App() {
   },[]);
 
   const handleLogout=async()=>{
+    // Sync current data to Supabase BEFORE clearing
+    if(window._iziUserId){
+      const uid=window._iziUserId;
+      const ls2=k=>{try{return JSON.parse(localStorage.getItem(k))||[];}catch{return[];}};
+      await Promise.all([
+        syncToSupabase(uid,"students",ls2("izi_students")),
+        syncToSupabase(uid,"classes",ls2("izi_classes")),
+        syncToSupabase(uid,"expenses",ls2("izi_expenses")),
+        syncToSupabase(uid,"courts",ls2("izi_courts")),
+        syncToSupabase(uid,"packages",ls2("izi_packages")),
+      ]);
+      // Wait for debounced syncs to complete
+      await new Promise(r=>setTimeout(r,600));
+    }
     await supabase.auth.signOut();
-    // Clear all izi_ keys so next user gets fresh data from Supabase
     Object.keys(localStorage).filter(k=>k.startsWith("izi_")).forEach(k=>localStorage.removeItem(k));
     setUserWithRef(null);
     window._iziUserId=null;
