@@ -38,11 +38,10 @@ const C = {
 
 // --- SUPABASE SYNC HELPERS ---
 const _syncQueue={};
+const _syncPrevLen={};
 function syncToSupabase(coachId, key, value) {
   if(!coachId||typeof coachId!=="string"||coachId.length<10) return;
-  // Debounce per key - wait 2s after last change
-  if(_syncQueue[key]) clearTimeout(_syncQueue[key]);
-  _syncQueue[key]=setTimeout(async()=>{
+  const doSync=async()=>{
     try {
       await supabase.from("coach_data").upsert({
         coach_id: coachId,
@@ -51,7 +50,19 @@ function syncToSupabase(coachId, key, value) {
         updated_at: new Date().toISOString()
       }, { onConflict: "coach_id,data_key" });
     } catch(e) { console.warn("Sync error:", key, e); }
-  },2000);
+  };
+  // Detect delete: array got shorter → sync immediately
+  const prevLen=_syncPrevLen[key]||0;
+  const curLen=Array.isArray(value)?value.length:0;
+  _syncPrevLen[key]=curLen;
+  if(curLen<prevLen&&prevLen>0){
+    if(_syncQueue[key]) clearTimeout(_syncQueue[key]);
+    doSync();
+    return;
+  }
+  // Normal update: debounce 500ms
+  if(_syncQueue[key]) clearTimeout(_syncQueue[key]);
+  _syncQueue[key]=setTimeout(doSync,500);
 }
 async function loadFromSupabase(coachId, key) {
   if(!coachId) return null;
