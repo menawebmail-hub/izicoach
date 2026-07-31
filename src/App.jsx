@@ -1892,7 +1892,7 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
             const preserved=(cls.occurrences||[]).filter(d=>d<sd);
             newOccurrences=[...new Set([...preserved,...result])].sort();
           }
-          onSave({...cls,title,court,days,time:t1,timeEnd:t2,students:clsSt,studentPacks,occurrences:newOccurrences});
+          onSave({...cls,title,court,days,time:t1,timeEnd:t2,students:clsSt,studentPacks,occurrences:newOccurrences,applyToAll:true},true);
         }} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:10}}>Actualizar Clase</button>
         <button onClick={()=>{if(window.confirm("¿Eliminar esta clase? Todas las instancias serán eliminadas del calendario.")) {onDelete&&onDelete(cls.id);onClose();}}} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"#FFF0F0",color:"#D32F2F",fontSize:15,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:20}}>🗑 Eliminar Clase</button>
       </div>
