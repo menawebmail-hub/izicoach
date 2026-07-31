@@ -37,16 +37,21 @@ const C = {
 
 
 // --- SUPABASE SYNC HELPERS ---
-async function syncToSupabase(coachId, key, value) {
-  if(!coachId) return;
-  try {
-    await supabase.from("coach_data").upsert({
-      coach_id: coachId,
-      data_key: key,
-      data_value: value,
-      updated_at: new Date().toISOString()
-    }, { onConflict: "coach_id,data_key" });
-  } catch(e) { console.warn("Sync error:", key, e); }
+const _syncQueue={};
+function syncToSupabase(coachId, key, value) {
+  if(!coachId||typeof coachId!=="string"||coachId.length<10) return;
+  // Debounce per key - wait 2s after last change
+  if(_syncQueue[key]) clearTimeout(_syncQueue[key]);
+  _syncQueue[key]=setTimeout(async()=>{
+    try {
+      await supabase.from("coach_data").upsert({
+        coach_id: coachId,
+        data_key: key,
+        data_value: value,
+        updated_at: new Date().toISOString()
+      }, { onConflict: "coach_id,data_key" });
+    } catch(e) { console.warn("Sync error:", key, e); }
+  },2000);
 }
 async function loadFromSupabase(coachId, key) {
   if(!coachId) return null;
