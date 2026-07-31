@@ -295,10 +295,13 @@ function isNextComboPending(cls, students) {
   return clsStudents.some(s=>{
     const combos=(s.combos||[]).filter(c=>c.total>0||(c.packType&&c.packType!=="mensual"));
     if(combos.length===0) return false;
-    // Check 1: if date is explicitly in any combo's dates → covered
+    // Check if date is explicitly in any combo's dates → always covered
     const coveredDates=new Set(combos.flatMap(c=>c.dates||[]));
     if(coveredDates.has(cls.date)) return false;
-    // Check 2: if date is within first N occurrences (implicit coverage)
+    // Check if date is in gap between combo dates (e.g. between paused and resumed)
+    const allDates=[...coveredDates].sort();
+    if(allDates.length>0&&cls.date>allDates[0]&&cls.date<allDates[allDates.length-1]) return true;
+    // Check via occurrences
     const occ=cls.occurrences||[];
     if(occ.length===0) return false;
     const totalSlots=combos.reduce((sum,c)=>sum+(c.total||0),0);
@@ -307,19 +310,8 @@ function isNextComboPending(cls, students) {
     const firstPausedIdx=occ.findIndex(d=>dc[d]&&dc[d].cancelType==="paused");
     const allAfterFirstPaused=firstPausedIdx>=0&&occ.slice(firstPausedIdx).every(d=>dc[d]&&dc[d].cancelType==="paused");
     const pausedExtension=(!allAfterFirstPaused&&pausedOcc.length>0)?pausedOcc.length:0;
-    // Only count non-paused occurrences as covered
-    let coveredCount=0;
-    for(let i=0;i<occ.length;i++){
-      if(dc[occ[i]]&&dc[occ[i]].cancelType==="paused") continue;
-      coveredCount++;
-      if(coveredCount>totalSlots) break;
-      if(occ[i]===cls.date) return false;
-    }
-    // Check 3: if date is between first and last combo date but NOT in dates → grey (gap)
-    const allDates=[...coveredDates].sort();
-    if(allDates.length>0&&cls.date>allDates[0]&&cls.date<allDates[allDates.length-1]) return true;
-    // After all combo dates → grey
-    return true;
+    const coveredOcc=occ.slice(0,totalSlots+pausedExtension);
+    return !coveredOcc.includes(cls.date);
   });
 }
 function getRem(s, classes=[]) {
