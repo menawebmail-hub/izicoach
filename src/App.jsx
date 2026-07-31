@@ -6119,21 +6119,22 @@ export default function App() {
         }));
         // If occurrences changed, update student combo dates to match new schedule
         if(occChanged&&cd.students){
-          setStudents(p=>p.map(s=>{
-            if(!(cd.students||[]).includes(s.id)) return s;
-            const combos2=[...(s.combos||[])];
-            let lastIdx=-1;
-            for(let ci=combos2.length-1;ci>=0;ci--){
-              if(combos2[ci].dates&&combos2[ci].packType!=="mensual"){lastIdx=ci;break;}
-            }
-            if(lastIdx===-1) return s;
-            const combo=combos2[lastIdx];
-            const total=combo.total||combo.dates.length;
-            // Map old dates to new occurrences (same position)
-            const newDates=newOcc.slice(0,total);
-            combos2[lastIdx]={...combo,dates:newDates};
-            return {...s,combos:combos2};
-          }));
+          setTimeout(()=>{
+            setStudents(p=>p.map(s=>{
+              if(!(cd.students||[]).includes(s.id)) return s;
+              const combos2=[...(s.combos||[])];
+              let lastIdx=-1;
+              for(let ci=combos2.length-1;ci>=0;ci--){
+                if(combos2[ci].dates&&combos2[ci].packType!=="mensual"){lastIdx=ci;break;}
+              }
+              if(lastIdx===-1) return s;
+              const combo=combos2[lastIdx];
+              const total=combo.total||combo.dates.length;
+              const newDates=newOcc.slice(0,total);
+              combos2[lastIdx]={...combo,dates:newDates};
+              return {...s,combos:combos2};
+            }));
+          },200);
         }
       } else {
         setClasses(p=>p.map(c=>c.id===realId?{...c,...cd,id:realId}:c));
