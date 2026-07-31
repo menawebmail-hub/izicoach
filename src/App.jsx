@@ -5751,18 +5751,8 @@ export default function App() {
   const lsSet=(key,val)=>{try{localStorage.setItem(key,JSON.stringify(val));}catch{}};
   const [user,setUser]=useState(null);
   const setUserWithRef=(u)=>{setUser(u);window._iziUserId=u?.id||null;if(u?.id)lsSet("izi_userId",u.id);};
-  // Restore userId immediately from localStorage or Supabase session
-  if(!window._iziUserId){
-    const savedId=ls("izi_userId",null);
-    if(savedId){window._iziUserId=savedId;}
-    else{
-      // Try to extract from Supabase's own localStorage keys
-      try{
-        const sbKey=Object.keys(localStorage).find(k=>k.startsWith("sb-")&&k.endsWith("-auth-token"));
-        if(sbKey){const sbData=JSON.parse(localStorage.getItem(sbKey));if(sbData?.user?.id){window._iziUserId=sbData.user.id;lsSet("izi_userId",sbData.user.id);}}
-      }catch(e){}
-    }
-  }
+  // Restore userId from localStorage (set after first successful login)
+  if(!window._iziUserId){const savedId=ls("izi_userId",null);if(savedId)window._iziUserId=savedId;}
   const [loadingAuth,setLoadingAuth]=useState(true);
   const [checkingProfile,setCheckingProfile]=useState(false);
 
