@@ -5803,19 +5803,12 @@ export default function App() {
   const syncAll=async(newStudents, newClasses, newExpenses, newCourts, newPackages)=>{
     const userId=window._iziUserId;
     if(!userId) return;
-    // Validate data before saving - must be arrays
     if(!Array.isArray(newStudents)||!Array.isArray(newClasses)) return;
-    try {
-      await supabase.from("coach_data").upsert({
-        coach_id:userId,
-        students:JSON.stringify(newStudents||[]),
-        classes:JSON.stringify(newClasses||[]),
-        expenses:JSON.stringify(newExpenses||[]),
-        courts:JSON.stringify(newCourts||[]),
-        packages:JSON.stringify(newPackages||[]),
-        updated_at:new Date().toISOString(),
-      },{onConflict:"coach_id"});
-    } catch(e){ console.error("Sync error:",e); }
+    syncToSupabase(userId,"students",newStudents||[]);
+    syncToSupabase(userId,"classes",newClasses||[]);
+    syncToSupabase(userId,"expenses",newExpenses||[]);
+    syncToSupabase(userId,"courts",newCourts||[]);
+    syncToSupabase(userId,"packages",newPackages||[]);
   };
 
   // Wrapped setters that persist to localStorage (Supabase sync handled by debounced useEffect)
@@ -6044,24 +6037,15 @@ export default function App() {
     // Remove expenses related to this class's students
     const studentNames=(cls.students||[]).map(sid=>students.find(s=>s.id===sid)?.name).filter(Boolean);
     const newExpenses=expenses.filter(e=>!(e.category==="Cobros clases"&&studentNames.includes(e.note)&&allDatesInSeries.has(e.date)));
-    // Update state and sync both together
+    // Update state
     setClassesRaw(newClasses);lsSet("izi_classes",newClasses);
     setStudentsRaw(newStudents);lsSet("izi_students",newStudents);
     setExpensesRaw(newExpenses);lsSet("izi_expenses",newExpenses);
+    // Sync to Supabase immediately
     if(window._iziUserId){
-      const userId=window._iziUserId;
-      loadAllFromSupabase(userId).then((existing)=>{
-        const row={
-          coach_id:userId,
-          students:JSON.stringify(newStudents),
-          classes:JSON.stringify(newClasses),
-          expenses:JSON.stringify(newExpenses),
-          courts:existing?.courts||'[]',
-          packages:existing?.packages||'[]',
-          updated_at:new Date().toISOString(),
-        };
-        supabase.from("coach_data").upsert(row,{onConflict:"coach_id"});
-      });
+      syncToSupabase(window._iziUserId,"classes",newClasses);
+      syncToSupabase(window._iziUserId,"students",newStudents);
+      syncToSupabase(window._iziUserId,"expenses",newExpenses);
     }
   };
 
