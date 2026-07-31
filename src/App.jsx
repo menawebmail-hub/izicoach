@@ -1777,20 +1777,7 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
           {(()=>{
             const available=allStudents.filter(s=>!clsSt.includes(s.id));
             if(available.length===0) return null;
-            return (<div style={{marginBottom:10}}>
-              <input value={searchSt||""} onChange={e=>setSearchSt(e.target.value)} placeholder="Buscar alumno existente..." style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:12,boxSizing:"border-box",background:C.bg,color:C.text,outline:"none"}}/>
-              {searchSt&&searchSt.length>=1&&(<div style={{background:C.white,border:"1.5px solid "+C.border,borderRadius:10,marginTop:4,maxHeight:120,overflowY:"auto"}}>
-                {available.filter(s=>s.name.toLowerCase().includes(searchSt.toLowerCase())).slice(0,5).map(s=>(
-                  <div key={s.id} onClick={()=>{setClsSt(prev=>[...prev,s.id]);setSearchSt("");}} style={{padding:"10px 12px",cursor:"pointer",fontSize:13,fontWeight:600,color:C.text,borderBottom:"1px solid "+C.border,display:"flex",alignItems:"center",gap:8}}>
-                    <div style={{width:24,height:24,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:C.white}}>{s.avatar}</div>
-                    {s.name}
-                  </div>
-                ))}
-                {available.filter(s=>s.name.toLowerCase().includes(searchSt.toLowerCase())).length===0&&(
-                  <div style={{padding:"10px 12px",fontSize:12,color:C.mutedDark}}>No encontrado</div>
-                )}
-              </div>)}
-            </div>);
+            return null; // Use the existing search below instead
           })()}
           {clsSt.map(sid=>{const st=allStudents.find(s=>s.id===sid);return st?(
             <div key={sid} style={{borderRadius:12,background:C.white,border:"1.5px solid "+C.border,marginBottom:8,overflow:"hidden"}}>
@@ -6119,13 +6106,35 @@ export default function App() {
       }
 
       if(cd.applyToAll){
+        const oldClass=classes.find(c=>c.id===realId);
+        const oldOcc=oldClass?.occurrences||[];
+        const newOcc=cd.occurrences||oldOcc;
+        const occChanged=JSON.stringify(oldOcc)!==JSON.stringify(newOcc);
         // With new format, the series is a single object — just update it
         setClasses(p=>p.map(c=>{
           if(c.id===realId){
-            return {...c,...cd,id:realId,date:c.date,occurrences:cd.occurrences||c.occurrences};
+            return {...c,...cd,id:realId,date:c.date,occurrences:newOcc};
           }
           return c;
         }));
+        // If occurrences changed, update student combo dates to match new schedule
+        if(occChanged&&cd.students){
+          setStudents(p=>p.map(s=>{
+            if(!(cd.students||[]).includes(s.id)) return s;
+            const combos2=[...(s.combos||[])];
+            let lastIdx=-1;
+            for(let ci=combos2.length-1;ci>=0;ci--){
+              if(combos2[ci].dates&&combos2[ci].packType!=="mensual"){lastIdx=ci;break;}
+            }
+            if(lastIdx===-1) return s;
+            const combo=combos2[lastIdx];
+            const total=combo.total||combo.dates.length;
+            // Map old dates to new occurrences (same position)
+            const newDates=newOcc.slice(0,total);
+            combos2[lastIdx]={...combo,dates:newDates};
+            return {...s,combos:combos2};
+          }));
+        }
       } else {
         setClasses(p=>p.map(c=>c.id===realId?{...c,...cd,id:realId}:c));
       }
