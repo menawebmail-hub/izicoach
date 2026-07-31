@@ -5057,11 +5057,12 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
       const cId=coachId||(localStorage.getItem("izi_student_coach_id")?.replace(/"/g,""));
       const studentIdRaw=localStorage.getItem("izi_student_id_raw");
       if(cId&&studentIdRaw){
-        const {data}=await supabase.from("coach_data").select("students").eq("coach_id",cId).single();
-        if(data?.students){
-          const studs=JSON.parse(data.students);
+        const {data:rows}=await supabase.from("coach_data").select("data_value").eq("coach_id",cId).eq("data_key","students");
+        const studData=rows&&rows[0]?rows[0].data_value:null;
+        if(studData){
+          const studs=Array.isArray(studData)?studData:JSON.parse(studData);
           const updated=studs.map(s=>String(s.id)===studentIdRaw?{...s,name:student.name,phone:student.phone||"",email:student.email||""}:s);
-          await supabase.from("coach_data").update({students:JSON.stringify(updated)}).eq("coach_id",cId);
+          await supabase.from("coach_data").upsert({coach_id:cId,data_key:"students",data_value:updated,updated_at:new Date().toISOString()},{onConflict:"coach_id,data_key"});
           localStorage.setItem("izi_students",JSON.stringify(updated));
         }
       }
@@ -5902,12 +5903,10 @@ export default function App() {
             lsSet("izi_student_coach_id", sa.coach_id);
             localStorage.setItem("izi_student_id_raw", String(sa.student_id));
             try{
-              const {data:cd}=await supabase.from("coach_data").select("*").eq("coach_id",sa.coach_id).single();
-              if(cd){
-                const tryP=(s,f=[])=>{try{const p=JSON.parse(s);return Array.isArray(p)?p:f;}catch{return f;}};
-                const s=tryP(cd.students);const cl=tryP(cd.classes);
-                if(s.length>0){setStudentsRaw(s);lsSet("izi_students",s);}
-                if(cl.length>0){setClassesRaw(cl);lsSet("izi_classes",cl);}
+              const allD=await loadAllFromSupabase(sa.coach_id);
+              if(Object.keys(allD).length>0){
+                if(allD.students){setStudentsRaw(allD.students);lsSet("izi_students",allD.students);}
+                if(allD.classes){setClassesRaw(allD.classes);lsSet("izi_classes",allD.classes);}
               }
             }catch(e){console.error("student load error:",e);}
             setModeP("student_portal");
@@ -6051,7 +6050,7 @@ export default function App() {
     setExpensesRaw(newExpenses);lsSet("izi_expenses",newExpenses);
     if(window._iziUserId){
       const userId=window._iziUserId;
-      supabase.from("coach_data").select("*").eq("coach_id",userId).single().then(({data:existing})=>{
+      loadAllFromSupabase(userId).then((existing)=>{
         const row={
           coach_id:userId,
           students:JSON.stringify(newStudents),
@@ -6482,10 +6481,9 @@ export default function App() {
             lsSet("izi_student_coach_id", sa.coach_id);
             localStorage.setItem("izi_student_id_raw", String(sa.student_id));
             try{
-              const {data:cd}=await supabase.from("coach_data").select("*").eq("coach_id",sa.coach_id).single();
-              if(cd){
-                const tryP=(s,f=[])=>{try{const p=JSON.parse(s);return Array.isArray(p)?p:f;}catch{return f;}};
-                const s=tryP(cd.students);const cl=tryP(cd.classes);
+              const allD4=await loadAllFromSupabase(sa.coach_id);
+              if(Object.keys(allD4).length>0){
+                const s=allD4.students||[];const cl=allD4.classes||[];
                 if(s.length>0){setStudentsRaw(s);lsSet("izi_students",s);}
                 if(cl.length>0){setClassesRaw(cl);lsSet("izi_classes",cl);}
               }
@@ -6501,7 +6499,7 @@ export default function App() {
         lsSet("izi_student_coach_id", inviteInfo.coach_id);
         localStorage.setItem("izi_student_id_raw", String(inviteInfo.student_id));
         try{
-          const {data}=await supabase.from("coach_data").select("*").eq("coach_id",inviteInfo.coach_id).single();
+          const allD3=await loadAllFromSupabase(inviteInfo.coach_id);const data=allD3;
           if(data){
             const tryP=(s,f=[])=>{try{const p=JSON.parse(s);return Array.isArray(p)?p:f;}catch{return f;}};
             const s=tryP(data.students);const cl=tryP(data.classes);
