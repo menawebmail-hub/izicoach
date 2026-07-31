@@ -284,17 +284,18 @@ function isNextComboPending(cls, students) {
   return clsStudents.some(s=>{
     const combos=(s.combos||[]).filter(c=>c.total>0||(c.packType&&c.packType!=="mensual"));
     if(combos.length===0) return false;
-    const coveredDates=new Set(combos.flatMap(c=>c.dates||[]));
-    // If the date is in the combo → not grey
-    if(coveredDates.has(cls.date)) return false;
-    const allDates=combos.flatMap(c=>c.dates||[]).sort();
-    const lastDate=allDates[allDates.length-1]||"";
-    if(!lastDate) return false;
-    // If date is after the last combo date → grey
-    if(cls.date>lastDate) return true;
-    // If date is between first and last combo date but NOT in combo → grey (gap)
-    if(cls.date>allDates[0]&&cls.date<lastDate) return true;
-    return false;
+    const occ=cls.occurrences||[];
+    if(occ.length===0) return false;
+    const totalSlots=combos.reduce((sum,c)=>sum+(c.total||0),0);
+    // Count paused dates and check if resume occurred
+    const dc=cls.dateCancellations||{};
+    const pausedOcc=occ.filter(d=>dc[d]&&dc[d].cancelType==="paused");
+    const firstPausedIdx=occ.findIndex(d=>dc[d]&&dc[d].cancelType==="paused");
+    const allAfterFirstPaused=firstPausedIdx>=0&&occ.slice(firstPausedIdx).every(d=>dc[d]&&dc[d].cancelType==="paused");
+    // Only extend for paused if there was a resume (not all paused from that point)
+    const pausedExtension=(!allAfterFirstPaused&&pausedOcc.length>0)?pausedOcc.length:0;
+    const coveredOcc=occ.slice(0,totalSlots+pausedExtension);
+    return !coveredOcc.includes(cls.date);
   });
 }
 function getRem(s, classes=[]) {
