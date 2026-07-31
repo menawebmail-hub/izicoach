@@ -5749,7 +5749,9 @@ export default function App() {
   const ls=(key,def)=>{try{const v=localStorage.getItem(key);return v?JSON.parse(v):def;}catch{return def;}};
   const lsSet=(key,val)=>{try{localStorage.setItem(key,JSON.stringify(val));}catch{}};
   const [user,setUser]=useState(null);
-  const setUserWithRef=(u)=>{setUser(u);window._iziUserId=u?.id||null;};
+  const setUserWithRef=(u)=>{setUser(u);window._iziUserId=u?.id||null;if(u?.id)lsSet("izi_userId",u.id);};
+  // Restore userId from localStorage immediately (before auth completes)
+  if(!window._iziUserId){const savedId=ls("izi_userId",null);if(savedId)window._iziUserId=savedId;}
   const [loadingAuth,setLoadingAuth]=useState(true);
   const [checkingProfile,setCheckingProfile]=useState(false);
 
