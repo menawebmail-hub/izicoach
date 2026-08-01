@@ -1989,13 +1989,14 @@ function PauseModal({ cls, onClose, onPause }) {
   const [noDate,setNoDate]=useState(false);
 
   const handleConfirm=()=>{
-    if(noDate){
-      onPause({cls,resumeDate:null});
-      onClose();
-    } else if(hasDate&&resumeDate){
-      onPause({cls,resumeDate});
-      onClose();
-    }
+    try{
+      if(noDate){
+        onPause({cls,resumeDate:null});
+      } else if(hasDate&&resumeDate){
+        onPause({cls,resumeDate});
+      }
+    }catch(e){console.error("Pause error:",e);}
+    onClose();
   };
 
   const canConfirm=noDate||(hasDate&&resumeDate);
