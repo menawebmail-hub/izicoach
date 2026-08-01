@@ -1991,10 +1991,11 @@ function PauseModal({ cls, onClose, onPause }) {
   const handleConfirm=()=>{
     if(noDate){
       onPause({cls,resumeDate:null});
+      onClose();
     } else if(hasDate&&resumeDate){
       onPause({cls,resumeDate});
+      onClose();
     }
-    onClose();
   };
 
   const canConfirm=noDate||(hasDate&&resumeDate);
@@ -2003,8 +2004,8 @@ function PauseModal({ cls, onClose, onPause }) {
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.5)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
       <div style={{background:"#F5F7FF",borderRadius:"24px 24px 0 0",padding:"28px 20px",paddingBottom:"calc(40px + env(safe-area-inset-bottom, 34px))",width:"100%",maxHeight:"90vh",overflowY:"auto",boxSizing:"border-box"}}>
         <div style={{width:40,height:4,borderRadius:2,background:"#DDE3F0",margin:"0 auto 20px"}}></div>
-        <div style={{fontWeight:900,fontSize:19,color:"#0D1B4B",marginBottom:4}}>\u23f8 Pausar paquete</div>
-        <div style={{fontSize:13,color:"#6B7BAD",marginBottom:16}}>{cls.title} \u00b7 {fmtDate(cls.date)}</div>
+        <div style={{fontWeight:900,fontSize:19,color:"#0D1B4B",marginBottom:4}}>⏸ Pausar paquete</div>
+        <div style={{fontSize:13,color:"#6B7BAD",marginBottom:16}}>{cls.title} · {fmtDate(cls.date)}</div>
 
         <label style={{fontSize:13,color:"#1565C0",fontWeight:700,display:"block",marginBottom:12}}>Reanudar el: (opcional)</label>
 
@@ -2013,7 +2014,7 @@ function PauseModal({ cls, onClose, onPause }) {
           <div style={{width:22,height:22,borderRadius:6,border:"2px solid "+(hasDate?"#1565C0":"#ccc"),background:hasDate?"#1565C0":"#fff",display:"flex",alignItems:"center",justifyContent:"center"}}>
             {hasDate&&<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
           </div>
-          <span style={{fontSize:14,fontWeight:600,color:hasDate?"#1565C0":"#6B7BAD"}}>Tengo fecha de reanudaci\u00f3n</span>
+          <span style={{fontSize:14,fontWeight:600,color:hasDate?"#1565C0":"#6B7BAD"}}>Tengo fecha de reanudación</span>
         </div>
 
         {hasDate&&(
@@ -2028,23 +2029,23 @@ function PauseModal({ cls, onClose, onPause }) {
           <div style={{width:22,height:22,borderRadius:6,border:"2px solid "+(noDate?"#E65100":"#ccc"),background:noDate?"#E65100":"#fff",display:"flex",alignItems:"center",justifyContent:"center"}}>
             {noDate&&<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
           </div>
-          <span style={{fontSize:14,fontWeight:600,color:noDate?"#E65100":"#6B7BAD"}}>No tengo fecha de reanudaci\u00f3n</span>
+          <span style={{fontSize:14,fontWeight:600,color:noDate?"#E65100":"#6B7BAD"}}>No tengo fecha de reanudación</span>
         </div>
 
         {hasDate&&resumeDate&&(
           <div style={{background:"#E8F5E9",borderRadius:12,padding:"12px 14px",marginBottom:16,fontSize:12,color:"#2E7D32"}}>
-            El paquete se pausar\u00e1 desde <b>{fmtDate(cls.date)}</b> y se reanudar\u00e1 el <b>{fmtDate(resumeDate)}</b>. Las clases pausadas se agregar\u00e1n al final del combo.
+            El paquete se pausará desde <b>{fmtDate(cls.date)}</b> y se reanudará el <b>{fmtDate(resumeDate)}</b>. Las clases pausadas se agregarán al final del combo.
           </div>
         )}
         {noDate&&(
           <div style={{background:"#FFF3E0",borderRadius:12,padding:"12px 14px",marginBottom:16,fontSize:12,color:"#E65100"}}>
-            El paquete quedar\u00e1 pausado indefinidamente hasta que se indique una fecha de reanudaci\u00f3n. Podr\u00e1s definirla m\u00e1s adelante.
+            El paquete quedará pausado indefinidamente hasta que se indique una fecha de reanudación. Podrás definirla más adelante.
           </div>
         )}
 
         <div style={{display:"flex",gap:10}}>
           <button onClick={onClose} style={{flex:1,padding:"14px",borderRadius:14,border:"1.5px solid #DDE3F0",background:"#fff",cursor:"pointer",fontSize:14,color:"#6B7BAD",fontWeight:700}}>Cancelar</button>
-          <button onClick={handleConfirm} disabled={!canConfirm} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:!canConfirm?"#ccc":"linear-gradient(135deg,#E65100,#FF8F00)",color:"#fff",cursor:!canConfirm?"not-allowed":"pointer",fontSize:14,fontWeight:800,opacity:!canConfirm?0.5:1}}>\u23f8 Pausar paquete</button>
+          <button onClick={handleConfirm} disabled={!canConfirm} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:!canConfirm?"#ccc":"linear-gradient(135deg,#E65100,#FF8F00)",color:"#fff",cursor:!canConfirm?"not-allowed":"pointer",fontSize:14,fontWeight:800,opacity:!canConfirm?0.5:1}}>⏸ Pausar paquete</button>
         </div>
       </div>
     </div>
