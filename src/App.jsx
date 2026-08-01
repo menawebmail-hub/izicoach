@@ -5939,10 +5939,9 @@ export default function App() {
             lsSet("izi_student_coach_id", sa.coach_id);
             localStorage.setItem("izi_student_id_raw", String(sa.student_id));
             try{
-              const {data:cd}=loadAllFromSupabase(sa.coach_id);
-              if(cd){
-                const tryP=(s,f=[])=>{try{const p=JSON.parse(s);return Array.isArray(p)?p:f;}catch{return f;}};
-                const s=tryP(cd.students);const cl=tryP(cd.classes);
+              const cd=await loadAllFromSupabase(sa.coach_id);
+              if(Object.keys(cd).length>0){
+                const s=cd.students||[];const cl=cd.classes||[];
                 if(s.length>0){setStudentsRaw(s);lsSet("izi_students",s);}
                 if(cl.length>0){setClassesRaw(cl);lsSet("izi_classes",cl);}
               }
@@ -6526,10 +6525,9 @@ export default function App() {
             lsSet("izi_student_coach_id", sa.coach_id);
             localStorage.setItem("izi_student_id_raw", String(sa.student_id));
             try{
-              const {data:cd}=loadAllFromSupabase(sa.coach_id);
-              if(cd){
-                const tryP=(s,f=[])=>{try{const p=JSON.parse(s);return Array.isArray(p)?p:f;}catch{return f;}};
-                const s=tryP(cd.students);const cl=tryP(cd.classes);
+              const cd2=await loadAllFromSupabase(sa.coach_id);
+              if(Object.keys(cd2).length>0){
+                const s=cd2.students||[];const cl=cd2.classes||[];
                 if(s.length>0){setStudentsRaw(s);lsSet("izi_students",s);}
                 if(cl.length>0){setClassesRaw(cl);lsSet("izi_classes",cl);}
               }
@@ -6545,10 +6543,9 @@ export default function App() {
         lsSet("izi_student_coach_id", inviteInfo.coach_id);
         localStorage.setItem("izi_student_id_raw", String(inviteInfo.student_id));
         try{
-          const {data}=loadAllFromSupabase(inviteInfo.coach_id);
-          if(data){
-            const tryP=(s,f=[])=>{try{const p=JSON.parse(s);return Array.isArray(p)?p:f;}catch{return f;}};
-            const s=tryP(data.students);const cl=tryP(data.classes);
+          const cd3=await loadAllFromSupabase(inviteInfo.coach_id);
+          if(Object.keys(cd3).length>0){
+            const s=cd3.students||[];const cl=cd3.classes||[];
             if(s.length>0){setStudentsRaw(s);lsSet("izi_students",s);}
             if(cl.length>0){setClassesRaw(cl);lsSet("izi_classes",cl);}
           }
