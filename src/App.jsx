@@ -2938,14 +2938,17 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
         // First: un-pause dates >= resumeDate
         const realId=rCls._seriesId||rCls.id;
         onSaveClass({...rCls,date:rDate,_resuming:true,cancelled:false,cancelType:null,paused:false,applyToAll:false},true);
-        // Then: add new dates to class occurrences
+        // Then: add new dates to class occurrences (only pass occurrences, don't overwrite dateCancellations)
         setTimeout(()=>{
           const parentCls=(rawClasses||classes).find(c=>c.id===realId);
           if(parentCls){
             const occ=[...(parentCls.occurrences||[])];
             newDates.forEach(d=>{if(!occ.includes(d))occ.push(d);});
             occ.sort();
-            onSaveClass({...parentCls,occurrences:occ,applyToAll:true},true);
+            setClasses(p=>p.map(c=>{
+              if(c.id!==realId) return c;
+              return {...c,occurrences:occ};
+            }));
           }
         },150);
       }}/>}
