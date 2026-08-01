@@ -144,15 +144,16 @@ function getMensualEstado(combo){
 const WEEK_AGO=(()=>{const d=new Date();d.setDate(d.getDate()-7);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
 
 // Check if a class date+timeEnd has passed (dynamic - called at render time)
+const CLASS_DONE_MARGIN=30; // minutes after class ends before auto-realizing
 const isClassDone=(date,timeEnd)=>{
   if(!date) return false;
   const now=new Date();
   const todayStr=now.getFullYear()+"-"+String(now.getMonth()+1).padStart(2,"0")+"-"+String(now.getDate()).padStart(2,"0");
   if(date<todayStr) return true;
   if(date>todayStr) return false;
-  const nowTime=String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0");
-  const endTime=timeEnd||"23:59";
-  return nowTime>=endTime;
+  const [eh,em]=(timeEnd||"23:59").split(":").map(Number);
+  const endWithMargin=new Date(now.getFullYear(),now.getMonth(),now.getDate(),eh,em+CLASS_DONE_MARGIN);
+  return now>=endWithMargin;
 };
 
 // Currency formatting
@@ -2473,7 +2474,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
         const occ=[...(pc.occurrences||[])];
         newDatesPR.forEach(d=>{if(!occ.includes(d))occ.push(d);});
         occ.sort();
-        setClasses(p=>p.map(c=>c.id!==realIdPR?c:{...c,occurrences:occ}));
+        onSaveClass({...pc,occurrences:occ,applyToAll:true,_occOnly:true},true);
       }
     },150);
   },[pendingResume]);
@@ -3009,10 +3010,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
             const occ=[...(parentCls.occurrences||[])];
             newDates.forEach(d=>{if(!occ.includes(d))occ.push(d);});
             occ.sort();
-            setClasses(p=>p.map(c=>{
-              if(c.id!==realId) return c;
-              return {...c,occurrences:occ};
-            }));
+            onSaveClass({...parentCls,occurrences:occ,applyToAll:true,_occOnly:true},true);
           }
         },150);
       }}/>}
