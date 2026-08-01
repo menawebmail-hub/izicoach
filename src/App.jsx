@@ -6078,9 +6078,7 @@ export default function App() {
           let occ=c.occurrences?[...c.occurrences]:[];
           
           if(cd.cancelType==="paused"){
-            // PAUSE: only mark dates that are in active combos (not grey/unassigned)
             dc[editDate]={cancelType:"paused",rescheduledTo:null};
-            // Collect all combo dates for students in this class
             const allComboDates=new Set();
             (c.students||[]).forEach(sid=>{
               const st=students.find(s=>s.id===sid);
@@ -6095,7 +6093,6 @@ export default function App() {
                 pausedDatesNew.push(d);
               }
             });
-            // If resume date provided, generate replacement dates + update combos
             if(rDate&&pausedDatesNew.length>0){
               const DAY_MAP_PR={"Dom":0,"Lun":1,"Mar":2,"Mie":3,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
               const dowSet_PR=new Set((c.days||[]).map(d=>DAY_MAP_PR[d]));
@@ -6112,11 +6109,9 @@ export default function App() {
                 curPR.setDate(curPR.getDate()+1);
               }
               occ=[...new Set([...occ,...newDatesPR])].sort();
-              // Store for student combo update after setClasses
-              c._newReplacementDates=newDatesPR;
-              c._pauseStudentIds=[...(c.students||[])];
+              // Store replacement dates on cd for post-setClasses processing
+              cd._replacementDates=newDatesPR;
             }
-            // No replacement dates at pause time - they get added at RESUME time
           } else if(cd._resuming){
             // RESUME: un-pause dates >= resume date, keep earlier ones as permanent history
             Object.keys(dc).forEach(d=>{
@@ -6135,45 +6130,23 @@ export default function App() {
           const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,...rest}=cd;
           return {...c,...rest,id:realId,dateCancellations:dc,occurrences:occ};
         }));
-        // Update student combo dates with replacement dates (outside setClasses callback)
-        if(cd._pauseResumeDate){
-          const updatedCls=classes.find(c2=>c2.id===realId);
-          if(updatedCls&&updatedCls._newReplacementDates){
-            const nrd=updatedCls._newReplacementDates;
-            const sids=updatedCls._pauseStudentIds||[];
-            // Calculate replacement dates from occurrences (same logic)
-            const allCD2=new Set();
-            (updatedCls.students||[]).forEach(sid=>{const st=students.find(s=>s.id===sid);if(st)(st.combos||[]).forEach(combo=>{(combo.dates||[]).forEach(d=>allCD2.add(d));});});
-            const lastCD2=[...allCD2].sort();const lcd2=lastCD2[lastCD2.length-1]||"";
-            const rDate2=cd._pauseResumeDate;
-            const startPR2=lcd2&&lcd2>=rDate2?lcd2:rDate2;
-            const DAY_MAP_PR2={"Dom":0,"Lun":1,"Mar":2,"Mie":3,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
-            const dowSet_PR2=new Set((updatedCls.days||cd.days||[]).map(d=>DAY_MAP_PR2[d]));
-            const pausedCount2=(updatedCls.occurrences||[]).filter(d=>d>=cd.date&&d<rDate2&&allCD2.has(d)).length;
-            const newDPR2=[];
-            let curPR2=new Date(startPR2+"T12:00:00");
-            if(lcd2&&lcd2>=rDate2) curPR2.setDate(curPR2.getDate()+1);
-            while(newDPR2.length<pausedCount2){
-              if(dowSet_PR2.size===0||dowSet_PR2.has(curPR2.getDay())){
-                newDPR2.push(curPR2.getFullYear()+"-"+String(curPR2.getMonth()+1).padStart(2,"0")+"-"+String(curPR2.getDate()).padStart(2,"0"));
-              }
-              curPR2.setDate(curPR2.getDate()+1);
+        // Update student combo dates with replacement dates (calculated before setClasses)
+        if(cd._replacementDates&&cd._replacementDates.length>0){
+          const newDatesForCombo=cd._replacementDates;
+          const clsObj=classes.find(c2=>c2.id===realId);
+          const studentIds=clsObj?.students||cd.students||[];
+          setStudents(prev=>prev.map(s=>{
+            if(!studentIds.includes(s.id)) return s;
+            const combos2=[...(s.combos||[])];
+            let lastIdx=-1;
+            for(let ci=combos2.length-1;ci>=0;ci--){
+              if(combos2[ci].dates&&combos2[ci].packType!=="mensual"){lastIdx=ci;break;}
             }
-            if(newDPR2.length>0){
-              setStudents(prev=>prev.map(s=>{
-                if(!(updatedCls.students||[]).includes(s.id)) return s;
-                const combos2=[...(s.combos||[])];
-                let lastIdx=-1;
-                for(let ci=combos2.length-1;ci>=0;ci--){
-                  if(combos2[ci].dates&&combos2[ci].packType!=="mensual"){lastIdx=ci;break;}
-                }
-                if(lastIdx===-1) return s;
-                const combined=[...new Set([...combos2[lastIdx].dates,...newDPR2])].sort();
-                combos2[lastIdx]={...combos2[lastIdx],dates:combined};
-                return {...s,combos:combos2};
-              }));
-            }
-          }
+            if(lastIdx===-1) return s;
+            const combined=[...new Set([...combos2[lastIdx].dates,...newDatesForCombo])].sort();
+            combos2[lastIdx]={...combos2[lastIdx],dates:combined};
+            return {...s,combos:combos2};
+          }));
         }
         return;
       }
