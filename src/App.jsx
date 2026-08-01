@@ -1917,7 +1917,11 @@ function ResumeModal({ cls, onClose, onResume, students=[], classes=[] }) {
 
   const handleConfirm=()=>{
     if(!resumeDate) return;
-    onResume({cls,resumeDate,pausedCount});
+    // Count only paused dates BEFORE the resume date
+    const pausedBeforeResume=pausedDates.filter(d=>d<resumeDate).length;
+    // If resume is after all paused dates, count all
+    const effectivePausedCount=pausedBeforeResume>0?pausedBeforeResume:pausedCount;
+    onResume({cls,resumeDate,pausedCount:effectivePausedCount});
     onClose();
   };
 
@@ -1955,7 +1959,11 @@ function ResumeModal({ cls, onClose, onResume, students=[], classes=[] }) {
         {/* Info */}
         {resumeDate&&!warning&&(
           <div style={{background:"#E8F5E9",borderRadius:12,padding:"12px 14px",marginBottom:16,fontSize:12,color:"#2E7D32",lineHeight:1.4}}>
-            Se generarán <b>{pausedCount} clases nuevas</b> a partir del <b>{fmtDate(resumeDate)}</b> respetando el horario habitual.
+            {(()=>{
+              const beforeResume=pausedDates.filter(d=>d<resumeDate).length;
+              const count=beforeResume>0?beforeResume:pausedCount;
+              return (<span>Se generarán <b>{count} clases nuevas</b> a partir del <b>{fmtDate(resumeDate)}</b> respetando el horario habitual.{beforeResume>0&&beforeResume<pausedCount&&<span> Las {pausedCount-beforeResume} fechas restantes volverán a estar activas.</span>}</span>);
+            })()}
           </div>
         )}
 
@@ -2921,15 +2929,19 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
           combos2[lastIdx]={...combo,dates:combined};
           onUpdateStudent({...st,combos:combos2});
         });
-        // Add new dates to class occurrences via onSaveClass
+        // First: un-pause dates >= resumeDate
         const realId=rCls._seriesId||rCls.id;
-        const parentCls=(rawClasses||classes).find(c=>c.id===realId);
-        if(parentCls){
-          const occ=[...(parentCls.occurrences||[])];
-          newDates.forEach(d=>{if(!occ.includes(d))occ.push(d);});
-          occ.sort();
-          onSaveClass({...parentCls,occurrences:occ,applyToAll:true},true);
-        }
+        onSaveClass({...rCls,date:rDate,_resuming:true,cancelled:false,cancelType:null,paused:false,applyToAll:false},true);
+        // Then: add new dates to class occurrences
+        setTimeout(()=>{
+          const parentCls=(rawClasses||classes).find(c=>c.id===realId);
+          if(parentCls){
+            const occ=[...(parentCls.occurrences||[])];
+            newDates.forEach(d=>{if(!occ.includes(d))occ.push(d);});
+            occ.sort();
+            onSaveClass({...parentCls,occurrences:occ,applyToAll:true},true);
+          }
+        },150);
       }}/>}
       {showPause&&<PauseModal cls={showPause} onClose={()=>setShowPause(null)} onPause={({cls:pauseCls,resumeDate:rDate})=>{
         // Always just pause - if rDate provided, the ResumeModal logic will handle it later
@@ -6041,10 +6053,10 @@ export default function App() {
             });
             // No replacement dates at pause time - they get added at RESUME time
           } else if(cd._resuming){
-            // RESUME: pausadas permanecen como historial permanente
-            // Las nuevas fechas se agregan por ResumeModal (combo.dates + occurrences)
-            // NO modificar dateCancellations - las pausadas nunca cambian
-            
+            // RESUME: un-pause dates >= resume date, keep earlier ones as permanent history
+            Object.keys(dc).forEach(d=>{
+              if(d>=editDate&&dc[d]?.cancelType==="paused") delete dc[d];
+            });
             const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,...rest}=cd;
             return {...c,...rest,id:realId,dateCancellations:dc,occurrences:occ};
           } else if(cd.cancelled){
