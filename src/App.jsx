@@ -1912,7 +1912,7 @@ function ResumeModal({ cls, onClose, onResume, students=[], classes=[] }) {
     // Check if there are already non-paused programmed dates after resume date
     const existingAfter=(lastCombo?.dates||[]).filter(d=>d>=date&&(!dc[d]||dc[d].cancelType!=="paused"));
     if(existingAfter.length>0){
-      setWarning("Ya existen "+existingAfter.length+" clases programadas para este paquete despu\u00e9s de la fecha seleccionada. Revisa el calendario antes de continuar.");
+      setWarning("Ya existen "+existingAfter.length+" clases programadas para este paquete después de la fecha seleccionada. Revisa el calendario antes de continuar.");
     } else {
       setWarning("");
     }
@@ -2007,7 +2007,7 @@ function PauseModal({ cls, onClose, onPause }) {
         <div style={{marginBottom:16}}>
           <label style={{fontSize:13,color:"#1565C0",fontWeight:700,display:"block",marginBottom:6}}>Reanudar el: (opcional)</label>
           <input type="date" value={resumeDate} disabled={noDate} onChange={e=>{setResumeDate(e.target.value);setNoDate(false);}} style={{width:"100%",padding:"14px 12px",borderRadius:12,border:"none",fontSize:14,boxSizing:"border-box",background:noDate?"#EEEEEE":"#E3F2FD",color:noDate?"#9E9E9E":"#0D1B4B",outline:"none"}}/>
-          <div style={{fontSize:11,color:"#6B7BAD",marginTop:6,lineHeight:1.4}}>Si no conoces la fecha de regreso, marca "No tengo fecha de reanudación". Podrás definirla m\u00e1s adelante.</div>
+          <div style={{fontSize:11,color:"#6B7BAD",marginTop:6,lineHeight:1.4}}>Si no conoces la fecha de regreso, marca "No tengo fecha de reanudación". Podrás definirla más adelante.</div>
         </div>
 
         {/* No date checkbox */}
@@ -2021,7 +2021,7 @@ function PauseModal({ cls, onClose, onPause }) {
         {/* Info */}
         {resumeDate&&!noDate&&(
           <div style={{background:"#E8F5E9",borderRadius:12,padding:"12px 14px",marginBottom:16,fontSize:12,color:"#2E7D32"}}>
-            El paquete se pausará desde <b>{fmtDate(cls.date)}</b> y se reanudar\u00e1 el <b>{fmtDate(resumeDate)}</b>. Las clases pausadas se agregar\u00e1n al final del combo.
+            El paquete se pausará desde <b>{fmtDate(cls.date)}</b> y se reanudará el <b>{fmtDate(resumeDate)}</b>. Las clases pausadas se agregarán al final del combo.
           </div>
         )}
         {noDate&&(
@@ -2968,67 +2968,75 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
         },150);
       }}/>}
       {showPause&&<PauseModal cls={showPause} onClose={()=>setShowPause(null)} onPause={({cls:pauseCls,resumeDate:rDate})=>{
-        // Step 1: Always pause first
-        onSaveClass({...pauseCls,cancelled:false,cancelType:"paused",paused:true,applyToAll:false},true);
-        // Step 2: If resume date provided, trigger resume after pause completes
-        if(rDate){
-          setTimeout(()=>{
-            const dc=((rawClasses||classes).find(c=>c.id===(pauseCls._seriesId||pauseCls.id))||{}).dateCancellations||{};
-            const pausedDatesAll=Object.keys(dc).filter(d=>dc[d]?.cancelType==="paused").sort();
-            const pausedBeforeResume=pausedDatesAll.filter(d=>d<rDate);
-            const pCount=pausedBeforeResume.length;
-            if(pCount===0){
-              // All dates get un-paused, no replacements
-              onSaveClass({...pauseCls,date:rDate,_resuming:true,cancelled:false,cancelType:null,paused:false,applyToAll:false},true);
-              return;
+        const realIdP=pauseCls._seriesId||pauseCls.id;
+        const parentClsP=(rawClasses||classes).find(c=>c.id===realIdP);
+        if(!parentClsP) return;
+        const allOcc=(parentClsP.occurrences||[]).sort();
+        const editDate=pauseCls.date;
+
+        if(!rDate){
+          // Just pause indefinitely
+          onSaveClass({...pauseCls,cancelled:false,cancelType:"paused",paused:true,applyToAll:false},true);
+          return;
+        }
+
+        // Pause + Resume in ONE update
+        // 1. Calculate which dates get paused (>= editDate)
+        // 2. Which stay paused (>= editDate AND < rDate)
+        // 3. Which get un-paused (>= rDate)
+        // 4. Generate replacements for stayed-paused dates
+
+        const datesToPause=allOcc.filter(d=>d>=editDate&&d<rDate);
+        const pCount=datesToPause.length;
+
+        // Build dateCancellations: add pause entries for dates between editDate and rDate
+        const newDC={...(parentClsP.dateCancellations||{})};
+        datesToPause.forEach(d=>{newDC[d]={cancelType:"paused",rescheduledTo:null};});
+
+        // Generate replacement dates after last combo date
+        const DAY_MAP_P={"Dom":0,"Lun":1,"Mar":2,"Mie":3,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+        const dowSet_P=new Set((pauseCls.days||[]).map(d=>DAY_MAP_P[d]));
+        const sid0=(pauseCls.students||[])[0];
+        const st0=students.find(s=>s.id===sid0);
+        const c0=(st0?.combos||[]).filter(c=>c.total>0&&c.packType!=="mensual");
+        const lc0=c0[c0.length-1];
+        const lastD=lc0?.dates?lc0.dates[lc0.dates.length-1]:null;
+        const startFrom=lastD&&lastD>=rDate?lastD:rDate;
+        const newDates=[];
+        if(pCount>0){
+          let curP=new Date(startFrom+"T12:00:00");
+          if(lastD&&lastD>=rDate) curP.setDate(curP.getDate()+1);
+          while(newDates.length<pCount){
+            if(dowSet_P.size===0||dowSet_P.has(curP.getDay())){
+              newDates.push(curP.getFullYear()+"-"+String(curP.getMonth()+1).padStart(2,"0")+"-"+String(curP.getDate()).padStart(2,"0"));
             }
-            // Generate replacement dates after last combo date
-            const DAY_MAP_P={"Dom":0,"Lun":1,"Mar":2,"Mie":3,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
-            const dowSet_P=new Set((pauseCls.days||[]).map(d=>DAY_MAP_P[d]));
-            const sid0=(pauseCls.students||[])[0];
-            const st0=students.find(s=>s.id===sid0);
-            const c0=(st0?.combos||[]).filter(c=>c.total>0&&c.packType!=="mensual");
-            const lc0=c0[c0.length-1];
-            const lastD=lc0?.dates?lc0.dates[lc0.dates.length-1]:null;
-            const startFrom=lastD&&lastD>=rDate?lastD:rDate;
-            const newDates=[];
-            let curP=new Date(startFrom+"T12:00:00");
-            if(lastD&&lastD>=rDate) curP.setDate(curP.getDate()+1);
-            while(newDates.length<pCount){
-              if(dowSet_P.size===0||dowSet_P.has(curP.getDay())){
-                newDates.push(curP.getFullYear()+"-"+String(curP.getMonth()+1).padStart(2,"0")+"-"+String(curP.getDate()).padStart(2,"0"));
-              }
-              curP.setDate(curP.getDate()+1);
+            curP.setDate(curP.getDate()+1);
+          }
+        }
+
+        // Update class: set dateCancellations + add new occurrences
+        const newOcc=[...new Set([...allOcc,...newDates])].sort();
+        setClasses(p=>p.map(c=>{
+          if(c.id!==realIdP) return c;
+          return {...c,dateCancellations:newDC,occurrences:newOcc};
+        }));
+
+        // Update student combos: add new dates
+        if(newDates.length>0){
+          (pauseCls.students||[]).forEach(sid=>{
+            const st=students.find(s=>s.id===sid);
+            if(!st) return;
+            const combos2=[...(st.combos||[])];
+            let lastIdx=-1;
+            for(let ci=combos2.length-1;ci>=0;ci--){
+              if(combos2[ci].dates&&combos2[ci].packType!=="mensual"){lastIdx=ci;break;}
             }
-            // Update combo dates
-            (pauseCls.students||[]).forEach(sid=>{
-              const st=students.find(s=>s.id===sid);
-              if(!st) return;
-              const combos2=[...(st.combos||[])];
-              let lastIdx=-1;
-              for(let ci=combos2.length-1;ci>=0;ci--){
-                if(combos2[ci].dates&&combos2[ci].packType!=="mensual"){lastIdx=ci;break;}
-              }
-              if(lastIdx===-1) return;
-              const combo=combos2[lastIdx];
-              const combined=[...new Set([...combo.dates,...newDates])].sort();
-              combos2[lastIdx]={...combo,dates:combined};
-              onUpdateStudent({...st,combos:combos2});
-            });
-            // Un-pause dates >= rDate
-            const realIdP=pauseCls._seriesId||pauseCls.id;
-            onSaveClass({...pauseCls,date:rDate,_resuming:true,cancelled:false,cancelType:null,paused:false,applyToAll:false},true);
-            // Add new occurrences
-            setTimeout(()=>{
-              const parentClsP=(rawClasses||classes).find(c=>c.id===realIdP);
-              if(parentClsP){
-                const occ=[...(parentClsP.occurrences||[])];
-                newDates.forEach(d=>{if(!occ.includes(d))occ.push(d);});
-                occ.sort();
-                setClasses(p=>p.map(c=>c.id!==realIdP?c:{...c,occurrences:occ}));
-              }
-            },150);
-          },300);
+            if(lastIdx===-1) return;
+            const combo=combos2[lastIdx];
+            const combined=[...new Set([...combo.dates,...newDates])].sort();
+            combos2[lastIdx]={...combo,dates:combined};
+            onUpdateStudent({...st,combos:combos2});
+          });
         }
       }}/>}
       {showCancel&&<CancelReprogModal cls={showCancel} onClose={()=>setShowCancel(null)} onSave={(u)=>{onSaveClass(u,true);setShowCancel(null);}} students={students} onUpdateStudent={onUpdateStudent}/>}
