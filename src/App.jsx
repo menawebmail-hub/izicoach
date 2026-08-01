@@ -38,10 +38,11 @@ const C = {
 
 // --- SUPABASE SYNC HELPERS ---
 const _syncQueue={};
-const _syncPrevLen={};
 function syncToSupabase(coachId, key, value) {
   if(!coachId||typeof coachId!=="string"||coachId.length<10) return;
-  const doSync=async()=>{
+  // Debounce per key - wait 2s after last change
+  if(_syncQueue[key]) clearTimeout(_syncQueue[key]);
+  _syncQueue[key]=setTimeout(async()=>{
     try {
       await supabase.from("coach_data").upsert({
         coach_id: coachId,
@@ -50,19 +51,7 @@ function syncToSupabase(coachId, key, value) {
         updated_at: new Date().toISOString()
       }, { onConflict: "coach_id,data_key" });
     } catch(e) { console.warn("Sync error:", key, e); }
-  };
-  // Detect delete: array got shorter → sync immediately
-  const prevLen=_syncPrevLen[key]||0;
-  const curLen=Array.isArray(value)?value.length:0;
-  _syncPrevLen[key]=curLen;
-  if(curLen<prevLen&&prevLen>0){
-    if(_syncQueue[key]) clearTimeout(_syncQueue[key]);
-    doSync();
-    return;
-  }
-  // Normal update: debounce 500ms
-  if(_syncQueue[key]) clearTimeout(_syncQueue[key]);
-  _syncQueue[key]=setTimeout(doSync,500);
+  },2000);
 }
 async function loadFromSupabase(coachId, key) {
   if(!coachId) return null;
@@ -295,23 +284,17 @@ function isNextComboPending(cls, students) {
   return clsStudents.some(s=>{
     const combos=(s.combos||[]).filter(c=>c.total>0||(c.packType&&c.packType!=="mensual"));
     if(combos.length===0) return false;
-    // Check if date is explicitly in any combo's dates → always covered
     const coveredDates=new Set(combos.flatMap(c=>c.dates||[]));
+    // If the date is in the combo → not grey
     if(coveredDates.has(cls.date)) return false;
-    // Check if date is in gap between combo dates (e.g. between paused and resumed)
-    const allDates=[...coveredDates].sort();
-    if(allDates.length>0&&cls.date>allDates[0]&&cls.date<allDates[allDates.length-1]) return true;
-    // Check via occurrences
-    const occ=cls.occurrences||[];
-    if(occ.length===0) return false;
-    const totalSlots=combos.reduce((sum,c)=>sum+(c.total||0),0);
-    const dc=cls.dateCancellations||{};
-    const pausedOcc=occ.filter(d=>dc[d]&&dc[d].cancelType==="paused");
-    const firstPausedIdx=occ.findIndex(d=>dc[d]&&dc[d].cancelType==="paused");
-    const allAfterFirstPaused=firstPausedIdx>=0&&occ.slice(firstPausedIdx).every(d=>dc[d]&&dc[d].cancelType==="paused");
-    const pausedExtension=(!allAfterFirstPaused&&pausedOcc.length>0)?pausedOcc.length:0;
-    const coveredOcc=occ.slice(0,totalSlots+pausedExtension);
-    return !coveredOcc.includes(cls.date);
+    const allDates=combos.flatMap(c=>c.dates||[]).sort();
+    const lastDate=allDates[allDates.length-1]||"";
+    if(!lastDate) return false;
+    // If date is after the last combo date → grey
+    if(cls.date>lastDate) return true;
+    // If date is between first and last combo date but NOT in combo → grey (gap)
+    if(cls.date>allDates[0]&&cls.date<lastDate) return true;
+    return false;
   });
 }
 function getRem(s, classes=[]) {
@@ -1729,7 +1712,6 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
   const [clsSt,setClsSt]=useState(()=>(cls.students||[]).filter(sid=>initialStudents.some(s=>s.id===sid)));
   const [query,setQuery]=useState("");
   const [showCreateStudent,setShowCreateStudent]=useState(false);
-  const [searchSt,setSearchSt]=useState("");
   const [allStudents,setAllStudents]=useState(initialStudents);
   // Per-student package/amount editing
   const [studentPacks,setStudentPacks]=useState(()=>{
@@ -1791,11 +1773,6 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
             <label style={{fontSize:13,color:C.blue,fontWeight:700}}>Alumnos</label>
             <button onClick={()=>setShowCreateStudent(true)} style={{padding:"6px 12px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:11,cursor:"pointer",fontWeight:800,letterSpacing:0.3}}>+ CREAR ALUMNO</button>
           </div>
-          {(()=>{
-            const available=allStudents.filter(s=>!clsSt.includes(s.id));
-            if(available.length===0) return null;
-            return null; // Use the existing search below instead
-          })()}
           {clsSt.map(sid=>{const st=allStudents.find(s=>s.id===sid);return st?(
             <div key={sid} style={{borderRadius:12,background:C.white,border:"1.5px solid "+C.border,marginBottom:8,overflow:"hidden"}}>
               <div style={{display:"flex",alignItems:"center",gap:12,padding:"10px 12px"}}>
@@ -1891,7 +1868,7 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
             const preserved=(cls.occurrences||[]).filter(d=>d<sd);
             newOccurrences=[...new Set([...preserved,...result])].sort();
           }
-          onSave({...cls,title,court,days,time:t1,timeEnd:t2,students:clsSt,studentPacks,occurrences:newOccurrences,applyToAll:true},true);
+          onSave({...cls,title,court,days,time:t1,timeEnd:t2,students:clsSt,studentPacks,occurrences:newOccurrences});
         }} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:10}}>Actualizar Clase</button>
         <button onClick={()=>{if(window.confirm("¿Eliminar esta clase? Todas las instancias serán eliminadas del calendario.")) {onDelete&&onDelete(cls.id);onClose();}}} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"#FFF0F0",color:"#D32F2F",fontSize:15,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:20}}>🗑 Eliminar Clase</button>
       </div>
@@ -5062,12 +5039,11 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
       const cId=coachId||(localStorage.getItem("izi_student_coach_id")?.replace(/"/g,""));
       const studentIdRaw=localStorage.getItem("izi_student_id_raw");
       if(cId&&studentIdRaw){
-        const {data:rows}=await supabase.from("coach_data").select("data_value").eq("coach_id",cId).eq("data_key","students");
-        const studData=rows&&rows[0]?rows[0].data_value:null;
-        if(studData){
-          const studs=Array.isArray(studData)?studData:JSON.parse(studData);
+        const {data}=await supabase.from("coach_data").select("students").eq("coach_id",cId).single();
+        if(data?.students){
+          const studs=JSON.parse(data.students);
           const updated=studs.map(s=>String(s.id)===studentIdRaw?{...s,name:student.name,phone:student.phone||"",email:student.email||""}:s);
-          await supabase.from("coach_data").upsert({coach_id:cId,data_key:"students",data_value:updated,updated_at:new Date().toISOString()},{onConflict:"coach_id,data_key"});
+          await supabase.from("coach_data").update({students:JSON.stringify(updated)}).eq("coach_id",cId);
           localStorage.setItem("izi_students",JSON.stringify(updated));
         }
       }
@@ -5755,9 +5731,7 @@ export default function App() {
   const ls=(key,def)=>{try{const v=localStorage.getItem(key);return v?JSON.parse(v):def;}catch{return def;}};
   const lsSet=(key,val)=>{try{localStorage.setItem(key,JSON.stringify(val));}catch{}};
   const [user,setUser]=useState(null);
-  const setUserWithRef=(u)=>{setUser(u);window._iziUserId=u?.id||null;if(u?.id)lsSet("izi_userId",u.id);};
-  // Restore userId from localStorage (set after first successful login)
-  if(!window._iziUserId){const savedId=ls("izi_userId",null);if(savedId)window._iziUserId=savedId;}
+  const setUserWithRef=(u)=>{setUser(u);window._iziUserId=u?.id||null;};
   const [loadingAuth,setLoadingAuth]=useState(true);
   const [checkingProfile,setCheckingProfile]=useState(false);
 
@@ -5808,12 +5782,19 @@ export default function App() {
   const syncAll=async(newStudents, newClasses, newExpenses, newCourts, newPackages)=>{
     const userId=window._iziUserId;
     if(!userId) return;
+    // Validate data before saving - must be arrays
     if(!Array.isArray(newStudents)||!Array.isArray(newClasses)) return;
-    syncToSupabase(userId,"students",newStudents||[]);
-    syncToSupabase(userId,"classes",newClasses||[]);
-    syncToSupabase(userId,"expenses",newExpenses||[]);
-    syncToSupabase(userId,"courts",newCourts||[]);
-    syncToSupabase(userId,"packages",newPackages||[]);
+    try {
+      await supabase.from("coach_data").upsert({
+        coach_id:userId,
+        students:JSON.stringify(newStudents||[]),
+        classes:JSON.stringify(newClasses||[]),
+        expenses:JSON.stringify(newExpenses||[]),
+        courts:JSON.stringify(newCourts||[]),
+        packages:JSON.stringify(newPackages||[]),
+        updated_at:new Date().toISOString(),
+      },{onConflict:"coach_id"});
+    } catch(e){ console.error("Sync error:",e); }
   };
 
   // Wrapped setters that persist to localStorage (Supabase sync handled by debounced useEffect)
@@ -5835,28 +5816,12 @@ export default function App() {
   const loadData=async(userId)=>{
     try {
       const allData=await loadAllFromSupabase(userId);
-      const hasRemoteData=Object.keys(allData).length>0&&Object.values(allData).some(v=>Array.isArray(v)&&v.length>0);
-      if(hasRemoteData){
-        // Supabase has data → use it
-        if(allData.students&&allData.students.length>0){setStudentsRaw(allData.students);lsSet("izi_students",allData.students);}
-        if(allData.classes&&allData.classes.length>0){setClassesRaw(allData.classes);lsSet("izi_classes",allData.classes);}
-        if(allData.expenses&&allData.expenses.length>0){setExpensesRaw(allData.expenses);lsSet("izi_expenses",allData.expenses);}
-        if(allData.courts&&allData.courts.length>0){setCourtsRaw(allData.courts);lsSet("izi_courts",allData.courts);}
-        if(allData.packages&&allData.packages.length>0){setPackagesRaw(allData.packages);lsSet("izi_packages",allData.packages);}
-      } else {
-        // Supabase is empty but localStorage has data → push local to Supabase
-        const localStudents=ls("izi_students",[]);
-        const localClasses=ls("izi_classes",[]);
-        const localExpenses=ls("izi_expenses",[]);
-        const localCourts=ls("izi_courts",[]);
-        const localPackages=ls("izi_packages",[]);
-        if(localStudents.length>0||localClasses.length>0){
-          syncToSupabase(userId,"students",localStudents);
-          syncToSupabase(userId,"classes",localClasses);
-          syncToSupabase(userId,"expenses",localExpenses);
-          syncToSupabase(userId,"courts",localCourts);
-          syncToSupabase(userId,"packages",localPackages);
-        }
+      if(Object.keys(allData).length>0){
+        if(allData.students){setStudentsRaw(allData.students);lsSet("izi_students",allData.students);}
+        if(allData.classes){setClassesRaw(allData.classes);lsSet("izi_classes",allData.classes);}
+        if(allData.expenses){setExpensesRaw(allData.expenses);lsSet("izi_expenses",allData.expenses);}
+        if(allData.courts){setCourtsRaw(allData.courts);lsSet("izi_courts",allData.courts);}
+        if(allData.packages){setPackagesRaw(allData.packages);lsSet("izi_packages",allData.packages);}
       }
       // Also load coach profile (name, phone, email, sport, photo, currency)
       const {data:profileData}=await supabase.from("coaches").select("*").eq("id",userId).single();
@@ -5917,10 +5882,12 @@ export default function App() {
             lsSet("izi_student_coach_id", sa.coach_id);
             localStorage.setItem("izi_student_id_raw", String(sa.student_id));
             try{
-              const allD=await loadAllFromSupabase(sa.coach_id);
-              if(Object.keys(allD).length>0){
-                if(allD.students){setStudentsRaw(allD.students);lsSet("izi_students",allD.students);}
-                if(allD.classes){setClassesRaw(allD.classes);lsSet("izi_classes",allD.classes);}
+              const {data:cd}=await supabase.from("coach_data").select("*").eq("coach_id",sa.coach_id).single();
+              if(cd){
+                const tryP=(s,f=[])=>{try{const p=JSON.parse(s);return Array.isArray(p)?p:f;}catch{return f;}};
+                const s=tryP(cd.students);const cl=tryP(cd.classes);
+                if(s.length>0){setStudentsRaw(s);lsSet("izi_students",s);}
+                if(cl.length>0){setClassesRaw(cl);lsSet("izi_classes",cl);}
               }
             }catch(e){console.error("student load error:",e);}
             setModeP("student_portal");
@@ -5957,21 +5924,8 @@ export default function App() {
   },[]);
 
   const handleLogout=async()=>{
-    // Sync current data to Supabase BEFORE clearing
-    if(window._iziUserId){
-      const uid=window._iziUserId;
-      const ls2=k=>{try{return JSON.parse(localStorage.getItem(k))||[];}catch{return[];}};
-      await Promise.all([
-        syncToSupabase(uid,"students",ls2("izi_students")),
-        syncToSupabase(uid,"classes",ls2("izi_classes")),
-        syncToSupabase(uid,"expenses",ls2("izi_expenses")),
-        syncToSupabase(uid,"courts",ls2("izi_courts")),
-        syncToSupabase(uid,"packages",ls2("izi_packages")),
-      ]);
-      // Wait for debounced syncs to complete
-      await new Promise(r=>setTimeout(r,600));
-    }
     await supabase.auth.signOut();
+    // Clear all izi_ keys so next user gets fresh data from Supabase
     Object.keys(localStorage).filter(k=>k.startsWith("izi_")).forEach(k=>localStorage.removeItem(k));
     setUserWithRef(null);
     window._iziUserId=null;
@@ -6071,15 +6025,24 @@ export default function App() {
     // Remove expenses related to this class's students
     const studentNames=(cls.students||[]).map(sid=>students.find(s=>s.id===sid)?.name).filter(Boolean);
     const newExpenses=expenses.filter(e=>!(e.category==="Cobros clases"&&studentNames.includes(e.note)&&allDatesInSeries.has(e.date)));
-    // Update state
+    // Update state and sync both together
     setClassesRaw(newClasses);lsSet("izi_classes",newClasses);
     setStudentsRaw(newStudents);lsSet("izi_students",newStudents);
     setExpensesRaw(newExpenses);lsSet("izi_expenses",newExpenses);
-    // Sync to Supabase immediately
     if(window._iziUserId){
-      syncToSupabase(window._iziUserId,"classes",newClasses);
-      syncToSupabase(window._iziUserId,"students",newStudents);
-      syncToSupabase(window._iziUserId,"expenses",newExpenses);
+      const userId=window._iziUserId;
+      supabase.from("coach_data").select("*").eq("coach_id",userId).single().then(({data:existing})=>{
+        const row={
+          coach_id:userId,
+          students:JSON.stringify(newStudents),
+          classes:JSON.stringify(newClasses),
+          expenses:JSON.stringify(newExpenses),
+          courts:existing?.courts||'[]',
+          packages:existing?.packages||'[]',
+          updated_at:new Date().toISOString(),
+        };
+        supabase.from("coach_data").upsert(row,{onConflict:"coach_id"});
+      });
     }
   };
 
@@ -6089,8 +6052,8 @@ export default function App() {
       const realId=cd._seriesId||cd.id;
       const editDate=cd.date; // the specific date being edited
 
-      // Handle per-date cancellation/pause for recurring classes (skip if editing class with studentPacks)
-      if((cd.cancelled!==undefined||cd.cancelType==="paused"||cd._resuming)&&editDate&&!cd.studentPacks){
+      // Handle per-date cancellation/pause for recurring classes
+      if((cd.cancelled!==undefined||cd.cancelType==="paused"||cd._resuming)&&editDate){
         setClasses(p=>p.map(c=>{
           if(c.id!==realId) return c;
           const dc={...(c.dateCancellations||{})};
@@ -6137,126 +6100,116 @@ export default function App() {
       }
 
       if(cd.applyToAll){
-        const oldClass=classes.find(c=>c.id===realId);
-        const oldOcc=oldClass?.occurrences||[];
-        const newOcc=cd.occurrences||oldOcc;
-        const occChanged=JSON.stringify(oldOcc)!==JSON.stringify(newOcc);
         // With new format, the series is a single object — just update it
         setClasses(p=>p.map(c=>{
           if(c.id===realId){
-            return {...c,...cd,id:realId,date:c.date,occurrences:newOcc};
+            return {...c,...cd,id:realId,date:c.date,occurrences:c.occurrences};
           }
           return c;
         }));
-        // If occurrences changed, update student combo dates to match new schedule
-        // UNIFIED: all student updates in a single setStudents call
-        const _occChanged=occChanged;
-        const _newOcc=[...newOcc];
-        const _studentPacks=cd.studentPacks;
-        const _cdStudents=cd.students||[];
-        const _removedStudentIds=(()=>{
-          const originalClass=classes.find(c=>c.id===realId);
-          return (originalClass?.students||[]).filter(id=>!_cdStudents.includes(id));
-        })();
-        const _classDates=(()=>{
-          const originalClass=classes.find(c=>c.id===realId);
-          return new Set(originalClass?.occurrences||[originalClass?.date].filter(Boolean));
-        })();
-
-        if(_occChanged||_removedStudentIds.length>0||_studentPacks){
-          const editedClassForPacks=classes.find(c=>c.id===(cd._seriesId||cd.id))||cd;
-          setStudents(prev=>prev.map(s=>{
-            let updated={...s,combos:[...(s.combos||[])]};
-            
-            // Step 1: Clean combos for removed students
-            if(_removedStudentIds.includes(s.id)){
-              const cleanedCombos=updated.combos.map(combo=>{
-                const comboDates=combo.dates||[combo.date].filter(Boolean);
-                const filteredDates=comboDates.filter(d=>!_classDates.has(d));
-                if(filteredDates.length===0) return null;
-                return {...combo, dates:filteredDates, total:filteredDates.length, date:filteredDates[0]};
-              }).filter(Boolean);
-              return {...updated,combos:cleanedCombos};
-            }
-
-            // Step 2: Process studentPacks
-            if(_studentPacks){
-              const sp=_studentPacks[s.id]||_studentPacks[String(s.id)];
-              if(sp&&sp.pack){
-                const pkg=packages.find(pk=>String(pk.id)===String(sp.pack));
-                const isMensual=sp.pack==="mensual"||pkg?.type==="mensual";
-                const isIndividual=sp.pack==="individual"||pkg?.type==="individual";
-                const qty=isMensual?null:isIndividual?1:pkg?.qty||(!isNaN(parseInt(sp.pack))&&parseInt(sp.pack)<100?parseInt(sp.pack):null)||8;
-                const packType=isMensual?"mensual":isIndividual?"individual":"combo";
-                const combos=[...updated.combos];
-                const lastCombo=combos.length>0?combos[combos.length-1]:null;
-                const lastDate=lastCombo?.dates?.slice(-1)[0]||"";
-                const today=new Date().toISOString().slice(0,10);
-                const lastComboFullyUsed=!lastDate||((lastDate<today)&&(lastCombo?.used||0)>=(lastCombo?.total||0));
-                const hasActiveCombo=lastCombo&&(
-                  (lastDate&&lastDate>=today)||
-                  (lastCombo.packType==="mensual"&&lastCombo.paid)||
-                  ((lastCombo.used||0)<(lastCombo.total||0))
-                );
-                if(hasActiveCombo&&sp.paid===true&&lastCombo&&!lastCombo.paid){
-                  combos[combos.length-1]={...lastCombo,paid:true,paidCount:lastCombo.total||0,payments:[...(lastCombo.payments||[]),{id:Date.now(),qty:lastCombo.total||0,amount:lastCombo.amount||sp.amount||0,method:"efectivo",date:TODAY_DATE,dates:lastCombo.dates||[]}]};
-                  updated={...updated,combos};
-                } else if(hasActiveCombo&&lastCombo){
-                  const needsUpdate=!lastCombo.packType||lastCombo.packType!==packType||(lastCombo.total!==qty&&qty!==null);
-                  if(needsUpdate){
-                    combos[combos.length-1]={...lastCombo,total:qty,packType,packId:sp.packId||sp.pack||"",amount:sp.amount||pkg?.price||lastCombo.amount||0,...(isMensual?{cobroDia:sp.cobroDia||parseInt((cd.date||TODAY_DATE).split("-")[2])||1,graciaDias:5,currency:"PYG",mensualidades:[]}:{})};
-                    updated={...updated,combos};
-                  }
-                } else if(!lastDate||lastComboFullyUsed){
-                  const startDate=cd.date||today;
-                  const realOcc=(editedClassForPacks?.occurrences||[]).filter(d=>d>=startDate);
-                  const total=qty||8;
-                  const newDates=realOcc.slice(0,total);
-                  if(newDates.length===0){
-                    const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
-                    const dowSet=new Set((editedClassForPacks.days||[]).map(d=>DAY_MAP[d]));
-                    let cur=new Date(startDate+"T12:00:00");
-                    while(newDates.length<total){
-                      if(dowSet.size===0||dowSet.has(cur.getDay())){
-                        newDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
-                      }
-                      cur.setDate(cur.getDate()+1);
-                    }
-                  }
-                  combos.push({id:combos.length+1,total:qty,packType,used:0,paid:sp.paid===true,paidCount:sp.paid===true?(qty||0):0,date:newDates[0]||startDate,amount:parseInt(sp.amount)||0,dates:newDates,payments:sp.paid===true?[{id:Date.now(),qty:qty||0,amount:parseInt(sp.amount)||0,method:"efectivo",date:today,dates:newDates}]:[]});
-                  updated={...updated,combos};
-                } else if(combos.length>0){
-                  combos[combos.length-1]={...combos[combos.length-1],total:qty,amount:parseInt(sp.amount)||combos[combos.length-1].amount};
-                  updated={...updated,combos};
-                }
-              }
-            }
-
-            // Step 3: Update combo dates if occurrences changed
-            if(_occChanged&&_cdStudents.includes(s.id)){
-              const combos3=[...updated.combos];
-              let lastIdx=-1;
-              for(let ci=combos3.length-1;ci>=0;ci--){
-                if(combos3[ci].dates&&combos3[ci].packType!=="mensual"){lastIdx=ci;break;}
-              }
-              if(lastIdx>=0){
-                const combo=combos3[lastIdx];
-                const total=combo.total||combo.dates.length;
-                combos3[lastIdx]={...combo,dates:_newOcc.slice(0,total)};
-                updated={...updated,combos:combos3};
-              }
-            }
-
-            return updated;
-          }));
-        }
       } else {
         setClasses(p=>p.map(c=>c.id===realId?{...c,...cd,id:realId}:c));
       }
-      // Clean combos + studentPacks already handled in unified setStudents above
-      // If studentPacks changed, already processed above
+      // Clean combos for students removed from the class
+      if(cd.students){
+        const originalClass=classes.find(c=>c.id===realId);
+        const removedStudentIds=(originalClass?.students||[]).filter(id=>!(cd.students||[]).includes(id));
+        if(removedStudentIds.length>0){
+          // Get ALL dates from this class (occurrences or single date)
+          const classDates=new Set(originalClass?.occurrences||[originalClass?.date].filter(Boolean));
+          setStudents(p=>p.map(s=>{
+            if(!removedStudentIds.includes(s.id)) return s;
+            // Remove only the dates belonging to this class from each combo
+            const cleanedCombos=(s.combos||[]).map(combo=>{
+              const comboDates=combo.dates||[combo.date].filter(Boolean);
+              const filteredDates=comboDates.filter(d=>!classDates.has(d));
+              if(filteredDates.length===0) return null; // combo fully emptied, remove it
+              return {...combo, dates:filteredDates, total:filteredDates.length, date:filteredDates[0]};
+            }).filter(Boolean);
+            return {...s,combos:cleanedCombos};
+          }));
+        }
+      }
+      // If studentPacks changed, update student combos
       if(cd.studentPacks){
-        // Already handled
+        try {
+
+        const editedClass=classes.find(c=>c.id===cd.id)||cd;
+        setStudents(p=>p.map(s=>{
+          const sp=cd.studentPacks[s.id]||cd.studentPacks[String(s.id)];
+          if(!sp||!sp.pack) return s;
+          const pkg=packages.find(pk=>String(pk.id)===String(sp.pack));
+          const isMensual=sp.pack==="mensual"||pkg?.type==="mensual";
+          const isIndividual=sp.pack==="individual"||pkg?.type==="individual";
+          const qty=isMensual?null:isIndividual?1:pkg?.qty||(!isNaN(parseInt(sp.pack))&&parseInt(sp.pack)<100?parseInt(sp.pack):null)||8;
+          const packType=isMensual?"mensual":isIndividual?"individual":"combo";
+          const combos=[...s.combos];
+          const lastCombo=combos.length>0?combos[combos.length-1]:null;
+          const lastDate=lastCombo?.dates?.slice(-1)[0]||"";
+          const today=new Date().toISOString().slice(0,10);
+          const lastComboFullyUsed=!lastDate||((lastDate<today)&&(lastCombo?.used||0)>=(lastCombo?.total||0));
+          // Only create new combo if student has no active combo OR last combo is expired
+          // Don't create if student already has an active combo (future dates OR unused classes)
+          const hasActiveCombo=lastCombo&&(
+            (lastDate&&lastDate>=today) || // combo with future dates
+            (lastCombo.packType==="mensual"&&lastCombo.paid) || // paid mensual
+            ((lastCombo.used||0)<(lastCombo.total||0)) // combo with unused classes (even if dates passed)
+          );
+          // If explicitly marking as paid, update existing combo and create payment record
+          if(hasActiveCombo&&sp.paid===true&&lastCombo&&!lastCombo.paid){
+            const paymentRecord={
+              id:Date.now(),
+              qty:lastCombo.total||0,
+              amount:lastCombo.amount||sp.amount||0,
+              method:"efectivo",
+              date:TODAY_DATE,
+              dates:lastCombo.dates||[],
+            };
+            combos[combos.length-1]={...lastCombo,paid:true,paidCount:lastCombo.total||0,payments:[...(lastCombo.payments||[]),paymentRecord]};
+            return {...s,combos};
+          }
+          if(hasActiveCombo) return s; // don't modify - just editing the class
+          // Create NEW combo when last combo is expired (last date is in the past)
+          if(!lastDate||lastComboFullyUsed){
+            const startDate=cd.date||today;
+            // Use REAL occurrences from the class, not generated dates
+            const editedClassFull=classes.find(c=>c.id===(cd._seriesId||cd.id));
+            const realOcc=(editedClassFull?.occurrences||[]).filter(d=>d>=startDate);
+            const total=qty||8;
+            const newDates=realOcc.slice(0,total);
+            // Fallback: if no occurrences available, generate from days
+            if(newDates.length===0){
+              const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+              const dowSet=new Set((editedClass.days||[]).map(d=>DAY_MAP[d]));
+              let cur=new Date(startDate+"T12:00:00");
+              while(newDates.length<total){
+                if(dowSet.size===0||dowSet.has(cur.getDay())){
+                  newDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+                }
+                cur.setDate(cur.getDate()+1);
+              }
+            }
+            combos.push({
+              id:combos.length+1,
+              total:qty,
+              packType,
+              used:0,
+              paid:sp.paid===true,
+              paidCount:sp.paid===true?(qty||0):0,
+              date:newDates[0]||startDate,
+              amount:parseInt(sp.amount)||0,
+              dates:newDates,
+              payments:sp.paid===true?[{id:Date.now(),qty:qty||0,amount:parseInt(sp.amount)||0,method:"efectivo",date:today,dates:newDates}]:[],
+            });
+          } else {
+            // Update existing last combo
+            if(combos.length>0){
+              combos[combos.length-1]={...combos[combos.length-1],total:qty,amount:parseInt(sp.amount)||combos[combos.length-1].amount};
+            }
+          }
+          return {...s,combos};
+        }));
+        } catch(err){ console.error("studentPacks error:", err); }
       }
       return;
     }
@@ -6499,9 +6452,10 @@ export default function App() {
             lsSet("izi_student_coach_id", sa.coach_id);
             localStorage.setItem("izi_student_id_raw", String(sa.student_id));
             try{
-              const allD4=await loadAllFromSupabase(sa.coach_id);
-              if(Object.keys(allD4).length>0){
-                const s=allD4.students||[];const cl=allD4.classes||[];
+              const {data:cd}=await supabase.from("coach_data").select("*").eq("coach_id",sa.coach_id).single();
+              if(cd){
+                const tryP=(s,f=[])=>{try{const p=JSON.parse(s);return Array.isArray(p)?p:f;}catch{return f;}};
+                const s=tryP(cd.students);const cl=tryP(cd.classes);
                 if(s.length>0){setStudentsRaw(s);lsSet("izi_students",s);}
                 if(cl.length>0){setClassesRaw(cl);lsSet("izi_classes",cl);}
               }
@@ -6517,7 +6471,7 @@ export default function App() {
         lsSet("izi_student_coach_id", inviteInfo.coach_id);
         localStorage.setItem("izi_student_id_raw", String(inviteInfo.student_id));
         try{
-          const allD3=await loadAllFromSupabase(inviteInfo.coach_id);const data=allD3;
+          const {data}=await supabase.from("coach_data").select("*").eq("coach_id",inviteInfo.coach_id).single();
           if(data){
             const tryP=(s,f=[])=>{try{const p=JSON.parse(s);return Array.isArray(p)?p:f;}catch{return f;}};
             const s=tryP(data.students);const cl=tryP(data.classes);
