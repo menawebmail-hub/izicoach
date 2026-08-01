@@ -1902,6 +1902,9 @@ function ResumeModal({ cls, onClose, onResume, students=[], classes=[] }) {
   const dc=cls.dateCancellations||{};
   const pausedDates=(lastCombo?.dates||[]).filter(d=>dc[d]&&dc[d].cancelType==="paused");
   const pausedCount=pausedDates.length;
+  const pausedStay=resumeDate?pausedDates.filter(d=>d<resumeDate):pausedDates;
+  const pausedReturn=resumeDate?pausedDates.filter(d=>d>=resumeDate):[];
+  const replacementCount=pausedStay.length;
 
   const validate=(date)=>{
     setResumeDate(date);
