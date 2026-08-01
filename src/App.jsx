@@ -2958,11 +2958,62 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
         },150);
       }}/>}
             {showPause&&<PauseModal cls={showPause} onClose={()=>setShowPause(null)} onPause={({cls:pauseCls,resumeDate:rDate})=>{
-        if(!rDate){
-          onSaveClass({...pauseCls,cancelled:false,cancelType:"paused",paused:true,applyToAll:false},true);
-        } else {
-          onSaveClass({...pauseCls,cancelled:false,cancelType:"paused",paused:true,applyToAll:false,_pauseResumeDate:rDate},true);
+        // Step 1: Always pause first
+        onSaveClass({...pauseCls,cancelled:false,cancelType:"paused",paused:true,applyToAll:false},true);
+        
+        if(!rDate) return; // No resume date - done
+        
+        // Step 2: After pause, replicate EXACTLY the ResumeModal logic
+        // Calculate paused dates between editDate and rDate
+        const parentForCalc=(rawClasses||classes).find(c=>c.id===(pauseCls._seriesId||pauseCls.id));
+        if(!parentForCalc) return;
+        const allOccCalc=(parentForCalc.occurrences||[]).sort();
+        const allCDCalc=new Set();
+        (parentForCalc.students||[]).forEach(sid=>{const st=students.find(s=>s.id===sid);if(st)(st.combos||[]).forEach(combo=>{(combo.dates||[]).forEach(d=>allCDCalc.add(d));});});
+        const pausedBefore=allOccCalc.filter(d=>d>=pauseCls.date&&d<rDate&&allCDCalc.has(d));
+        const pCount=pausedBefore.length;
+        if(pCount===0) return;
+
+        // Generate replacement dates (same logic as ResumeModal)
+        const DAY_MAP_P2={"Dom":0,"Lun":1,"Mar":2,"Mie":3,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+        const dowSet_P2=new Set((pauseCls.days||[]).map(d=>DAY_MAP_P2[d]));
+        const lastCDArr=[...allCDCalc].sort();
+        const lastCD=lastCDArr[lastCDArr.length-1]||"";
+        const startFrom2=lastCD&&lastCD>=rDate?lastCD:rDate;
+        const newDates2=[];
+        let cur_P2=new Date(startFrom2+"T12:00:00");
+        if(lastCD&&lastCD>=rDate) cur_P2.setDate(cur_P2.getDate()+1);
+        while(newDates2.length<pCount){
+          if(dowSet_P2.size===0||dowSet_P2.has(cur_P2.getDay())){
+            newDates2.push(cur_P2.getFullYear()+"-"+String(cur_P2.getMonth()+1).padStart(2,"0")+"-"+String(cur_P2.getDate()).padStart(2,"0"));
+          }
+          cur_P2.setDate(cur_P2.getDate()+1);
         }
+        // Update student combos (same as ResumeModal)
+        (pauseCls.students||[]).forEach(sid=>{
+          const st=students.find(s=>s.id===sid);
+          if(!st) return;
+          const combos2=[...(st.combos||[])];
+          let lastIdx=-1;
+          for(let ci=combos2.length-1;ci>=0;ci--){if(combos2[ci].dates&&combos2[ci].packType!=="mensual"){lastIdx=ci;break;}}
+          if(lastIdx===-1) return;
+          const combined=[...new Set([...combos2[lastIdx].dates,...newDates2])].sort();
+          combos2[lastIdx]={...combos2[lastIdx],dates:combined};
+          onUpdateStudent({...st,combos:combos2});
+        });
+        // Un-pause dates >= rDate (same as ResumeModal)
+        const realId2=pauseCls._seriesId||pauseCls.id;
+        onSaveClass({...pauseCls,date:rDate,_resuming:true,cancelled:false,cancelType:null,paused:false,applyToAll:false},true);
+        // Add new occurrences (same as ResumeModal)
+        setTimeout(()=>{
+          const pc2=(rawClasses||classes).find(c=>c.id===realId2);
+          if(pc2){
+            const occ2=[...(pc2.occurrences||[])];
+            newDates2.forEach(d=>{if(!occ2.includes(d))occ2.push(d);});
+            occ2.sort();
+            setClasses(p=>p.map(c=>c.id!==realId2?c:{...c,occurrences:occ2}));
+          }
+        },300);
       }}/>}
       {showCancel&&<CancelReprogModal cls={showCancel} onClose={()=>setShowCancel(null)} onSave={(u)=>{onSaveClass(u,true);setShowCancel(null);}} students={students} onUpdateStudent={onUpdateStudent}/>}
       {showNew&&<NewClassModal onClose={()=>{setShowNew(false);setGridNewTime(null);setWeekOffset(0);}} onSave={onSaveClass} existingClasses={classes} students={students} dateLabel={viewMode==="month"?selLabel:weekLabel()} onCreateStudent={onAddStudent} prefill={gridNewTime||(viewMode==="month"?{date:selDay}:null)} courts={courts} packages={packages} onAddPackage={(pkg)=>{if(typeof onAddPackage==="function")onAddPackage(pkg);}}/>}
