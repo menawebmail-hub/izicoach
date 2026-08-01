@@ -2909,10 +2909,25 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
         </div>
       )}
       {showResume&&<ResumeModal cls={showResume} onClose={()=>setShowResume(null)} students={students} classes={classes} onResume={({cls:rCls,resumeDate:rDate,pausedCount:pCount})=>{
+        if(pCount===0){
+          // All dates un-paused, no replacements needed
+          const realId0=rCls._seriesId||rCls.id;
+          onSaveClass({...rCls,date:rDate,_resuming:true,cancelled:false,cancelType:null,paused:false,applyToAll:false},true);
+          return;
+        }
         const DAY_MAP_R={"Dom":0,"Lun":1,"Mar":2,"Mie":3,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
         const dowSet_R=new Set((rCls.days||[]).map(d=>DAY_MAP_R[d]));
+        // Find last date in combo to append replacements AFTER it
+        const studentId0=(rCls.students||[])[0];
+        const student0=students.find(s=>s.id===studentId0);
+        const combo0=(student0?.combos||[]).filter(c=>c.total>0&&c.packType!=="mensual");
+        const lastCombo0=combo0[combo0.length-1];
+        const lastComboDate=lastCombo0?.dates?lastCombo0.dates[lastCombo0.dates.length-1]:null;
+        // Start generating from after last combo date OR from resume date (whichever is later)
+        const startFrom=lastComboDate&&lastComboDate>=rDate?lastComboDate:rDate;
         const newDates=[];
-        let cur_R=new Date(rDate+"T12:00:00");
+        let cur_R=new Date(startFrom+"T12:00:00");
+        if(lastComboDate&&lastComboDate>=rDate) cur_R.setDate(cur_R.getDate()+1); // skip last combo date itself
         while(newDates.length<pCount){
           if(dowSet_R.size===0||dowSet_R.has(cur_R.getDay())){
             const ds_R=cur_R.getFullYear()+"-"+String(cur_R.getMonth()+1).padStart(2,"0")+"-"+String(cur_R.getDate()).padStart(2,"0");
