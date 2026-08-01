@@ -3249,22 +3249,13 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         const matchingCls=myClasses.find(cls=>cls.date===c.date);
         dates=[matchingCls?matchingCls.date:c.date];
       }
-      // Dynamic extension for paused dates
+      // Dynamic extension for paused dates - visual only, never modifies combo.dates
       const _pi=dates.map(d=>{const cl=myClasses.find(x=>x.date===d);return{date:d,paused:!!(cl&&(cl.paused||cl.cancelType==="paused"))};});
       const _pCount=_pi.filter(x=>x.paused).length;
       const _npCount=_pi.filter(x=>!x.paused).length;
-      const _firstPausedIdx=_pi.findIndex(x=>x.paused);
-      const _allAfterFirstPaused=_firstPausedIdx>=0&&_pi.slice(_firstPausedIdx).every(x=>x.paused);
-      const _alreadyExtended=dates.length>=(effectiveTotal+_pCount);
-      if(_pCount>0&&_npCount>0&&!_allAfterFirstPaused&&!_alreadyExtended){
-        const _lastD=dates[dates.length-1];
-        const _pCls=myClasses.find(cl=>(cl.occurrences||[]).some(od=>dates.includes(od)));
-        if(_pCls&&_pCls.occurrences){
-          const _extra=_pCls.occurrences.filter(d=>d>_lastD&&!dates.includes(d)).slice(0,_pCount);
-          dates=[...dates,..._extra];
-        }
-      }
-      dates.slice(0,Math.max(effectiveTotal+_pCount,dates.length)).forEach((ds,i)=>{
+      // Show all dates in the combo, no dynamic extension needed
+      // The ResumeModal already adds the replacement dates to combo.dates
+      dates.forEach((ds,i)=>{
         const classOnDate=myClasses.find(cl=>cl.date===ds);
         const isCancelled=!!(classOnDate?.cancelled&&classOnDate?.cancelType==="cancelled");
         const isReprogWithDate=!!(classOnDate?.cancelled&&classOnDate?.cancelType==="cancelled_reprog"&&classOnDate?.rescheduledTo);
@@ -5244,21 +5235,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                   return {date:d,isPaid:isPaused?false:isPaid,isGiven,isPast,isPaused,isCancelledClass,isReprogWithDate,isReprogNoDate,rescheduledTo:clsForDate&&clsForDate.rescheduledTo||null};
                 });
               }).sort((a,b)=>a.date.localeCompare(b.date));
-              // Dynamic extension for paused dates
-              const _pausedCount=allDates.filter(x=>x.isPaused).length;
-              const _nonPausedCount=allDates.filter(x=>!x.isPaused).length;
-              const _fpIdx2=allDates.findIndex(x=>x.isPaused);
-              const _allFutPaused=_fpIdx2>=0&&allDates.slice(_fpIdx2).every(x=>x.isPaused);
-              const _ae3=allDates.length>=8+_pausedCount;
-              if(_pausedCount>0&&_nonPausedCount>0&&!_allFutPaused&&!_ae3){
-                const _lastD=allDates[allDates.length-1]?.date;
-                if(_lastD){
-                  const _extraDates=myClasses.filter(cl=>cl.date>_lastD&&(cl.students||[]).includes(student.id)).map(cl=>cl.date).sort().slice(0,_pausedCount);
-                  _extraDates.forEach(d=>{
-                    allDates.push({date:d,isPaid:false,isGiven:false,isPast:false,isPaused:false,isCancelledClass:false,isReprogWithDate:false,isReprogNoDate:false,rescheduledTo:null});
-                  });
-                }
-              }
+              // No dynamic extension - ResumeModal handles replacement dates
               const seen2=new Set();
               const deduped=allDates.filter(d=>{if(seen2.has(d.date))return false;seen2.add(d.date);return true;});
               return (
