@@ -1890,8 +1890,9 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
 }
 
 function ResumeModal({ cls, onClose, onResume, students=[], classes=[] }) {
-  const [resumeDate,setResumeDate]=useState("");
+  const [resumeDate,setResumeDate]=useState(cls._autoResumeDate||"");
   const [warning,setWarning]=useState("");
+  const [autoTriggered,setAutoTriggered]=useState(false);
 
   const studentId=(cls.students||[])[0];
   const student=students.find(s=>s.id===studentId);
@@ -1905,6 +1906,19 @@ function ResumeModal({ cls, onClose, onResume, students=[], classes=[] }) {
   const pausedStay=resumeDate?pausedDates.filter(d=>d<resumeDate):pausedDates;
   const pausedReturn=resumeDate?pausedDates.filter(d=>d>=resumeDate):[];
   const replacementCount=pausedStay.length;
+
+  // Auto-confirm if opened from PauseModal with date
+  React.useEffect(()=>{
+    if(cls._autoResumeDate&&resumeDate&&!autoTriggered){
+      setAutoTriggered(true);
+      setTimeout(()=>{
+        const pb=pausedDates.filter(d=>d<resumeDate);
+        const rc=pb.length;
+        onResume({cls,resumeDate,pausedCount:rc});
+        onClose();
+      },300);
+    }
+  },[cls._autoResumeDate]);
 
   const validate=(date)=>{
     setResumeDate(date);
@@ -1999,14 +2013,14 @@ function PauseModal({ cls, onClose, onPause }) {
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.5)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
       <div style={{background:"#F5F7FF",borderRadius:"24px 24px 0 0",padding:"28px 20px",paddingBottom:"calc(40px + env(safe-area-inset-bottom, 34px))",width:"100%",maxHeight:"90vh",overflowY:"auto",boxSizing:"border-box"}}>
         <div style={{width:40,height:4,borderRadius:2,background:"#DDE3F0",margin:"0 auto 20px"}}></div>
-        <div style={{fontWeight:900,fontSize:19,color:"#0D1B4B",marginBottom:4}}>\u23f8 Pausar paquete</div>
-        <div style={{fontSize:13,color:"#6B7BAD",marginBottom:16}}>{cls.title} \u00b7 {fmtDate(cls.date)}</div>
+        <div style={{fontWeight:900,fontSize:19,color:"#0D1B4B",marginBottom:4}}>⏸ Pausar paquete</div>
+        <div style={{fontSize:13,color:"#6B7BAD",marginBottom:16}}>{cls.title} · {fmtDate(cls.date)}</div>
         <label style={{fontSize:13,color:"#1565C0",fontWeight:700,display:"block",marginBottom:12}}>Reanudar el: (opcional)</label>
         <div onClick={()=>{setHasDate(true);setNoDate(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"14px 16px",borderRadius:12,border:"2px solid "+(hasDate?"#1565C0":"#DDE3F0"),background:hasDate?"#E3F2FD":"#fff",cursor:"pointer",marginBottom:8}}>
           <div style={{width:22,height:22,borderRadius:6,border:"2px solid "+(hasDate?"#1565C0":"#ccc"),background:hasDate?"#1565C0":"#fff",display:"flex",alignItems:"center",justifyContent:"center"}}>
             {hasDate&&<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
           </div>
-          <span style={{fontSize:14,fontWeight:600,color:hasDate?"#1565C0":"#6B7BAD"}}>Tengo fecha de reanudaci\u00f3n</span>
+          <span style={{fontSize:14,fontWeight:600,color:hasDate?"#1565C0":"#6B7BAD"}}>Tengo fecha de reanudación</span>
         </div>
         {hasDate&&(<div style={{marginBottom:8}}>
           <input type="date" value={resumeDate} onChange={e=>setResumeDate(e.target.value)} style={{width:"100%",padding:"14px 12px",borderRadius:12,border:"none",fontSize:14,boxSizing:"border-box",background:"#E3F2FD",color:"#0D1B4B",outline:"none"}}/>
@@ -2016,13 +2030,13 @@ function PauseModal({ cls, onClose, onPause }) {
           <div style={{width:22,height:22,borderRadius:6,border:"2px solid "+(noDate?"#E65100":"#ccc"),background:noDate?"#E65100":"#fff",display:"flex",alignItems:"center",justifyContent:"center"}}>
             {noDate&&<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
           </div>
-          <span style={{fontSize:14,fontWeight:600,color:noDate?"#E65100":"#6B7BAD"}}>No tengo fecha de reanudaci\u00f3n</span>
+          <span style={{fontSize:14,fontWeight:600,color:noDate?"#E65100":"#6B7BAD"}}>No tengo fecha de reanudación</span>
         </div>
-        {hasDate&&resumeDate&&(<div style={{background:"#E8F5E9",borderRadius:12,padding:"12px 14px",marginBottom:16,fontSize:12,color:"#2E7D32"}}>El paquete se pausar\u00e1 desde <b>{fmtDate(cls.date)}</b> y se reanudar\u00e1 el <b>{fmtDate(resumeDate)}</b>. Las clases pausadas se agregar\u00e1n al final del combo.</div>)}
-        {noDate&&(<div style={{background:"#FFF3E0",borderRadius:12,padding:"12px 14px",marginBottom:16,fontSize:12,color:"#E65100"}}>El paquete quedar\u00e1 pausado indefinidamente. Podr\u00e1s definir la fecha m\u00e1s adelante.</div>)}
+        {hasDate&&resumeDate&&(<div style={{background:"#E8F5E9",borderRadius:12,padding:"12px 14px",marginBottom:16,fontSize:12,color:"#2E7D32"}}>El paquete se pausará desde <b>{fmtDate(cls.date)}</b> y se reanudará el <b>{fmtDate(resumeDate)}</b>. Las clases pausadas se agregarán al final del combo.</div>)}
+        {noDate&&(<div style={{background:"#FFF3E0",borderRadius:12,padding:"12px 14px",marginBottom:16,fontSize:12,color:"#E65100"}}>El paquete quedará pausado indefinidamente. Podrás definir la fecha más adelante.</div>)}
         <div style={{display:"flex",gap:10}}>
           <button onClick={onClose} style={{flex:1,padding:"14px",borderRadius:14,border:"1.5px solid #DDE3F0",background:"#fff",cursor:"pointer",fontSize:14,color:"#6B7BAD",fontWeight:700}}>Cancelar</button>
-          <button onClick={handleConfirm} disabled={!canConfirm} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:!canConfirm?"#ccc":"linear-gradient(135deg,#E65100,#FF8F00)",color:"#fff",cursor:!canConfirm?"not-allowed":"pointer",fontSize:14,fontWeight:800,opacity:!canConfirm?0.5:1}}>\u23f8 Pausar paquete</button>
+          <button onClick={handleConfirm} disabled={!canConfirm} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:!canConfirm?"#ccc":"linear-gradient(135deg,#E65100,#FF8F00)",color:"#fff",cursor:!canConfirm?"not-allowed":"pointer",fontSize:14,fontWeight:800,opacity:!canConfirm?0.5:1}}>⏸ Pausar paquete</button>
         </div>
       </div>
     </div>
@@ -2958,62 +2972,10 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
         },150);
       }}/>}
             {showPause&&<PauseModal cls={showPause} onClose={()=>setShowPause(null)} onPause={({cls:pauseCls,resumeDate:rDate})=>{
-        // Step 1: Always pause first
         onSaveClass({...pauseCls,cancelled:false,cancelType:"paused",paused:true,applyToAll:false},true);
-        
-        if(!rDate) return; // No resume date - done
-        
-        // Step 2: After pause, replicate EXACTLY the ResumeModal logic
-        // Calculate paused dates between editDate and rDate
-        const parentForCalc=(rawClasses||classes).find(c=>c.id===(pauseCls._seriesId||pauseCls.id));
-        if(!parentForCalc) return;
-        const allOccCalc=(parentForCalc.occurrences||[]).sort();
-        const allCDCalc=new Set();
-        (parentForCalc.students||[]).forEach(sid=>{const st=students.find(s=>s.id===sid);if(st)(st.combos||[]).forEach(combo=>{(combo.dates||[]).forEach(d=>allCDCalc.add(d));});});
-        const pausedBefore=allOccCalc.filter(d=>d>=pauseCls.date&&d<rDate&&allCDCalc.has(d));
-        const pCount=pausedBefore.length;
-        if(pCount===0) return;
-
-        // Generate replacement dates (same logic as ResumeModal)
-        const DAY_MAP_P2={"Dom":0,"Lun":1,"Mar":2,"Mie":3,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
-        const dowSet_P2=new Set((pauseCls.days||[]).map(d=>DAY_MAP_P2[d]));
-        const lastCDArr=[...allCDCalc].sort();
-        const lastCD=lastCDArr[lastCDArr.length-1]||"";
-        const startFrom2=lastCD&&lastCD>=rDate?lastCD:rDate;
-        const newDates2=[];
-        let cur_P2=new Date(startFrom2+"T12:00:00");
-        if(lastCD&&lastCD>=rDate) cur_P2.setDate(cur_P2.getDate()+1);
-        while(newDates2.length<pCount){
-          if(dowSet_P2.size===0||dowSet_P2.has(cur_P2.getDay())){
-            newDates2.push(cur_P2.getFullYear()+"-"+String(cur_P2.getMonth()+1).padStart(2,"0")+"-"+String(cur_P2.getDate()).padStart(2,"0"));
-          }
-          cur_P2.setDate(cur_P2.getDate()+1);
+        if(rDate){
+          setTimeout(()=>setShowResume({...pauseCls,_autoResumeDate:rDate}),500);
         }
-        // Update student combos (same as ResumeModal)
-        (pauseCls.students||[]).forEach(sid=>{
-          const st=students.find(s=>s.id===sid);
-          if(!st) return;
-          const combos2=[...(st.combos||[])];
-          let lastIdx=-1;
-          for(let ci=combos2.length-1;ci>=0;ci--){if(combos2[ci].dates&&combos2[ci].packType!=="mensual"){lastIdx=ci;break;}}
-          if(lastIdx===-1) return;
-          const combined=[...new Set([...combos2[lastIdx].dates,...newDates2])].sort();
-          combos2[lastIdx]={...combos2[lastIdx],dates:combined};
-          onUpdateStudent({...st,combos:combos2});
-        });
-        // Un-pause dates >= rDate (same as ResumeModal)
-        const realId2=pauseCls._seriesId||pauseCls.id;
-        onSaveClass({...pauseCls,date:rDate,_resuming:true,cancelled:false,cancelType:null,paused:false,applyToAll:false},true);
-        // Add new occurrences (same as ResumeModal)
-        setTimeout(()=>{
-          const pc2=(rawClasses||classes).find(c=>c.id===realId2);
-          if(pc2){
-            const occ2=[...(pc2.occurrences||[])];
-            newDates2.forEach(d=>{if(!occ2.includes(d))occ2.push(d);});
-            occ2.sort();
-            setClasses(p=>p.map(c=>c.id!==realId2?c:{...c,occurrences:occ2}));
-          }
-        },300);
       }}/>}
       {showCancel&&<CancelReprogModal cls={showCancel} onClose={()=>setShowCancel(null)} onSave={(u)=>{onSaveClass(u,true);setShowCancel(null);}} students={students} onUpdateStudent={onUpdateStudent}/>}
       {showNew&&<NewClassModal onClose={()=>{setShowNew(false);setGridNewTime(null);setWeekOffset(0);}} onSave={onSaveClass} existingClasses={classes} students={students} dateLabel={viewMode==="month"?selLabel:weekLabel()} onCreateStudent={onAddStudent} prefill={gridNewTime||(viewMode==="month"?{date:selDay}:null)} courts={courts} packages={packages} onAddPackage={(pkg)=>{if(typeof onAddPackage==="function")onAddPackage(pkg);}}/>}
@@ -4791,9 +4753,9 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
               const ti=md.reduce((a,b)=>a+b.ing,0);const tg=md.reduce((a,b)=>a+b.gas,0);const cu="₡";const mx=Math.max(...md.map(d=>Math.max(d.ing,d.gas)),1);
               return (<div>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:C.white,borderRadius:14,padding:"12px 16px",marginBottom:14,border:"1px solid "+C.border}}>
-                  <button onClick={()=>setSelMonth((year-1)+"-01")} style={{background:C.blueL,border:"none",borderRadius:10,width:34,height:34,cursor:"pointer",color:C.blue2,fontWeight:800,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>{"\u2039"}</button>
+                  <button onClick={()=>setSelMonth((year-1)+"-01")} style={{background:C.blueL,border:"none",borderRadius:10,width:34,height:34,cursor:"pointer",color:C.blue2,fontWeight:800,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
                   <div style={{fontSize:18,fontWeight:800,color:C.text}}>{year}</div>
-                  <button onClick={()=>setSelMonth((year+1)+"-01")} style={{background:C.blueL,border:"none",borderRadius:10,width:34,height:34,cursor:"pointer",color:C.blue2,fontWeight:800,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>{"\u203a"}</button>
+                  <button onClick={()=>setSelMonth((year+1)+"-01")} style={{background:C.blueL,border:"none",borderRadius:10,width:34,height:34,cursor:"pointer",color:C.blue2,fontWeight:800,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>{"›"}</button>
                 </div>
                 <div style={{background:C.white,borderRadius:14,padding:"16px 12px",marginBottom:14,border:"1px solid "+C.border}}>
                   <div style={{display:"flex",justifyContent:"flex-end",gap:12,marginBottom:12}}>
@@ -6110,7 +6072,7 @@ export default function App() {
             const lastCDArr=[...allCDPre].sort();
             const lcdPre=lastCDArr[lastCDArr.length-1]||"";
             const startPre=lcdPre&&lcdPre>=rDatePre?lcdPre:rDatePre;
-            const DAY_MAP_PRE={"Dom":0,"Lun":1,"Mar":2,"Mie":3,"Mi\u00e9":3,"Jue":4,"Vie":5,"S\u00e1b":6};
+            const DAY_MAP_PRE={"Dom":0,"Lun":1,"Mar":2,"Mie":3,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
             const dowPre=new Set((clsPre.days||[]).map(d=>DAY_MAP_PRE[d]));
             let curPre=new Date(startPre+"T12:00:00");
             if(lcdPre&&lcdPre>=rDatePre) curPre.setDate(curPre.getDate()+1);
