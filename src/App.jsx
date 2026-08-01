@@ -38,11 +38,10 @@ const C = {
 
 // --- SUPABASE SYNC HELPERS ---
 const _syncQueue={};
+const _syncPrevLen={};
 function syncToSupabase(coachId, key, value) {
   if(!coachId||typeof coachId!=="string"||coachId.length<10) return;
-  // Debounce per key - wait 2s after last change
-  if(_syncQueue[key]) clearTimeout(_syncQueue[key]);
-  _syncQueue[key]=setTimeout(async()=>{
+  const doSync=async()=>{
     try {
       await supabase.from("coach_data").upsert({
         coach_id: coachId,
@@ -51,7 +50,13 @@ function syncToSupabase(coachId, key, value) {
         updated_at: new Date().toISOString()
       }, { onConflict: "coach_id,data_key" });
     } catch(e) { console.warn("Sync error:", key, e); }
-  },2000);
+  };
+  const prevLen=_syncPrevLen[key]||0;
+  const curLen=Array.isArray(value)?value.length:0;
+  _syncPrevLen[key]=curLen;
+  if(curLen<prevLen&&prevLen>0){if(_syncQueue[key])clearTimeout(_syncQueue[key]);doSync();return;}
+  if(_syncQueue[key]) clearTimeout(_syncQueue[key]);
+  _syncQueue[key]=setTimeout(doSync,500);
 }
 async function loadFromSupabase(coachId, key) {
   if(!coachId) return null;
@@ -5039,11 +5044,12 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
       const cId=coachId||(localStorage.getItem("izi_student_coach_id")?.replace(/"/g,""));
       const studentIdRaw=localStorage.getItem("izi_student_id_raw");
       if(cId&&studentIdRaw){
-        const {data}=await supabase.from("coach_data").select("students").eq("coach_id",cId).single();
-        if(data?.students){
-          const studs=JSON.parse(data.students);
+        const {data:rows}=await supabase.from("coach_data").select("data_value").eq("coach_id",cId).eq("data_key","students");
+        const studData=rows&&rows[0]?rows[0].data_value:null;
+        if(studData){
+          const studs=Array.isArray(studData)?studData:JSON.parse(studData);
           const updated=studs.map(s=>String(s.id)===studentIdRaw?{...s,name:student.name,phone:student.phone||"",email:student.email||""}:s);
-          await supabase.from("coach_data").update({students:JSON.stringify(updated)}).eq("coach_id",cId);
+          await supabase.from("coach_data").upsert({coach_id:cId,data_key:"students",data_value:updated,updated_at:new Date().toISOString()},{onConflict:"coach_id,data_key"});
           localStorage.setItem("izi_students",JSON.stringify(updated));
         }
       }
@@ -5731,7 +5737,8 @@ export default function App() {
   const ls=(key,def)=>{try{const v=localStorage.getItem(key);return v?JSON.parse(v):def;}catch{return def;}};
   const lsSet=(key,val)=>{try{localStorage.setItem(key,JSON.stringify(val));}catch{}};
   const [user,setUser]=useState(null);
-  const setUserWithRef=(u)=>{setUser(u);window._iziUserId=u?.id||null;};
+  const setUserWithRef=(u)=>{setUser(u);window._iziUserId=u?.id||null;if(u?.id)lsSet("izi_userId",u.id);};
+  if(!window._iziUserId){const savedId=ls("izi_userId",null);if(savedId)window._iziUserId=savedId;}
   const [loadingAuth,setLoadingAuth]=useState(true);
   const [checkingProfile,setCheckingProfile]=useState(false);
 
@@ -5785,15 +5792,11 @@ export default function App() {
     // Validate data before saving - must be arrays
     if(!Array.isArray(newStudents)||!Array.isArray(newClasses)) return;
     try {
-      await supabase.from("coach_data").upsert({
-        coach_id:userId,
-        students:JSON.stringify(newStudents||[]),
-        classes:JSON.stringify(newClasses||[]),
-        expenses:JSON.stringify(newExpenses||[]),
-        courts:JSON.stringify(newCourts||[]),
-        packages:JSON.stringify(newPackages||[]),
-        updated_at:new Date().toISOString(),
-      },{onConflict:"coach_id"});
+      syncToSupabase(userId,"students",newStudents||[]);
+      syncToSupabase(userId,"classes",newClasses||[]);
+      syncToSupabase(userId,"expenses",newExpenses||[]);
+      syncToSupabase(userId,"courts",newCourts||[]);
+      syncToSupabase(userId,"packages",newPackages||[]);
     } catch(e){ console.error("Sync error:",e); }
   };
 
@@ -5816,12 +5819,16 @@ export default function App() {
   const loadData=async(userId)=>{
     try {
       const allData=await loadAllFromSupabase(userId);
-      if(Object.keys(allData).length>0){
-        if(allData.students){setStudentsRaw(allData.students);lsSet("izi_students",allData.students);}
-        if(allData.classes){setClassesRaw(allData.classes);lsSet("izi_classes",allData.classes);}
-        if(allData.expenses){setExpensesRaw(allData.expenses);lsSet("izi_expenses",allData.expenses);}
-        if(allData.courts){setCourtsRaw(allData.courts);lsSet("izi_courts",allData.courts);}
-        if(allData.packages){setPackagesRaw(allData.packages);lsSet("izi_packages",allData.packages);}
+      const hasRemoteData=Object.keys(allData).length>0&&Object.values(allData).some(v=>Array.isArray(v)&&v.length>0);
+      if(hasRemoteData){
+        if(allData.students&&allData.students.length>0){setStudentsRaw(allData.students);lsSet("izi_students",allData.students);}
+        if(allData.classes&&allData.classes.length>0){setClassesRaw(allData.classes);lsSet("izi_classes",allData.classes);}
+        if(allData.expenses&&allData.expenses.length>0){setExpensesRaw(allData.expenses);lsSet("izi_expenses",allData.expenses);}
+        if(allData.courts&&allData.courts.length>0){setCourtsRaw(allData.courts);lsSet("izi_courts",allData.courts);}
+        if(allData.packages&&allData.packages.length>0){setPackagesRaw(allData.packages);lsSet("izi_packages",allData.packages);}
+      } else {
+        const lS=ls("izi_students",[]),lC=ls("izi_classes",[]),lE=ls("izi_expenses",[]),lCo=ls("izi_courts",[]),lP=ls("izi_packages",[]);
+        if(lS.length>0||lC.length>0){syncToSupabase(userId,"students",lS);syncToSupabase(userId,"classes",lC);syncToSupabase(userId,"expenses",lE);syncToSupabase(userId,"courts",lCo);syncToSupabase(userId,"packages",lP);}
       }
       // Also load coach profile (name, phone, email, sport, photo, currency)
       const {data:profileData}=await supabase.from("coaches").select("*").eq("id",userId).single();
@@ -5882,7 +5889,7 @@ export default function App() {
             lsSet("izi_student_coach_id", sa.coach_id);
             localStorage.setItem("izi_student_id_raw", String(sa.student_id));
             try{
-              const {data:cd}=await supabase.from("coach_data").select("*").eq("coach_id",sa.coach_id).single();
+              const {data:cd}=loadAllFromSupabase(sa.coach_id);
               if(cd){
                 const tryP=(s,f=[])=>{try{const p=JSON.parse(s);return Array.isArray(p)?p:f;}catch{return f;}};
                 const s=tryP(cd.students);const cl=tryP(cd.classes);
@@ -6030,19 +6037,9 @@ export default function App() {
     setStudentsRaw(newStudents);lsSet("izi_students",newStudents);
     setExpensesRaw(newExpenses);lsSet("izi_expenses",newExpenses);
     if(window._iziUserId){
-      const userId=window._iziUserId;
-      supabase.from("coach_data").select("*").eq("coach_id",userId).single().then(({data:existing})=>{
-        const row={
-          coach_id:userId,
-          students:JSON.stringify(newStudents),
-          classes:JSON.stringify(newClasses),
-          expenses:JSON.stringify(newExpenses),
-          courts:existing?.courts||'[]',
-          packages:existing?.packages||'[]',
-          updated_at:new Date().toISOString(),
-        };
-        supabase.from("coach_data").upsert(row,{onConflict:"coach_id"});
-      });
+      syncToSupabase(window._iziUserId,"students",newStudents);
+      syncToSupabase(window._iziUserId,"classes",newClasses);
+      syncToSupabase(window._iziUserId,"expenses",newExpenses);
     }
   };
 
@@ -6452,7 +6449,7 @@ export default function App() {
             lsSet("izi_student_coach_id", sa.coach_id);
             localStorage.setItem("izi_student_id_raw", String(sa.student_id));
             try{
-              const {data:cd}=await supabase.from("coach_data").select("*").eq("coach_id",sa.coach_id).single();
+              const {data:cd}=loadAllFromSupabase(sa.coach_id);
               if(cd){
                 const tryP=(s,f=[])=>{try{const p=JSON.parse(s);return Array.isArray(p)?p:f;}catch{return f;}};
                 const s=tryP(cd.students);const cl=tryP(cd.classes);
@@ -6471,7 +6468,7 @@ export default function App() {
         lsSet("izi_student_coach_id", inviteInfo.coach_id);
         localStorage.setItem("izi_student_id_raw", String(inviteInfo.student_id));
         try{
-          const {data}=await supabase.from("coach_data").select("*").eq("coach_id",inviteInfo.coach_id).single();
+          const {data}=loadAllFromSupabase(inviteInfo.coach_id);
           if(data){
             const tryP=(s,f=[])=>{try{const p=JSON.parse(s);return Array.isArray(p)?p:f;}catch{return f;}};
             const s=tryP(data.students);const cl=tryP(data.classes);
