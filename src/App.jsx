@@ -1931,16 +1931,19 @@ function ResumeModal({ cls, onClose, onResume, students=[], classes=[] }) {
         <div style={{width:40,height:4,borderRadius:2,background:"#DDE3F0",margin:"0 auto 20px"}}></div>
         <div style={{fontWeight:900,fontSize:19,color:"#0D1B4B",marginBottom:4}}>▶ Reanudar paquete</div>
         <div style={{fontSize:13,color:"#6B7BAD",marginBottom:6}}>{cls.title}</div>
-        <div style={{fontSize:12,color:"#E65100",background:"#FFF3E0",borderRadius:10,padding:"8px 12px",marginBottom:16,fontWeight:600}}>⏸ {pausedCount} clases pausadas</div>
+        <div style={{fontSize:12,color:"#E65100",background:"#FFF3E0",borderRadius:10,padding:"8px 12px",marginBottom:16,fontWeight:600}}>⏸ {resumeDate?replacementCount+" quedan pausadas · "+pausedReturn.length+" vuelven a Programada":pausedCount+" clases pausadas"}</div>
 
         {/* Paused dates list */}
         <div style={{marginBottom:16,maxHeight:120,overflowY:"auto"}}>
-          {pausedDates.map((d,i)=>(
-            <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"4px 0",fontSize:12,color:"#E65100"}}>
-              <div style={{width:6,height:6,borderRadius:"50%",background:"#E65100",flexShrink:0}}></div>
-              {fmtDate(d)} — Pausada
-            </div>
-          ))}
+          {pausedDates.map((d,i)=>{
+            const stays=!resumeDate||d<resumeDate;
+            return (
+              <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"4px 0",fontSize:12,color:stays?"#E65100":"#2E7D32"}}>
+                <div style={{width:6,height:6,borderRadius:"50%",background:stays?"#E65100":"#2E7D32",flexShrink:0}}></div>
+                {fmtDate(d)} — {stays?"Pausada":"Vuelve a Programada"}
+              </div>
+            );
+          })}
         </div>
 
         {/* Date picker */}
@@ -1959,11 +1962,11 @@ function ResumeModal({ cls, onClose, onResume, students=[], classes=[] }) {
         {/* Info */}
         {resumeDate&&!warning&&(
           <div style={{background:"#E8F5E9",borderRadius:12,padding:"12px 14px",marginBottom:16,fontSize:12,color:"#2E7D32",lineHeight:1.4}}>
-            {(()=>{
-              const beforeResume=pausedDates.filter(d=>d<resumeDate).length;
-              const count=beforeResume>0?beforeResume:pausedCount;
-              return (<span>Se generarán <b>{count} clases nuevas</b> a partir del <b>{fmtDate(resumeDate)}</b> respetando el horario habitual.{beforeResume>0&&beforeResume<pausedCount&&<span> Las {pausedCount-beforeResume} fechas restantes volverán a estar activas.</span>}</span>);
-            })()}
+            {replacementCount>0?(
+              <span>Se generarán <b>{replacementCount} clases nuevas</b> al final del combo.{pausedReturn.length>0&&<span> Las {pausedReturn.length} fechas restantes volverán a Programada.</span>}</span>
+            ):(
+              <span>Todas las clases pausadas volverán a <b>Programada</b>. No se generarán clases nuevas.</span>
+            )}
           </div>
         )}
 
