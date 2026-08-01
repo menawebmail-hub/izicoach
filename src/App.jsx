@@ -2932,18 +2932,8 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
         }
       }}/>}
       {showPause&&<PauseModal cls={showPause} onClose={()=>setShowPause(null)} onPause={({cls:pauseCls,resumeDate:rDate})=>{
-        if(rDate){
-          // Pause with resume date: pause dates from cls.date to rDate, resume after
-          onSaveClass({...pauseCls,cancelled:false,cancelType:"paused",paused:true,applyToAll:false},true);
-          // After a tick, resume from rDate
-          setTimeout(()=>{
-            const resumeCls={...pauseCls,date:rDate,_resuming:true,cancelled:false,cancelType:null,paused:false,applyToAll:false};
-            onSaveClass(resumeCls,true);
-          },100);
-        } else {
-          // Pause indefinitely
-          onSaveClass({...pauseCls,cancelled:false,cancelType:"paused",paused:true,applyToAll:false},true);
-        }
+        // Always just pause - if rDate provided, the ResumeModal logic will handle it later
+        onSaveClass({...pauseCls,cancelled:false,cancelType:"paused",paused:true,applyToAll:false},true);
       }}/>}
       {showCancel&&<CancelReprogModal cls={showCancel} onClose={()=>setShowCancel(null)} onSave={(u)=>{onSaveClass(u,true);setShowCancel(null);}} students={students} onUpdateStudent={onUpdateStudent}/>}
       {showNew&&<NewClassModal onClose={()=>{setShowNew(false);setGridNewTime(null);setWeekOffset(0);}} onSave={onSaveClass} existingClasses={classes} students={students} dateLabel={viewMode==="month"?selLabel:weekLabel()} onCreateStudent={onAddStudent} prefill={gridNewTime||(viewMode==="month"?{date:selDay}:null)} courts={courts} packages={packages} onAddPackage={(pkg)=>{if(typeof onAddPackage==="function")onAddPackage(pkg);}}/>}
@@ -6074,11 +6064,9 @@ export default function App() {
             });
             // No replacement dates at pause time - they get added at RESUME time
           } else if(cd._resuming){
-            // RESUME: just remove paused status from resume date forward
-            
-            Object.keys(dc).forEach(d=>{
-              if(d>=editDate&&dc[d]?.cancelType==="paused") delete dc[d];
-            });
+            // RESUME: pausadas permanecen como historial permanente
+            // Las nuevas fechas se agregan por ResumeModal (combo.dates + occurrences)
+            // NO modificar dateCancellations - las pausadas nunca cambian
             
             const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,...rest}=cd;
             return {...c,...rest,id:realId,dateCancellations:dc,occurrences:occ};
