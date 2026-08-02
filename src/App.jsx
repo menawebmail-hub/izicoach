@@ -6100,7 +6100,7 @@ export default function App() {
       const editDate=cd.date; // the specific date being edited
 
       // Handle per-date cancellation/pause for recurring classes
-      if((cd.cancelled!==undefined||cd.cancelType==="paused"||cd._resuming)&&editDate){
+      if((cd.cancelled===true||cd.cancelType==="paused"||cd._resuming)&&editDate){
         // Pre-calculate replacement dates BEFORE any state updates
         let _replacements=[];
         if(cd.cancelType==="paused"&&cd._pauseResumeDate){
