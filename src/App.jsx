@@ -6396,7 +6396,6 @@ export default function App() {
   };
 
   const handleSaveClass=(cd,isEdit=false)=>{
-    console.log("[handleSaveClass]",{isEdit,cancelled:cd.cancelled,cancelType:cd.cancelType,paused:cd.paused,applyToAll:cd.applyToAll,hasStudentPacks:!!cd.studentPacks,_resuming:cd._resuming});
     if(isEdit){
       // Resolve virtual id to real series id
       const realId=cd._seriesId||cd.id;
