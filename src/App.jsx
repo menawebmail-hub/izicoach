@@ -6386,7 +6386,7 @@ export default function App() {
     if(cd.applyToAll){
       setClasses(p=>p.map(c=>{
         if(c.id===realId){
-          return {...c,...cd,id:realId,date:c.date,occurrences:c.occurrences};
+          return {...c,...cd,id:realId,date:c.date,occurrences:cd.occurrences||c.occurrences};
         }
         return c;
       }));
