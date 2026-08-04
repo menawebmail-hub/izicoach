@@ -6092,6 +6092,198 @@ export default function App() {
     }
   };
 
+  // --- Extracted from handleSaveClass (B: CreateNewClass) ---
+  const createNewClass=(cd)=>{
+    // Store a single class definition with occurrences array
+    const dates=cd.occurrences&&cd.occurrences.length>0?cd.occurrences:[cd.date||TODAY_DATE];
+    const newClass={
+      ...cd,
+      id:Date.now(),
+      date:dates[0],
+      occurrences:dates,
+      attendanceLog:[],
+      cancelledDates:[],
+      rescheduledDates:[],
+    };
+    setClasses(p=>[...p,newClass]);
+    if(cd.studentData&&cd.studentData.length>0){
+      setStudents(p=>p.map(s=>{
+        const sd=cd.studentData.find(x=>x.id===s.id);
+        if(!sd) return s;
+        const pkg=packages.find(p=>String(p.id)===String(sd.pack));
+        const isIndividual=sd.pack==="individual"||pkg?.type==="individual";
+        const isMensual=sd.pack==="mensual"||pkg?.type==="mensual";
+        // For individual: total = number of occurrences, dates = all occurrence dates
+        const pn=isMensual?null:isIndividual?dates.length:pkg?.qty||parseInt(sd.pack)||null;
+        const packType=isMensual?"mensual":isIndividual?"individual":"combo";
+        // For individual: use all occurrence dates directly
+        const projectedClassDates=isIndividual?[...dates]:(()=>{
+          const ds=[];
+          if(!pn) return ds;
+          if(cd.days&&cd.days.length>0){
+            const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+            const dowSet=new Set(cd.days.map(d=>DAY_MAP[d]));
+            let cur=new Date((cd.date||TODAY_DATE)+"T12:00:00");
+            while(ds.length<pn){
+              if(dowSet.has(cur.getDay())){
+                ds.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+              }
+              cur.setDate(cur.getDate()+1);
+            }
+          } else {
+            let cur=new Date((cd.date||TODAY_DATE)+"T12:00:00");
+            for(let i=0;i<pn;i++){
+              ds.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+              cur.setDate(cur.getDate()+1);
+            }
+          }
+          return ds;
+        })();
+        const amount=parseInt(sd.amount)||0;
+        const paymentEntry=sd.paid&&amount>0?[{id:Date.now(),qty:pn||0,amount,method:"efectivo",date:cd.date||TODAY_DATE,dates:projectedClassDates}]:[];
+        // For individual classes: merge into existing active individual combo if exists
+        const existingIndividualIdx=s.combos.findIndex(c=>
+          (c.packType==="individual"||c.total===1)&&
+          c.paid===sd.paid&&
+          c.amount===(parseInt(sd.amount)||0)&&
+          !(c.dates&&c.dates.some(d=>d<TODAY_DATE&&(c.used||0)>=(c.total||1))) // not fully consumed
+        );
+        if(isIndividual&&existingIndividualIdx>=0){
+          // Add this class date to existing combo
+          const existing=s.combos[existingIndividualIdx];
+          const newDates=[...new Set([...(existing.dates||[]),...projectedClassDates])].sort();
+          const newTotal=(existing.total||1)+1;
+          const newPaidCount=sd.paid?(existing.paidCount||0)+1:(existing.paidCount||0);
+          const updatedCombos=s.combos.map((c,idx)=>idx===existingIndividualIdx?{
+            ...c,total:newTotal,paidCount:newPaidCount,dates:newDates,
+            payments:sd.paid&&amount>0?[...(c.payments||[]),{id:Date.now(),qty:1,amount,method:"efectivo",date:cd.date||TODAY_DATE,dates:projectedClassDates}]:(c.payments||[])
+          }:c);
+          return {...s,combos:updatedCombos};
+        }
+        return {...s,combos:[...s.combos,{
+          id:s.combos.length+1,
+          total:pn,
+          packType,
+          packId:sd.packId||sd.pack||"",
+          used:0,
+          paid:packType==="mensual"?undefined:sd.paid,
+          paidCount:packType==="mensual"?undefined:(sd.paid?(pn||0):0),
+          date:packType==="mensual"?(cd.date||TODAY_DATE):(cd.date||TODAY_DATE),
+          payDate:packType==="mensual"?undefined:undefined,
+          amount,
+          // Mensual-specific fields
+          ...(packType==="mensual"?{
+            cobroDia:sd.cobroDia||parseInt((cd.date||TODAY_DATE).split("-")[2])||1,
+            graciaDias:5,
+            currency:"PYG",
+            mensualidades:sd.paid?[{
+              id:"M-"+(cd.date||TODAY_DATE).slice(0,7),
+              mes:(cd.date||TODAY_DATE).slice(0,7),
+              estado:"pagado",
+              fechaVencimiento:(cd.date||TODAY_DATE),
+              fechaPago:TODAY_DATE,
+              monto:amount,
+              method:sd.method||"Efectivo"
+            }]:[]
+          }:{}),
+          dates:projectedClassDates,
+          payments:packType==="mensual"?[]:paymentEntry,
+        }]};
+      }));
+      // Register income in Finanzas for paid students who chose to save payment
+      cd.studentData.forEach(sd=>{
+        const shouldSave=sd.savePay===undefined?true:sd.savePay;
+        if(shouldSave&&sd.paid&&parseInt(sd.amount)>0){
+          const pkg=packages.find(p=>String(p.id)===String(sd.pack));
+          const studentName=students.find(s=>String(s.id)===String(sd.id))?.name||"Alumno";
+          const detail=sd.pack==="mensual"||pkg?.type==="mensual"?"Plan Mensual":
+            sd.pack==="individual"||pkg?.type==="individual"?"Clase Individual":
+            pkg?.qty?(pkg.qty+" clases"):pkg?.name||"";
+          addIncome(parseInt(sd.amount), cd.date||TODAY_DATE, studentName, detail);
+        }
+      });
+    }
+  };
+
+  const handleAttendance=(cls)=>{
+    const wD=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+    const classDate=cls.date||new Date().toISOString().split("T")[0];
+    const day=wD[new Date(classDate+"T12:00:00").getDay()];
+    const presentIds=cls.students||[];
+    const ausenteDadaIds=cls.ausente_dada||[];
+    const ausenteReprogIds=cls.ausente_reprog||[];
+    // Resolve to the real class id (support expanded virtual classes)
+    const realId=cls._seriesId||cls.id;
+    const allClassStudents=classes.find(c=>c.id===realId)?.students||cls.students;
+    // Save attendance log with full status
+    setClasses(p=>p.map(c=>{
+      if(c.id!==realId) return c;
+      const log=[...(c.attendanceLog||[]).filter(e=>e.date!==classDate),
+        {date:classDate,day,present:presentIds,ausente_dada:ausenteDadaIds,ausente_reprog:ausenteReprogIds}];
+      return {...c,attendanceLog:log};
+    }));
+    // Only increment 'used' for present + ausente_dada (class was given)
+    const givenIds=[...presentIds,...ausenteDadaIds];
+    setStudents(p=>p.map(s=>{
+      if(!allClassStudents.includes(s.id)) return s;
+      const wasGiven=givenIds.includes(s.id);
+      if(!wasGiven) return s;
+      const combos=[...s.combos];
+      if(combos.length===0) return s;
+      const lastIdx=combos.length-1;
+      const last=combos[lastIdx];
+      const newUsed=(last.used||0)+1;
+      combos[lastIdx]={...last,used:newUsed};
+      // Check if combo is now complete (all paid + all given)
+      const effectiveTotal=last.total||0;
+      const paidCount=last.paidCount!==undefined?last.paidCount:(last.paid?effectiveTotal:0);
+      const allGiven=newUsed>=paidCount&&paidCount>=effectiveTotal&&effectiveTotal>0;
+      if(allGiven&&last.dates&&last.dates.length>0){
+        // Generate next combo dates starting from day after last date
+        const myClsForStudent=classes.filter(c=>c.students&&c.students.includes(s.id));
+        const classDays=myClsForStudent.length>0?myClsForStudent[0].days:[];
+        const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+        const dowSet=new Set(classDays.map(d=>DAY_MAP[d]));
+        const lastDate=last.dates[last.dates.length-1];
+        let cur=new Date(lastDate+"T12:00:00");
+        cur.setDate(cur.getDate()+1);
+        const nextDates=[];
+        while(nextDates.length<effectiveTotal){
+          if(dowSet.size===0||dowSet.has(cur.getDay())){
+            nextDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+          }
+          cur.setDate(cur.getDate()+1);
+        }
+        // Add new unpaid combo
+        combos.push({
+          id:combos.length+1,
+          total:effectiveTotal,
+          packType:last.packType||"combo",
+          used:0,
+          paid:false,
+          paidCount:0,
+          date:nextDates[0]||lastDate,
+          amount:last.amount,
+          dates:nextDates,
+          payments:[],
+        });
+      }
+      return {...s,combos};
+    }));
+    // For ausente_reprog: mark their combo date as needing reschedule
+    // (coach will reschedule from Agenda)
+  };
+
+  const [pendingReprog,setPendingReprog]=useState(null);
+  const handleRefresh=async()=>{if(window._iziUserId)await loadData(window._iziUserId);};
+
+  const handleNavigate=(section,params)=>{
+    setTab(section);
+    if(params?.subTab&&section==="cobros") setFinanceTab(params.subTab);
+    if(params?.subTab&&typeof params.subTab==="string") setFinanceTab(params.subTab);
+    if(params?.reprog) setPendingReprog(params.reprog);
+  };
+
   // --- Extracted from handleSaveClass (A3: CleanRemovedStudents) ---
   const removeStudentsFromClass=(cd,realId)=>{
     if(cd.students){
@@ -6289,194 +6481,7 @@ export default function App() {
       updateStudentPacks(cd);
       return;
     }
-    // Store a single class definition with occurrences array
-    const dates=cd.occurrences&&cd.occurrences.length>0?cd.occurrences:[cd.date||TODAY_DATE];
-    const newClass={
-      ...cd,
-      id:Date.now(),
-      date:dates[0],
-      occurrences:dates,
-      attendanceLog:[],
-      cancelledDates:[],
-      rescheduledDates:[],
-    };
-    setClasses(p=>[...p,newClass]);
-    if(cd.studentData&&cd.studentData.length>0){
-      setStudents(p=>p.map(s=>{
-        const sd=cd.studentData.find(x=>x.id===s.id);
-        if(!sd) return s;
-        const pkg=packages.find(p=>String(p.id)===String(sd.pack));
-        const isIndividual=sd.pack==="individual"||pkg?.type==="individual";
-        const isMensual=sd.pack==="mensual"||pkg?.type==="mensual";
-        // For individual: total = number of occurrences, dates = all occurrence dates
-        const pn=isMensual?null:isIndividual?dates.length:pkg?.qty||parseInt(sd.pack)||null;
-        const packType=isMensual?"mensual":isIndividual?"individual":"combo";
-        // For individual: use all occurrence dates directly
-        const projectedClassDates=isIndividual?[...dates]:(()=>{
-          const ds=[];
-          if(!pn) return ds;
-          if(cd.days&&cd.days.length>0){
-            const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
-            const dowSet=new Set(cd.days.map(d=>DAY_MAP[d]));
-            let cur=new Date((cd.date||TODAY_DATE)+"T12:00:00");
-            while(ds.length<pn){
-              if(dowSet.has(cur.getDay())){
-                ds.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
-              }
-              cur.setDate(cur.getDate()+1);
-            }
-          } else {
-            let cur=new Date((cd.date||TODAY_DATE)+"T12:00:00");
-            for(let i=0;i<pn;i++){
-              ds.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
-              cur.setDate(cur.getDate()+1);
-            }
-          }
-          return ds;
-        })();
-        const amount=parseInt(sd.amount)||0;
-        const paymentEntry=sd.paid&&amount>0?[{id:Date.now(),qty:pn||0,amount,method:"efectivo",date:cd.date||TODAY_DATE,dates:projectedClassDates}]:[];
-        // For individual classes: merge into existing active individual combo if exists
-        const existingIndividualIdx=s.combos.findIndex(c=>
-          (c.packType==="individual"||c.total===1)&&
-          c.paid===sd.paid&&
-          c.amount===(parseInt(sd.amount)||0)&&
-          !(c.dates&&c.dates.some(d=>d<TODAY_DATE&&(c.used||0)>=(c.total||1))) // not fully consumed
-        );
-        if(isIndividual&&existingIndividualIdx>=0){
-          // Add this class date to existing combo
-          const existing=s.combos[existingIndividualIdx];
-          const newDates=[...new Set([...(existing.dates||[]),...projectedClassDates])].sort();
-          const newTotal=(existing.total||1)+1;
-          const newPaidCount=sd.paid?(existing.paidCount||0)+1:(existing.paidCount||0);
-          const updatedCombos=s.combos.map((c,idx)=>idx===existingIndividualIdx?{
-            ...c,total:newTotal,paidCount:newPaidCount,dates:newDates,
-            payments:sd.paid&&amount>0?[...(c.payments||[]),{id:Date.now(),qty:1,amount,method:"efectivo",date:cd.date||TODAY_DATE,dates:projectedClassDates}]:(c.payments||[])
-          }:c);
-          return {...s,combos:updatedCombos};
-        }
-        return {...s,combos:[...s.combos,{
-          id:s.combos.length+1,
-          total:pn,
-          packType,
-          packId:sd.packId||sd.pack||"",
-          used:0,
-          paid:packType==="mensual"?undefined:sd.paid,
-          paidCount:packType==="mensual"?undefined:(sd.paid?(pn||0):0),
-          date:packType==="mensual"?(cd.date||TODAY_DATE):(cd.date||TODAY_DATE),
-          payDate:packType==="mensual"?undefined:undefined,
-          amount,
-          // Mensual-specific fields
-          ...(packType==="mensual"?{
-            cobroDia:sd.cobroDia||parseInt((cd.date||TODAY_DATE).split("-")[2])||1,
-            graciaDias:5,
-            currency:"PYG",
-            mensualidades:sd.paid?[{
-              id:"M-"+(cd.date||TODAY_DATE).slice(0,7),
-              mes:(cd.date||TODAY_DATE).slice(0,7),
-              estado:"pagado",
-              fechaVencimiento:(cd.date||TODAY_DATE),
-              fechaPago:TODAY_DATE,
-              monto:amount,
-              method:sd.method||"Efectivo"
-            }]:[]
-          }:{}),
-          dates:projectedClassDates,
-          payments:packType==="mensual"?[]:paymentEntry,
-        }]};
-      }));
-      // Register income in Finanzas for paid students who chose to save payment
-      cd.studentData.forEach(sd=>{
-        const shouldSave=sd.savePay===undefined?true:sd.savePay;
-        if(shouldSave&&sd.paid&&parseInt(sd.amount)>0){
-          const pkg=packages.find(p=>String(p.id)===String(sd.pack));
-          const studentName=students.find(s=>String(s.id)===String(sd.id))?.name||"Alumno";
-          const detail=sd.pack==="mensual"||pkg?.type==="mensual"?"Plan Mensual":
-            sd.pack==="individual"||pkg?.type==="individual"?"Clase Individual":
-            pkg?.qty?(pkg.qty+" clases"):pkg?.name||"";
-          addIncome(parseInt(sd.amount), cd.date||TODAY_DATE, studentName, detail);
-        }
-      });
-    }
-  };
-
-  const handleAttendance=(cls)=>{
-    const wD=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
-    const classDate=cls.date||new Date().toISOString().split("T")[0];
-    const day=wD[new Date(classDate+"T12:00:00").getDay()];
-    const presentIds=cls.students||[];
-    const ausenteDadaIds=cls.ausente_dada||[];
-    const ausenteReprogIds=cls.ausente_reprog||[];
-    // Resolve to the real class id (support expanded virtual classes)
-    const realId=cls._seriesId||cls.id;
-    const allClassStudents=classes.find(c=>c.id===realId)?.students||cls.students;
-    // Save attendance log with full status
-    setClasses(p=>p.map(c=>{
-      if(c.id!==realId) return c;
-      const log=[...(c.attendanceLog||[]).filter(e=>e.date!==classDate),
-        {date:classDate,day,present:presentIds,ausente_dada:ausenteDadaIds,ausente_reprog:ausenteReprogIds}];
-      return {...c,attendanceLog:log};
-    }));
-    // Only increment 'used' for present + ausente_dada (class was given)
-    const givenIds=[...presentIds,...ausenteDadaIds];
-    setStudents(p=>p.map(s=>{
-      if(!allClassStudents.includes(s.id)) return s;
-      const wasGiven=givenIds.includes(s.id);
-      if(!wasGiven) return s;
-      const combos=[...s.combos];
-      if(combos.length===0) return s;
-      const lastIdx=combos.length-1;
-      const last=combos[lastIdx];
-      const newUsed=(last.used||0)+1;
-      combos[lastIdx]={...last,used:newUsed};
-      // Check if combo is now complete (all paid + all given)
-      const effectiveTotal=last.total||0;
-      const paidCount=last.paidCount!==undefined?last.paidCount:(last.paid?effectiveTotal:0);
-      const allGiven=newUsed>=paidCount&&paidCount>=effectiveTotal&&effectiveTotal>0;
-      if(allGiven&&last.dates&&last.dates.length>0){
-        // Generate next combo dates starting from day after last date
-        const myClsForStudent=classes.filter(c=>c.students&&c.students.includes(s.id));
-        const classDays=myClsForStudent.length>0?myClsForStudent[0].days:[];
-        const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
-        const dowSet=new Set(classDays.map(d=>DAY_MAP[d]));
-        const lastDate=last.dates[last.dates.length-1];
-        let cur=new Date(lastDate+"T12:00:00");
-        cur.setDate(cur.getDate()+1);
-        const nextDates=[];
-        while(nextDates.length<effectiveTotal){
-          if(dowSet.size===0||dowSet.has(cur.getDay())){
-            nextDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
-          }
-          cur.setDate(cur.getDate()+1);
-        }
-        // Add new unpaid combo
-        combos.push({
-          id:combos.length+1,
-          total:effectiveTotal,
-          packType:last.packType||"combo",
-          used:0,
-          paid:false,
-          paidCount:0,
-          date:nextDates[0]||lastDate,
-          amount:last.amount,
-          dates:nextDates,
-          payments:[],
-        });
-      }
-      return {...s,combos};
-    }));
-    // For ausente_reprog: mark their combo date as needing reschedule
-    // (coach will reschedule from Agenda)
-  };
-
-  const [pendingReprog,setPendingReprog]=useState(null);
-  const handleRefresh=async()=>{if(window._iziUserId)await loadData(window._iziUserId);};
-
-  const handleNavigate=(section,params)=>{
-    setTab(section);
-    if(params?.subTab&&section==="cobros") setFinanceTab(params.subTab);
-    if(params?.subTab&&typeof params.subTab==="string") setFinanceTab(params.subTab);
-    if(params?.reprog) setPendingReprog(params.reprog);
+    createNewClass(cd);
   };
 
   const coachTabs=[
