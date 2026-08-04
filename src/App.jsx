@@ -6092,14 +6092,50 @@ export default function App() {
     }
   };
 
+  // --- Extracted from handleSaveClass (A3: CleanRemovedStudents) ---
+  const removeStudentsFromClass=(cd,realId)=>{
+    if(cd.students){
+      const originalClass=classes.find(c=>c.id===realId);
+      const removedStudentIds=(originalClass?.students||[]).filter(id=>!(cd.students||[]).includes(id));
+      if(removedStudentIds.length>0){
+        const classDates=new Set(originalClass?.occurrences||[originalClass?.date].filter(Boolean));
+        setStudents(p=>p.map(s=>{
+          if(!removedStudentIds.includes(s.id)) return s;
+          const cleanedCombos=(s.combos||[]).map(combo=>{
+            const comboDates=combo.dates||[combo.date].filter(Boolean);
+            const filteredDates=comboDates.filter(d=>!classDates.has(d));
+            if(filteredDates.length===0) return null;
+            return {...combo, dates:filteredDates, total:filteredDates.length, date:filteredDates[0]};
+          }).filter(Boolean);
+          return {...s,combos:cleanedCombos};
+        }));
+      }
+    }
+  };
+
+  // --- Extracted from handleSaveClass (A2: ApplyToAll) ---
+  const applyEditToClass=(cd,realId)=>{
+    if(cd.applyToAll){
+      setClasses(p=>p.map(c=>{
+        if(c.id===realId){
+          return {...c,...cd,id:realId,date:c.date,occurrences:c.occurrences};
+        }
+        return c;
+      }));
+    } else {
+      setClasses(p=>p.map(c=>c.id===realId?{...c,...cd,id:realId}:c));
+    }
+  };
+
   const handleSaveClass=(cd,isEdit=false)=>{
+    console.log("[handleSaveClass]",{isEdit,cancelled:cd.cancelled,cancelType:cd.cancelType,paused:cd.paused,applyToAll:cd.applyToAll,hasStudentPacks:!!cd.studentPacks,_resuming:cd._resuming});
     if(isEdit){
       // Resolve virtual id to real series id
       const realId=cd._seriesId||cd.id;
       const editDate=cd.date; // the specific date being edited
 
       // Handle per-date cancellation/pause for recurring classes
-      if((cd.cancelled!==undefined||cd.cancelType==="paused"||cd._resuming)&&editDate){
+      if((cd.cancelled===true||cd.cancelType==="paused"||cd._resuming)&&editDate){
         // Pre-calculate replacement dates BEFORE any state updates
         let _replacements=[];
         if(cd.cancelType==="paused"&&cd._pauseResumeDate){
@@ -6172,37 +6208,8 @@ export default function App() {
         return;
       }
 
-      if(cd.applyToAll){
-        // With new format, the series is a single object — just update it
-        setClasses(p=>p.map(c=>{
-          if(c.id===realId){
-            return {...c,...cd,id:realId,date:c.date,occurrences:c.occurrences};
-          }
-          return c;
-        }));
-      } else {
-        setClasses(p=>p.map(c=>c.id===realId?{...c,...cd,id:realId}:c));
-      }
-      // Clean combos for students removed from the class
-      if(cd.students){
-        const originalClass=classes.find(c=>c.id===realId);
-        const removedStudentIds=(originalClass?.students||[]).filter(id=>!(cd.students||[]).includes(id));
-        if(removedStudentIds.length>0){
-          // Get ALL dates from this class (occurrences or single date)
-          const classDates=new Set(originalClass?.occurrences||[originalClass?.date].filter(Boolean));
-          setStudents(p=>p.map(s=>{
-            if(!removedStudentIds.includes(s.id)) return s;
-            // Remove only the dates belonging to this class from each combo
-            const cleanedCombos=(s.combos||[]).map(combo=>{
-              const comboDates=combo.dates||[combo.date].filter(Boolean);
-              const filteredDates=comboDates.filter(d=>!classDates.has(d));
-              if(filteredDates.length===0) return null; // combo fully emptied, remove it
-              return {...combo, dates:filteredDates, total:filteredDates.length, date:filteredDates[0]};
-            }).filter(Boolean);
-            return {...s,combos:cleanedCombos};
-          }));
-        }
-      }
+      applyEditToClass(cd, realId);
+      removeStudentsFromClass(cd, realId);
       // If studentPacks changed, update student combos
       if(cd.studentPacks){
         try {
