@@ -6113,6 +6113,82 @@ export default function App() {
     }
   };
 
+  // --- Extracted from handleSaveClass (A4: StudentPacks) ---
+  const updateStudentPacks=(cd)=>{
+    if(cd.studentPacks){
+      try {
+      const editedClass=classes.find(c=>c.id===cd.id)||cd;
+      setStudents(p=>p.map(s=>{
+        const sp=cd.studentPacks[s.id]||cd.studentPacks[String(s.id)];
+        if(!sp||!sp.pack) return s;
+        const pkg=packages.find(pk=>String(pk.id)===String(sp.pack));
+        const isMensual=sp.pack==="mensual"||pkg?.type==="mensual";
+        const isIndividual=sp.pack==="individual"||pkg?.type==="individual";
+        const qty=isMensual?null:isIndividual?1:pkg?.qty||(!isNaN(parseInt(sp.pack))&&parseInt(sp.pack)<100?parseInt(sp.pack):null)||8;
+        const packType=isMensual?"mensual":isIndividual?"individual":"combo";
+        const combos=[...s.combos];
+        const lastCombo=combos.length>0?combos[combos.length-1]:null;
+        const lastDate=lastCombo?.dates?.slice(-1)[0]||"";
+        const today=new Date().toISOString().slice(0,10);
+        const lastComboFullyUsed=!lastDate||((lastDate<today)&&(lastCombo?.used||0)>=(lastCombo?.total||0));
+        const hasActiveCombo=lastCombo&&(
+          (lastDate&&lastDate>=today) ||
+          (lastCombo.packType==="mensual"&&lastCombo.paid) ||
+          ((lastCombo.used||0)<(lastCombo.total||0))
+        );
+        if(hasActiveCombo&&sp.paid===true&&lastCombo&&!lastCombo.paid){
+          const paymentRecord={
+            id:Date.now(),
+            qty:lastCombo.total||0,
+            amount:lastCombo.amount||sp.amount||0,
+            method:"efectivo",
+            date:TODAY_DATE,
+            dates:lastCombo.dates||[],
+          };
+          combos[combos.length-1]={...lastCombo,paid:true,paidCount:lastCombo.total||0,payments:[...(lastCombo.payments||[]),paymentRecord]};
+          return {...s,combos};
+        }
+        if(hasActiveCombo) return s;
+        if(!lastDate||lastComboFullyUsed){
+          const startDate=cd.date||today;
+          const editedClassFull=classes.find(c=>c.id===(cd._seriesId||cd.id));
+          const realOcc=(editedClassFull?.occurrences||[]).filter(d=>d>=startDate);
+          const total=qty||8;
+          const newDates=realOcc.slice(0,total);
+          if(newDates.length===0){
+            const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+            const dowSet=new Set((editedClass.days||[]).map(d=>DAY_MAP[d]));
+            let cur=new Date(startDate+"T12:00:00");
+            while(newDates.length<total){
+              if(dowSet.size===0||dowSet.has(cur.getDay())){
+                newDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+              }
+              cur.setDate(cur.getDate()+1);
+            }
+          }
+          combos.push({
+            id:combos.length+1,
+            total:qty,
+            packType,
+            used:0,
+            paid:sp.paid===true,
+            paidCount:sp.paid===true?(qty||0):0,
+            date:newDates[0]||startDate,
+            amount:parseInt(sp.amount)||0,
+            dates:newDates,
+            payments:sp.paid===true?[{id:Date.now(),qty:qty||0,amount:parseInt(sp.amount)||0,method:"efectivo",date:today,dates:newDates}]:[],
+          });
+        } else {
+          if(combos.length>0){
+            combos[combos.length-1]={...combos[combos.length-1],total:qty,amount:parseInt(sp.amount)||combos[combos.length-1].amount};
+          }
+        }
+        return {...s,combos};
+      }));
+      } catch(err){ console.error("studentPacks error:", err); }
+    }
+  };
+
   // --- Extracted from handleSaveClass (A2: ApplyToAll) ---
   const applyEditToClass=(cd,realId)=>{
     if(cd.applyToAll){
@@ -6210,87 +6286,7 @@ export default function App() {
 
       applyEditToClass(cd, realId);
       removeStudentsFromClass(cd, realId);
-      // If studentPacks changed, update student combos
-      if(cd.studentPacks){
-        try {
-
-        const editedClass=classes.find(c=>c.id===cd.id)||cd;
-        setStudents(p=>p.map(s=>{
-          const sp=cd.studentPacks[s.id]||cd.studentPacks[String(s.id)];
-          if(!sp||!sp.pack) return s;
-          const pkg=packages.find(pk=>String(pk.id)===String(sp.pack));
-          const isMensual=sp.pack==="mensual"||pkg?.type==="mensual";
-          const isIndividual=sp.pack==="individual"||pkg?.type==="individual";
-          const qty=isMensual?null:isIndividual?1:pkg?.qty||(!isNaN(parseInt(sp.pack))&&parseInt(sp.pack)<100?parseInt(sp.pack):null)||8;
-          const packType=isMensual?"mensual":isIndividual?"individual":"combo";
-          const combos=[...s.combos];
-          const lastCombo=combos.length>0?combos[combos.length-1]:null;
-          const lastDate=lastCombo?.dates?.slice(-1)[0]||"";
-          const today=new Date().toISOString().slice(0,10);
-          const lastComboFullyUsed=!lastDate||((lastDate<today)&&(lastCombo?.used||0)>=(lastCombo?.total||0));
-          // Only create new combo if student has no active combo OR last combo is expired
-          // Don't create if student already has an active combo (future dates OR unused classes)
-          const hasActiveCombo=lastCombo&&(
-            (lastDate&&lastDate>=today) || // combo with future dates
-            (lastCombo.packType==="mensual"&&lastCombo.paid) || // paid mensual
-            ((lastCombo.used||0)<(lastCombo.total||0)) // combo with unused classes (even if dates passed)
-          );
-          // If explicitly marking as paid, update existing combo and create payment record
-          if(hasActiveCombo&&sp.paid===true&&lastCombo&&!lastCombo.paid){
-            const paymentRecord={
-              id:Date.now(),
-              qty:lastCombo.total||0,
-              amount:lastCombo.amount||sp.amount||0,
-              method:"efectivo",
-              date:TODAY_DATE,
-              dates:lastCombo.dates||[],
-            };
-            combos[combos.length-1]={...lastCombo,paid:true,paidCount:lastCombo.total||0,payments:[...(lastCombo.payments||[]),paymentRecord]};
-            return {...s,combos};
-          }
-          if(hasActiveCombo) return s; // don't modify - just editing the class
-          // Create NEW combo when last combo is expired (last date is in the past)
-          if(!lastDate||lastComboFullyUsed){
-            const startDate=cd.date||today;
-            // Use REAL occurrences from the class, not generated dates
-            const editedClassFull=classes.find(c=>c.id===(cd._seriesId||cd.id));
-            const realOcc=(editedClassFull?.occurrences||[]).filter(d=>d>=startDate);
-            const total=qty||8;
-            const newDates=realOcc.slice(0,total);
-            // Fallback: if no occurrences available, generate from days
-            if(newDates.length===0){
-              const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
-              const dowSet=new Set((editedClass.days||[]).map(d=>DAY_MAP[d]));
-              let cur=new Date(startDate+"T12:00:00");
-              while(newDates.length<total){
-                if(dowSet.size===0||dowSet.has(cur.getDay())){
-                  newDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
-                }
-                cur.setDate(cur.getDate()+1);
-              }
-            }
-            combos.push({
-              id:combos.length+1,
-              total:qty,
-              packType,
-              used:0,
-              paid:sp.paid===true,
-              paidCount:sp.paid===true?(qty||0):0,
-              date:newDates[0]||startDate,
-              amount:parseInt(sp.amount)||0,
-              dates:newDates,
-              payments:sp.paid===true?[{id:Date.now(),qty:qty||0,amount:parseInt(sp.amount)||0,method:"efectivo",date:today,dates:newDates}]:[],
-            });
-          } else {
-            // Update existing last combo
-            if(combos.length>0){
-              combos[combos.length-1]={...combos[combos.length-1],total:qty,amount:parseInt(sp.amount)||combos[combos.length-1].amount};
-            }
-          }
-          return {...s,combos};
-        }));
-        } catch(err){ console.error("studentPacks error:", err); }
-      }
+      updateStudentPacks(cd);
       return;
     }
     // Store a single class definition with occurrences array
