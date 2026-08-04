@@ -6093,14 +6093,13 @@ export default function App() {
   };
 
   const handleSaveClass=(cd,isEdit=false)=>{
-    console.log("[handleSaveClass]",{isEdit,cancelled:cd.cancelled,cancelType:cd.cancelType,paused:cd.paused,applyToAll:cd.applyToAll,hasStudentPacks:!!cd.studentPacks,_resuming:cd._resuming});
     if(isEdit){
       // Resolve virtual id to real series id
       const realId=cd._seriesId||cd.id;
       const editDate=cd.date; // the specific date being edited
 
       // Handle per-date cancellation/pause for recurring classes
-      if((cd.cancelled===true||cd.cancelType==="paused"||cd._resuming)&&editDate){
+      if((cd.cancelled!==undefined||cd.cancelType==="paused"||cd._resuming)&&editDate){
         // Pre-calculate replacement dates BEFORE any state updates
         let _replacements=[];
         if(cd.cancelType==="paused"&&cd._pauseResumeDate){
