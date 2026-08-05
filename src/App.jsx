@@ -6092,30 +6092,12 @@ export default function App() {
     }
   };
 
-  // --- Extracted: syncComboDates after occurrence change ---
-  const syncComboDates=(cd,realId)=>{
-    console.log("[syncComboDates] called",{hasOcc:!!cd.occurrences,occLen:cd.occurrences?.length,students:cd.students?.length});
-    if(!cd.occurrences) return;
-    const newOcc=cd.occurrences;
-    const clsStudents=cd.students||[];
-    setStudents(prev=>prev.map(s=>{
-      if(!clsStudents.includes(s.id)) return s;
-      const combos=[...(s.combos||[])];
-      let lastIdx=-1;
-      for(let ci=combos.length-1;ci>=0;ci--){
-        if(combos[ci].dates&&combos[ci].packType!=="mensual"){lastIdx=ci;break;}
-      }
-      if(lastIdx===-1){console.log("[syncComboDates] no combo found for",s.name);return s;}
-      const combo=combos[lastIdx];
-      const total=combo.total||combo.dates.length;
-      const pastDates=combo.dates.filter(d=>d<TODAY_DATE);
-      const futureSlots=Math.max(0,total-pastDates.length);
-      const newFutureDates=newOcc.filter(d=>d>=TODAY_DATE).slice(0,futureSlots);
-      const newDates=[...pastDates,...newFutureDates].sort();
-      console.log("[syncComboDates]",s.name,{before:combo.dates.slice(0,3),after:newDates.slice(0,3),total,pastDates:pastDates.length,futureSlots,newFuture:newFutureDates.length});
-      combos[lastIdx]={...combo,dates:newDates};
-      return {...s,combos};
-    }));
+  // --- Pure helper: calculate updated combo dates after occurrence change ---
+  const calcUpdatedComboDates=(comboDates,total,newOcc)=>{
+    const pastDates=comboDates.filter(d=>d<TODAY_DATE);
+    const futureSlots=Math.max(0,total-pastDates.length);
+    const newFutureDates=newOcc.filter(d=>d>=TODAY_DATE).slice(0,futureSlots);
+    return [...pastDates,...newFutureDates].sort();
   };
 
   // --- Extracted from handleSaveClass (B: CreateNewClass) ---
@@ -6366,7 +6348,14 @@ export default function App() {
           combos[combos.length-1]={...lastCombo,paid:true,paidCount:lastCombo.total||0,payments:[...(lastCombo.payments||[]),paymentRecord]};
           return {...s,combos};
         }
-        if(hasActiveCombo) return s;
+        if(hasActiveCombo){
+          if(cd.occurrences&&lastCombo.dates){
+            const newDates=calcUpdatedComboDates(lastCombo.dates,lastCombo.total||lastCombo.dates.length,cd.occurrences);
+            combos[combos.length-1]={...lastCombo,dates:newDates};
+            return {...s,combos};
+          }
+          return s;
+        }
         if(!lastDate||lastComboFullyUsed){
           const startDate=cd.date||today;
           const editedClassFull=classes.find(c=>c.id===(cd._seriesId||cd.id));
@@ -6502,7 +6491,6 @@ export default function App() {
       }
 
       applyEditToClass(cd, realId);
-      syncComboDates(cd, realId);
       removeStudentsFromClass(cd, realId);
       updateStudentPacks(cd);
       return;
