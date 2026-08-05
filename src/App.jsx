@@ -6092,6 +6092,29 @@ export default function App() {
     }
   };
 
+  // --- Extracted: syncComboDates after occurrence change ---
+  const syncComboDates=(cd,realId)=>{
+    if(!cd.occurrences) return;
+    const newOcc=cd.occurrences;
+    const clsStudents=cd.students||[];
+    setStudents(prev=>prev.map(s=>{
+      if(!clsStudents.includes(s.id)) return s;
+      const combos=[...(s.combos||[])];
+      let lastIdx=-1;
+      for(let ci=combos.length-1;ci>=0;ci--){
+        if(combos[ci].dates&&combos[ci].packType!=="mensual"){lastIdx=ci;break;}
+      }
+      if(lastIdx===-1) return s;
+      const combo=combos[lastIdx];
+      const total=combo.total||combo.dates.length;
+      const pastDates=combo.dates.filter(d=>d<TODAY_DATE);
+      const futureSlots=Math.max(0,total-pastDates.length);
+      const newFutureDates=newOcc.filter(d=>d>=TODAY_DATE).slice(0,futureSlots);
+      combos[lastIdx]={...combo,dates:[...pastDates,...newFutureDates].sort()};
+      return {...s,combos};
+    }));
+  };
+
   // --- Extracted from handleSaveClass (B: CreateNewClass) ---
   const createNewClass=(cd)=>{
     // Store a single class definition with occurrences array
@@ -6476,6 +6499,7 @@ export default function App() {
       }
 
       applyEditToClass(cd, realId);
+      syncComboDates(cd, realId);
       removeStudentsFromClass(cd, realId);
       updateStudentPacks(cd);
       return;
