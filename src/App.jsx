@@ -6463,7 +6463,10 @@ export default function App() {
             });
             if(_replacements.length>0) occ=[...new Set([...occ,..._replacements])].sort();
           } else if(cd._resuming){
+            const beforeKeys=Object.keys(dc).filter(d=>dc[d]?.cancelType==="paused");
             Object.keys(dc).forEach(d=>{if(d>=editDate&&dc[d]?.cancelType==="paused") delete dc[d];});
+            const afterKeys=Object.keys(dc).filter(d=>dc[d]?.cancelType==="paused");
+            console.log("[_resuming]",{editDate,pausedBefore:beforeKeys.length,pausedAfter:afterKeys.length,removedDates:beforeKeys.filter(d=>!afterKeys.includes(d))});
             const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,...rest}=cd;
             return {...c,...rest,id:realId,dateCancellations:dc,occurrences:occ};
           } else if(cd.cancelled){
