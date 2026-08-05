@@ -6094,6 +6094,7 @@ export default function App() {
 
   // --- Extracted: syncComboDates after occurrence change ---
   const syncComboDates=(cd,realId)=>{
+    console.log("[syncComboDates] called",{hasOcc:!!cd.occurrences,occLen:cd.occurrences?.length,students:cd.students?.length});
     if(!cd.occurrences) return;
     const newOcc=cd.occurrences;
     const clsStudents=cd.students||[];
@@ -6104,13 +6105,15 @@ export default function App() {
       for(let ci=combos.length-1;ci>=0;ci--){
         if(combos[ci].dates&&combos[ci].packType!=="mensual"){lastIdx=ci;break;}
       }
-      if(lastIdx===-1) return s;
+      if(lastIdx===-1){console.log("[syncComboDates] no combo found for",s.name);return s;}
       const combo=combos[lastIdx];
       const total=combo.total||combo.dates.length;
       const pastDates=combo.dates.filter(d=>d<TODAY_DATE);
       const futureSlots=Math.max(0,total-pastDates.length);
       const newFutureDates=newOcc.filter(d=>d>=TODAY_DATE).slice(0,futureSlots);
-      combos[lastIdx]={...combo,dates:[...pastDates,...newFutureDates].sort()};
+      const newDates=[...pastDates,...newFutureDates].sort();
+      console.log("[syncComboDates]",s.name,{before:combo.dates.slice(0,3),after:newDates.slice(0,3),total,pastDates:pastDates.length,futureSlots,newFuture:newFutureDates.length});
+      combos[lastIdx]={...combo,dates:newDates};
       return {...s,combos};
     }));
   };
