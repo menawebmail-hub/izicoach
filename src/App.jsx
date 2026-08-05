@@ -6349,8 +6349,7 @@ export default function App() {
           return {...s,combos};
         }
         if(hasActiveCombo){
-          console.log("[updateStudentPacks]",{occOnly:!!cd._occOnly,student:s.name,oldDates:lastCombo.dates?.length,recalculating:!!cd.occurrences&&!cd._occOnly});
-          if(cd.occurrences&&lastCombo.dates){
+          if(cd.occurrences&&lastCombo.dates&&!cd._occOnly){
             const newDates=calcUpdatedComboDates(lastCombo.dates,lastCombo.total||lastCombo.dates.length,cd.occurrences);
             combos[combos.length-1]={...lastCombo,dates:newDates};
             return {...s,combos};
@@ -6399,6 +6398,10 @@ export default function App() {
 
   // --- Extracted from handleSaveClass (A2: ApplyToAll) ---
   const applyEditToClass=(cd,realId)=>{
+    if(cd._occOnly){
+      setClasses(p=>p.map(c=>c.id!==realId?c:{...c,occurrences:cd.occurrences||c.occurrences}));
+      return;
+    }
     if(cd.applyToAll){
       setClasses(p=>p.map(c=>{
         if(c.id===realId){
