@@ -6349,6 +6349,7 @@ export default function App() {
           return {...s,combos};
         }
         if(hasActiveCombo){
+          console.log("[updateStudentPacks]",{occOnly:!!cd._occOnly,student:s.name,oldDates:lastCombo.dates?.length,recalculating:!!cd.occurrences&&!cd._occOnly});
           if(cd.occurrences&&lastCombo.dates){
             const newDates=calcUpdatedComboDates(lastCombo.dates,lastCombo.total||lastCombo.dates.length,cd.occurrences);
             combos[combos.length-1]={...lastCombo,dates:newDates};
