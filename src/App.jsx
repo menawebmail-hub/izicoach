@@ -3368,7 +3368,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         let status;
         if(isPaidDate){status=isGiven?"dada":"adar";}
         else{status=isGiven?"dada_unpaid":"pendiente";}
-        result.push({date:ds,status,comboId:c.id,isGiven,wasPresent,wasAbsent,wasAusenteDada,wasAusenteReprog,isCancelled,isReprogWithDate,isReprogNoDate,isPaused,rescheduledTo:classOnDate?.rescheduledTo||null});
+        result.push({date:ds,status,comboId:c.id,packType:c.packType||"combo",isGiven,wasPresent,wasAbsent,wasAusenteDada,wasAusenteReprog,isCancelled,isReprogWithDate,isReprogNoDate,isPaused,rescheduledTo:classOnDate?.rescheduledTo||null});
       });
     });
     // Deduplicate by date - keep first occurrence
@@ -3870,7 +3870,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
                     <span style={{fontSize:11,fontWeight:800,color:isPausedItem?"#E65100":isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":C.blue2}}>{i+1}</span>
                   </div>
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(item.date)}</div>
+                    <div style={{fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(item.date)}{item.packType==="individual"&&<span style={{fontSize:9,fontWeight:700,color:"#6B7BAD",background:"#E8EAF6",borderRadius:6,padding:"2px 6px",marginLeft:6}}>Individual</span>}</div>
                     {isReprogWithDate&&item.rescheduledTo&&<div style={{fontSize:10,color:"#2E7D32",marginTop:1}}>→ {formatDate(item.rescheduledTo)}</div>}
                   </div>
                   <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:leftBg,color:leftColor,fontWeight:700,flexShrink:0}}>{leftLabel}</span>
