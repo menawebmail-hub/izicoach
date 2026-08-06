@@ -6445,6 +6445,70 @@ export default function App() {
     }
   };
 
+  // ╔══════════════════════════════════════════════════════════════════════╗
+  // ║                    handleSaveClass — ARCHITECTURE                   ║
+  // ╠══════════════════════════════════════════════════════════════════════╣
+  // ║                                                                     ║
+  // ║  DATA OWNERSHIP (each datum has a single owner):                    ║
+  // ║                                                                     ║
+  // ║  class              → config (title, days, time, court, students)   ║
+  // ║  class.occurrences  → calendar dates                                ║
+  // ║  class.dateCancellations → per-date states (paused/cancelled)       ║
+  // ║  class.attendanceLog → attendance (modified by handleAttendance)    ║
+  // ║  student.combo      → package/balance (modified by PagoModal,      ║
+  // ║                        createNewClass, doResume)                    ║
+  // ║  student.combo.dates → package dates (modified by createNewClass,   ║
+  // ║                        doResume, updateStudentPacks)                ║
+  // ║  Grey boxes         → CALCULATED by isNextComboPending              ║
+  // ║  Stepper            → CALCULATED by buildAllDates                   ║
+  // ║                                                                     ║
+  // ║  RULE: handleSaveClass when EDITING only touches class.             ║
+  // ║  student.combo is NEVER modified during edit.                       ║
+  // ║                                                                     ║
+  // ╠══════════════════════════════════════════════════════════════════════╣
+  // ║                                                                     ║
+  // ║  INTERCEPTOR FLAGS (control which branch executes):                 ║
+  // ║                                                                     ║
+  // ║  cd.cancelled===true   → CANCEL: marks date in dateCancellations   ║
+  // ║  cd.cancelType==="paused" → PAUSE: marks dates as paused           ║
+  // ║  cd._resuming          → RESUME: un-pauses dates >= editDate       ║
+  // ║  cd._reactivating      → REACTIVATE: deletes dateCancellation      ║
+  // ║  cd._occOnly           → only update occurrences, skip everything  ║
+  // ║  cd._pauseResumeDate   → pause with auto-resume (used by pause     ║
+  // ║                           interceptor to generate replacements)     ║
+  // ║                                                                     ║
+  // ║  IMPORTANT: If none of these flags are set, the interceptor is      ║
+  // ║  SKIPPED and the edit flows to applyEditToClass → updateStudentPacks║
+  // ║                                                                     ║
+  // ╠══════════════════════════════════════════════════════════════════════╣
+  // ║                                                                     ║
+  // ║  EXTRACTED FUNCTIONS:                                               ║
+  // ║                                                                     ║
+  // ║  applyEditToClass(cd, realId)   → updates class props               ║
+  // ║  removeStudentsFromClass(cd, realId) → cleans combos for removed    ║
+  // ║  updateStudentPacks(cd)         → creates/updates student packages  ║
+  // ║  createNewClass(cd)             → full class creation flow          ║
+  // ║  calcUpdatedComboDates(...)     → pure helper for date calculation  ║
+  // ║                                                                     ║
+  // ║  handleSaveClass FLOW:                                              ║
+  // ║  if(isEdit)                                                         ║
+  // ║    ├── interceptor (pause/cancel/resume/reactivate) → return        ║
+  // ║    ├── applyEditToClass(cd, realId)                                 ║
+  // ║    ├── removeStudentsFromClass(cd, realId)                          ║
+  // ║    ├── updateStudentPacks(cd)                                       ║
+  // ║    └── return                                                       ║
+  // ║  createNewClass(cd)                                                 ║
+  // ║                                                                     ║
+  // ╠══════════════════════════════════════════════════════════════════════╣
+  // ║                                                                     ║
+  // ║  STATE WRAPPER RULE:                                                ║
+  // ║  setClasses/setStudents use React functional updaters (prev=>...)   ║
+  // ║  to ensure sequential updates always read the latest state.         ║
+  // ║  DO NOT replace prev with closure state — multiple sequential       ║
+  // ║  updates depend on React's latest state.                            ║
+  // ║                                                                     ║
+  // ╚══════════════════════════════════════════════════════════════════════╝
+
   const handleSaveClass=(cd,isEdit=false)=>{
     if(isEdit){
       // Resolve virtual id to real series id
