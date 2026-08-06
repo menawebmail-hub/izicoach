@@ -5844,6 +5844,7 @@ export default function App() {
   const [showConfig,setShowConfig]=useState(false);
   const [courts,setCourtsRaw]=useState([]);
   const [packages,setPackagesRaw]=useState([]);
+  const [families,setFamiliesRaw]=useState(()=>ls("izi_families",[]));
   const [coachProfile,setCoachProfileRaw]=useState(()=>ls("izi_profile",{name:"Coach",sport:"",photo:null}));
   const [expenses,setExpensesRaw]=useState(()=>ls("izi_expenses",[]));
 
@@ -5906,6 +5907,8 @@ export default function App() {
   };
   const setCourts=(v)=>{if(typeof v==="function"){setCourtsRaw(prev=>{const next=v(prev);lsSet("izi_courts",next);syncToSupabase(window._iziUserId,"courts",next);return next;});}else{setCourtsRaw(v);lsSet("izi_courts",v);syncToSupabase(window._iziUserId,"courts",v);}};
   const setPackages=(v)=>{if(typeof v==="function"){setPackagesRaw(prev=>{const next=v(prev);lsSet("izi_packages",next);syncToSupabase(window._iziUserId,"packages",next);return next;});}else{setPackagesRaw(v);lsSet("izi_packages",v);syncToSupabase(window._iziUserId,"packages",v);}};
+  // IMPORTANT: keep functional updates. Do not replace prev with closure state.
+  const setFamilies=(v)=>{if(typeof v==="function"){setFamiliesRaw(prev=>{const next=v(prev);lsSet("izi_families",next);syncToSupabase(window._iziUserId,"families",next);return next;});}else{setFamiliesRaw(v);lsSet("izi_families",v);syncToSupabase(window._iziUserId,"families",v);}};
   const setCoachProfile=(v)=>{const next=typeof v==="function"?v(coachProfile):v;setCoachProfileRaw(next);lsSet("izi_profile",next);if(window._iziUserId)supabase.from("coaches").upsert({id:window._iziUserId,...next}).then(res=>{if(res.error)console.error("Coach profile upsert error:",res.error.message);else console.log("Coach profile saved to Supabase");});};
   const setExpenses=(v)=>{if(typeof v==="function"){setExpensesRaw(prev=>{const next=v(prev);lsSet("izi_expenses",next);syncToSupabase(window._iziUserId,"expenses",next);return next;});}else{setExpensesRaw(v);lsSet("izi_expenses",v);syncToSupabase(window._iziUserId,"expenses",v);}};
 
@@ -5919,9 +5922,10 @@ export default function App() {
         if(allData.expenses&&allData.expenses.length>0){setExpensesRaw(allData.expenses);lsSet("izi_expenses",allData.expenses);}
         if(allData.courts&&allData.courts.length>0){setCourtsRaw(allData.courts);lsSet("izi_courts",allData.courts);}
         if(allData.packages&&allData.packages.length>0){setPackagesRaw(allData.packages);lsSet("izi_packages",allData.packages);}
+        if(allData.families&&allData.families.length>0){setFamiliesRaw(allData.families);lsSet("izi_families",allData.families);}
       } else {
-        const lS=ls("izi_students",[]),lC=ls("izi_classes",[]),lE=ls("izi_expenses",[]),lCo=ls("izi_courts",[]),lP=ls("izi_packages",[]);
-        if(lS.length>0||lC.length>0){syncToSupabase(userId,"students",lS);syncToSupabase(userId,"classes",lC);syncToSupabase(userId,"expenses",lE);syncToSupabase(userId,"courts",lCo);syncToSupabase(userId,"packages",lP);}
+        const lS=ls("izi_students",[]),lC=ls("izi_classes",[]),lE=ls("izi_expenses",[]),lCo=ls("izi_courts",[]),lP=ls("izi_packages",[]),lF=ls("izi_families",[]);
+        if(lS.length>0||lC.length>0){syncToSupabase(userId,"students",lS);syncToSupabase(userId,"classes",lC);syncToSupabase(userId,"expenses",lE);syncToSupabase(userId,"courts",lCo);syncToSupabase(userId,"packages",lP);syncToSupabase(userId,"families",lF);}
       }
       // Also load coach profile (name, phone, email, sport, photo, currency)
       const {data:profileData}=await supabase.from("coaches").select("*").eq("id",userId).single();
@@ -6028,7 +6032,7 @@ export default function App() {
     Object.keys(localStorage).filter(k=>k.startsWith("izi_")).forEach(k=>localStorage.removeItem(k));
     setUserWithRef(null);
     window._iziUserId=null;
-    setStudentsRaw([]);setClassesRaw([]);setCourtsRaw([]);setPackagesRaw([]);
+    setStudentsRaw([]);setClassesRaw([]);setCourtsRaw([]);setPackagesRaw([]);setFamiliesRaw([]);
     setCoachProfileRaw({name:"Coach",sport:"",photo:null});setExpensesRaw([]);
     setMode(null);setModeP(null);setOnboarded(false);setOnboardedP(false);
   };
