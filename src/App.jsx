@@ -3571,6 +3571,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
     const updatedCombos=s.combos||[];
     const lastC=updatedCombos[updatedCombos.length-1];
     const isComplete=lastC&&lastC.packType!=="individual"&&(lastC.paidCount||0)>=(lastC.total||1)&&(lastC.used||0)>=(lastC.total||1)&&lastC.total>0;
+    console.log("[CHECK RENEW COMBO]",{isComplete,packType:lastC?.packType,total:lastC?.total,used:lastC?.used,paidCount:lastC?.paidCount,paid:lastC?.paid,dates:lastC?.dates?.length,allKeys:lastC?Object.keys(lastC):[]});
     return (
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center"}}>
       <div style={{background:"#fff",borderRadius:24,padding:"40px 32px",textAlign:"center",width:"80%",maxWidth:320}}>
