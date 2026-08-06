@@ -6466,7 +6466,7 @@ export default function App() {
             const beforeKeys=Object.keys(dc).filter(d=>dc[d]?.cancelType==="paused");
             Object.keys(dc).forEach(d=>{if(d>=editDate&&dc[d]?.cancelType==="paused") delete dc[d];});
             const afterKeys=Object.keys(dc).filter(d=>dc[d]?.cancelType==="paused");
-            const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,...rest}=cd;
+            const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,dateCancellations:_dc2,...rest}=cd;
             const restHasDC='dateCancellations' in rest;
             const restDCKeys=restHasDC?Object.keys(rest.dateCancellations||{}).filter(d=>rest.dateCancellations[d]?.cancelType==="paused").length:"N/A";
             console.log("[_resuming]",{editDate,pausedBefore:beforeKeys.length,pausedAfter:afterKeys.length,restHasDC,restDCPausedCount:restDCKeys});
