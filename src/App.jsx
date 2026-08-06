@@ -1749,6 +1749,8 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
     });
     return init;
   });
+  // Track which students were explicitly modified by the professor
+  const [changedPacks,setChangedPacks]=useState(new Set());
   const available=allStudents.filter(s=>!clsSt.includes(s.id)&&(query.trim()===""||s.name.toLowerCase().includes(query.toLowerCase())));
   const iS={width:"100%",padding:"12px 14px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",background:C.white,color:C.text,outline:"none"};
 
@@ -1756,6 +1758,7 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
     const newS={id:Date.now(),...data};
     setAllStudents(prev=>[...prev,newS]);
     setClsSt(prev=>[...prev,newS.id]);
+    setChangedPacks(prev=>new Set([...prev,newS.id]));
     onCreateStudent&&onCreateStudent(newS);
     setShowCreateStudent(false);
   };
@@ -1796,6 +1799,7 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
                     const val=e.target.value;
                     const pkg=packages.find(p=>String(p.id)===val);
                     setStudentPacks(p=>({...p,[sid]:{pack:val,amount:pkg?pkg.price:(p[sid]?.amount||0)}}));
+                    setChangedPacks(prev=>new Set([...prev,sid]));
                   }} style={{...iS,padding:"8px 10px",fontSize:12}}>
                     <option value="">Elegir...</option>
                     {packages.length>0?packages.map(p=>(
@@ -1809,7 +1813,7 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
                 </div>
                 <div>
                   <div style={{fontSize:10,fontWeight:700,color:C.mutedDark,marginBottom:4}}>MONTO ({getCUR()})</div>
-                  <MoneyInput value={studentPacks[sid]?.amount||0} onChange={v=>setStudentPacks(p=>({...p,[sid]:{...p[sid],amount:v}}))} style={{...iS,padding:"8px 10px",fontSize:12}}/>
+                  <MoneyInput value={studentPacks[sid]?.amount||0} onChange={v=>{setStudentPacks(p=>({...p,[sid]:{...p[sid],amount:v}}));setChangedPacks(prev=>new Set([...prev,sid]));}} style={{...iS,padding:"8px 10px",fontSize:12}}/>
                 </div>
                 <div style={{gridColumn:"1/-1"}}>
                   <label style={{fontSize:11,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>PAGO EFECTUADO</label>
@@ -1841,7 +1845,7 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
               {available.length===0
                 ?<div style={{padding:"12px 14px",fontSize:13,color:C.mutedDark}}>No se encontraron alumnos</div>
                 :available.map(s=>(
-                  <div key={s.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderBottom:"1px solid "+C.border,cursor:"pointer"}} onClick={()=>{setClsSt(prev=>[...prev,s.id]);setStudentPacks(p=>({...p,[s.id]:{pack:"",amount:0,paid:false}}));setQuery("");}}>
+                  <div key={s.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderBottom:"1px solid "+C.border,cursor:"pointer"}} onClick={()=>{setClsSt(prev=>[...prev,s.id]);setStudentPacks(p=>({...p,[s.id]:{pack:"",amount:0,paid:false}}));setChangedPacks(prev=>new Set([...prev,s.id]));setQuery("");}}>
                     {s.photo?<img src={s.photo} style={{width:34,height:34,borderRadius:"50%",objectFit:"cover",flexShrink:0}}/>:<div style={{width:34,height:34,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:C.white,flexShrink:0}}>{(s.avatar||s.name?.slice(0,2)||"?").slice(0,2)}</div>}
                     <div style={{flex:1}}><div style={{fontWeight:600,fontSize:14,color:C.text}}>{s.name}</div></div>
                     <div style={{background:C.blue2,borderRadius:8,padding:"5px 12px",color:C.white,fontSize:12,fontWeight:700}}>+ Agregar</div>
@@ -1874,7 +1878,10 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
             const preserved=(cls.occurrences||[]).filter(d=>d<sd);
             newOccurrences=[...new Set([...preserved,...result])].sort();
           }
-          onSave({...cls,title,court,days,time:t1,timeEnd:t2,students:clsSt,studentPacks,occurrences:newOccurrences});
+          // Only send studentPacks for students the professor explicitly changed
+          const filteredPacks={};
+          changedPacks.forEach(sid=>{if(studentPacks[sid])filteredPacks[sid]=studentPacks[sid];});
+          onSave({...cls,title,court,days,time:t1,timeEnd:t2,students:clsSt,studentPacks:Object.keys(filteredPacks).length>0?filteredPacks:undefined,occurrences:newOccurrences});
         }} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:10}}>Actualizar Clase</button>
         <button onClick={()=>{if(window.confirm("¿Eliminar esta clase? Todas las instancias serán eliminadas del calendario.")) {onDelete&&onDelete(cls.id);onClose();}}} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"#FFF0F0",color:"#D32F2F",fontSize:15,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:20}}>🗑 Eliminar Clase</button>
       </div>
