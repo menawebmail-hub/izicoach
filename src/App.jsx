@@ -3320,7 +3320,12 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         }
         return true;
       }
-      if(c.packType==="individual"||c.packType==="combo") return true;
+      if(c.packType==="individual"){
+        // Individual cerrado: pagado + realizado → historial
+        if(c.paid&&isClassDone(c.dates?.[0]||c.date,"23:59")) return false;
+        return true;
+      }
+      if(c.packType==="combo") return true;
       if(c.total===null&&c.date&&c.packType!=="mensual"){
         const hasMatchingClass=myClasses.some(cls=>cls.date===c.date);
         if(hasMatchingClass) return true;
