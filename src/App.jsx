@@ -6364,7 +6364,7 @@ export default function App() {
         const lastComboFullyUsed=!lastDate||((lastDate<today)&&(lastCombo?.used||0)>=(lastCombo?.total||0));
         const hasActiveCombo=lastCombo&&(
           (lastDate&&lastDate>=today) ||
-          (lastCombo.packType==="mensual"&&lastCombo.paid) ||
+          (lastCombo.packType==="mensual") ||
           ((lastCombo.used||0)<(lastCombo.total||0))
         );
         if(hasActiveCombo&&sp.paid===true&&lastCombo&&!lastCombo.paid){
