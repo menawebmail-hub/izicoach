@@ -5851,21 +5851,47 @@ export default function App() {
   };
 
   // Wrapped setters that persist to localStorage (Supabase sync handled by debounced useEffect)
-  const setStudents=(v)=>{const next=typeof v==="function"?v(students):v;
-    // Guard: never allow combo dates to exceed total
-    if(Array.isArray(next)){next.forEach(s=>{(s.combos||[]).forEach(c=>{if(c.dates&&c.total&&c.dates.length>c.total){
-      // Allow extra dates if there are paused dates (they need replacements)
-      const pausedInDates=c.dates.filter(d=>{const cls2=classes.find(cl=>cl.students&&cl.students.includes(s.id)&&cl.dateCancellations&&cl.dateCancellations[d]&&cl.dateCancellations[d].cancelType==="paused");return !!cls2;}).length;
-      const maxAllowed=c.total+pausedInDates;
-      if(c.dates.length>maxAllowed){console.warn("[GUARD] "+s.name+" combo dates "+c.dates.length+" > max "+maxAllowed+". Capping.");c.dates=c.dates.slice(0,maxAllowed);}
-    }});});}
-    setStudentsRaw(next);lsSet("izi_students",next);syncToSupabase(window._iziUserId,"students",next);};
-  let _setClassesCount=0;
-  const setClasses=(v)=>{const next=typeof v==="function"?v(classes):v;_setClassesCount++;const cls0=next.find(c=>c.dateCancellations&&Object.keys(c.dateCancellations).length>0);const pCount=cls0?Object.keys(cls0.dateCancellations).filter(d=>cls0.dateCancellations[d]?.cancelType==="paused").length:0;console.log("[setClasses #"+_setClassesCount+"]",{totalClasses:next.length,pausedCount:pCount,stack:new Error().stack.split("\n")[2]?.trim()?.slice(0,80)});setClassesRaw(next);lsSet("izi_classes",next);syncToSupabase(window._iziUserId,"classes",next);};
-  const setCourts=(v)=>{const next=typeof v==="function"?v(courts):v;setCourtsRaw(next);lsSet("izi_courts",next);syncToSupabase(window._iziUserId,"courts",next);};
-  const setPackages=(v)=>{const next=typeof v==="function"?v(packages):v;setPackagesRaw(next);lsSet("izi_packages",next);syncToSupabase(window._iziUserId,"packages",next);};
+  const setStudents=(v)=>{
+    const applyGuard=(next)=>{
+      if(Array.isArray(next)){next.forEach(s=>{(s.combos||[]).forEach(c=>{if(c.dates&&c.total&&c.dates.length>c.total){
+        const pausedInDates=c.dates.filter(d=>{const cls2=classes.find(cl=>cl.students&&cl.students.includes(s.id)&&cl.dateCancellations&&cl.dateCancellations[d]&&cl.dateCancellations[d].cancelType==="paused");return !!cls2;}).length;
+        const maxAllowed=c.total+pausedInDates;
+        if(c.dates.length>maxAllowed){console.warn("[GUARD] "+s.name+" combo dates "+c.dates.length+" > max "+maxAllowed+". Capping.");c.dates=c.dates.slice(0,maxAllowed);}
+      }});});}
+      return next;
+    };
+    if(typeof v==="function"){
+      setStudentsRaw(prev=>{
+        const next=applyGuard(v(prev));
+        lsSet("izi_students",next);
+        syncToSupabase(window._iziUserId,"students",next);
+        return next;
+      });
+    } else {
+      const next=applyGuard(v);
+      setStudentsRaw(next);
+      lsSet("izi_students",next);
+      syncToSupabase(window._iziUserId,"students",next);
+    }
+  };
+  const setClasses=(v)=>{
+    if(typeof v==="function"){
+      setClassesRaw(prev=>{
+        const next=v(prev);
+        lsSet("izi_classes",next);
+        syncToSupabase(window._iziUserId,"classes",next);
+        return next;
+      });
+    } else {
+      setClassesRaw(v);
+      lsSet("izi_classes",v);
+      syncToSupabase(window._iziUserId,"classes",v);
+    }
+  };
+  const setCourts=(v)=>{if(typeof v==="function"){setCourtsRaw(prev=>{const next=v(prev);lsSet("izi_courts",next);syncToSupabase(window._iziUserId,"courts",next);return next;});}else{setCourtsRaw(v);lsSet("izi_courts",v);syncToSupabase(window._iziUserId,"courts",v);}};
+  const setPackages=(v)=>{if(typeof v==="function"){setPackagesRaw(prev=>{const next=v(prev);lsSet("izi_packages",next);syncToSupabase(window._iziUserId,"packages",next);return next;});}else{setPackagesRaw(v);lsSet("izi_packages",v);syncToSupabase(window._iziUserId,"packages",v);}};
   const setCoachProfile=(v)=>{const next=typeof v==="function"?v(coachProfile):v;setCoachProfileRaw(next);lsSet("izi_profile",next);if(window._iziUserId)supabase.from("coaches").upsert({id:window._iziUserId,...next}).then(res=>{if(res.error)console.error("Coach profile upsert error:",res.error.message);else console.log("Coach profile saved to Supabase");});};
-  const setExpenses=(v)=>{const next=typeof v==="function"?v(expenses):v;setExpensesRaw(next);lsSet("izi_expenses",next);syncToSupabase(window._iziUserId,"expenses",next);};
+  const setExpenses=(v)=>{if(typeof v==="function"){setExpensesRaw(prev=>{const next=v(prev);lsSet("izi_expenses",next);syncToSupabase(window._iziUserId,"expenses",next);return next;});}else{setExpensesRaw(v);lsSet("izi_expenses",v);syncToSupabase(window._iziUserId,"expenses",v);}};
 
   const loadData=async(userId)=>{
     try {
