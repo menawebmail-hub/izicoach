@@ -5851,6 +5851,8 @@ export default function App() {
   };
 
   // Wrapped setters that persist to localStorage (Supabase sync handled by debounced useEffect)
+  // IMPORTANT: keep functional updates. Do not replace prev with closure state.
+  // Multiple sequential updates depend on React's latest state.
   const setStudents=(v)=>{
     const applyGuard=(next)=>{
       if(Array.isArray(next)){next.forEach(s=>{(s.combos||[]).forEach(c=>{if(c.dates&&c.total&&c.dates.length>c.total){
@@ -5874,6 +5876,8 @@ export default function App() {
       syncToSupabase(window._iziUserId,"students",next);
     }
   };
+  // IMPORTANT: keep functional updates. Do not replace prev with closure state.
+  // Multiple sequential updates depend on React's latest state.
   const setClasses=(v)=>{
     if(typeof v==="function"){
       setClassesRaw(prev=>{
