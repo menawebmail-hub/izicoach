@@ -5860,7 +5860,8 @@ export default function App() {
       if(c.dates.length>maxAllowed){console.warn("[GUARD] "+s.name+" combo dates "+c.dates.length+" > max "+maxAllowed+". Capping.");c.dates=c.dates.slice(0,maxAllowed);}
     }});});}
     setStudentsRaw(next);lsSet("izi_students",next);syncToSupabase(window._iziUserId,"students",next);};
-  const setClasses=(v)=>{const next=typeof v==="function"?v(classes):v;setClassesRaw(next);lsSet("izi_classes",next);syncToSupabase(window._iziUserId,"classes",next);};
+  let _setClassesCount=0;
+  const setClasses=(v)=>{const next=typeof v==="function"?v(classes):v;_setClassesCount++;const cls0=next.find(c=>c.dateCancellations&&Object.keys(c.dateCancellations).length>0);const pCount=cls0?Object.keys(cls0.dateCancellations).filter(d=>cls0.dateCancellations[d]?.cancelType==="paused").length:0;console.log("[setClasses #"+_setClassesCount+"]",{totalClasses:next.length,pausedCount:pCount,stack:new Error().stack.split("\n")[2]?.trim()?.slice(0,80)});setClassesRaw(next);lsSet("izi_classes",next);syncToSupabase(window._iziUserId,"classes",next);};
   const setCourts=(v)=>{const next=typeof v==="function"?v(courts):v;setCourtsRaw(next);lsSet("izi_courts",next);syncToSupabase(window._iziUserId,"courts",next);};
   const setPackages=(v)=>{const next=typeof v==="function"?v(packages):v;setPackagesRaw(next);lsSet("izi_packages",next);syncToSupabase(window._iziUserId,"packages",next);};
   const setCoachProfile=(v)=>{const next=typeof v==="function"?v(coachProfile):v;setCoachProfileRaw(next);lsSet("izi_profile",next);if(window._iziUserId)supabase.from("coaches").upsert({id:window._iziUserId,...next}).then(res=>{if(res.error)console.error("Coach profile upsert error:",res.error.message);else console.log("Coach profile saved to Supabase");});};
