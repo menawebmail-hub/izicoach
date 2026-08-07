@@ -1513,7 +1513,7 @@ function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onI
     <div style={{flex:1,display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden"}}>
       <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"16px 16px 16px",flexShrink:0}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
-          <div style={{fontSize:18,fontWeight:800,color:C.white}}>Mis Alumnos</div>
+          <div style={{fontSize:18,fontWeight:800,color:C.white}}>Mis Alumnos - BUILD TEST</div>
           <div style={{display:"flex",gap:8}}>
             <button onClick={()=>setShowFamilyModal(true)} style={{padding:"8px 12px",borderRadius:20,border:"none",background:"rgba(255,255,255,0.2)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>👨‍👩‍👧 Crear Familias</button>
             <button onClick={onInvite} style={{padding:"8px 12px",borderRadius:20,border:"none",background:"rgba(255,255,255,0.2)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>📲 Invitar</button>
