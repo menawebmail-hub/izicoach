@@ -1838,12 +1838,10 @@ function MiniCalendar({ year, month, selDay, onSelect, classes=[] }) {
         })}
       </div>
       {showFamilyModal&&(
-        <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.5)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
-          <div style={{background:"#F5F7FF",borderRadius:"24px 24px 0 0",padding:"28px 20px",paddingBottom:"calc(40px + env(safe-area-inset-bottom, 34px))",width:"100%",maxHeight:"85vh",overflowY:"auto",boxSizing:"border-box"}}>
-            <div style={{width:40,height:4,borderRadius:2,background:"#DDE3F0",margin:"0 auto 20px"}}></div>
-            <div style={{fontWeight:900,fontSize:19,color:"#0D1B4B",marginBottom:16}}>👨‍👩‍👧 Grupos Familiares</div>
-            <FamilyManager families={families} setFamilies={setFamilies} students={students} onUpdateStudent={onUpdate}/>
-            <button onClick={()=>setShowFamilyModal(false)} style={{width:"100%",padding:"14px",borderRadius:14,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:14,color:C.mutedDark,fontWeight:700,marginTop:12}}>Cerrar</button>
+        <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={()=>setShowFamilyModal(false)}>
+          <div style={{background:"white",padding:40,borderRadius:20}} onClick={e=>e.stopPropagation()}>
+            <h2>TEST MODAL FUNCIONA</h2>
+            <button onClick={()=>setShowFamilyModal(false)}>Cerrar</button>
           </div>
         </div>
       )}
