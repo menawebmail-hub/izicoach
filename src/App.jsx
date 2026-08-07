@@ -1515,7 +1515,7 @@ function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onI
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
           <div style={{fontSize:18,fontWeight:800,color:C.white}}>Mis Alumnos - BUILD TEST</div>
           <div style={{display:"flex",gap:8}}>
-            <button onClick={()=>setShowFamilyModal(true)} style={{padding:"8px 12px",borderRadius:20,border:"none",background:"rgba(255,255,255,0.2)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>👨‍👩‍👧 Crear Familias</button>
+            <button onClick={()=>{console.log("[FAMILY] 1. onClick fired");setShowFamilyModal(true);}} style={{padding:"8px 12px",borderRadius:20,border:"none",background:"rgba(255,255,255,0.2)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>👨‍👩‍👧 Crear Familias</button>
             <button onClick={onInvite} style={{padding:"8px 12px",borderRadius:20,border:"none",background:"rgba(255,255,255,0.2)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>📲 Invitar</button>
             <button onClick={onAdd} style={{padding:"8px 16px",borderRadius:20,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>+ Nuevo</button>
           </div>
@@ -1784,10 +1784,12 @@ function MiniCalendar({ year, month, selDay, onSelect, classes=[] }) {
           );
         })}
       </div>
+      {(()=>{console.log("[FAMILY] 2. render check, showFamilyModal=",showFamilyModal);return null;})()}
       {showFamilyModal&&(
         <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.5)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
           <div style={{background:"#F5F7FF",borderRadius:"24px 24px 0 0",padding:"28px 20px",paddingBottom:"calc(40px + env(safe-area-inset-bottom, 34px))",width:"100%",maxHeight:"85vh",overflowY:"auto",boxSizing:"border-box"}}>
             <div style={{width:40,height:4,borderRadius:2,background:"#DDE3F0",margin:"0 auto 20px"}}></div>
+            {(()=>{console.log("[FAMILY] 3. MODAL MOUNTED, families count=",(families||[]).length);return null;})()}
             <div style={{fontWeight:900,fontSize:19,color:"#0D1B4B",marginBottom:16}}>👨‍👩‍👧 Grupos Familiares</div>
             {(families||[]).map(fam=>{
               const members=students.filter(s=>s.familyId===fam.id);
