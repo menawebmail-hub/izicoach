@@ -480,7 +480,126 @@ function NewPackageModal({ onSave, onClose, currency }) {
   );
 }
 
-function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, families, setFamilies, students, coachProfile, setCoachProfile, initialTab }) {
+// --- FamilyManager: shared component for managing families ---
+function FamilyManager({ families, setFamilies, students, onUpdateStudent, onClose }) {
+  const [fName,setFName]=useState("");
+  const [fRespName,setFRespName]=useState("");
+  const [fRespPhone,setFRespPhone]=useState("");
+  const [fRespEmail,setFRespEmail]=useState("");
+  const [editFamilyId,setEditFamilyId]=useState(null);
+  const [showCreate,setShowCreate]=useState(false);
+  const [memberSearch,setMemberSearch]=useState("");
+  const [newFamilyId,setNewFamilyId]=useState(null);
+  const iS={width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:13,boxSizing:"border-box",background:C.white,color:C.text,outline:"none"};
+
+  const handleCreate=()=>{
+    if(!fRespName.trim()) return;
+    const id=Date.now();
+    setFamilies(p=>[...p,{id,name:fName.trim()||("Familia "+fRespName.trim().split(" ")[0]),responsible:{name:fRespName.trim(),phone:fRespPhone.trim(),email:fRespEmail.trim()},createdAt:new Date().toISOString().slice(0,10)}]);
+    setNewFamilyId(id);
+    setFName("");setFRespName("");setFRespPhone("");setFRespEmail("");setShowCreate(false);
+  };
+
+  const addMember=(studentId,familyId)=>{
+    const st=students.find(s=>s.id===studentId);
+    if(st&&onUpdateStudent) onUpdateStudent({...st,familyId});
+  };
+  const removeMember=(studentId)=>{
+    const st=students.find(s=>s.id===studentId);
+    if(st&&onUpdateStudent) onUpdateStudent({...st,familyId:null});
+  };
+
+  return (
+    <div>
+      {/* Existing families */}
+      {(families||[]).map(fam=>{
+        const members=students.filter(s=>s.familyId===fam.id);
+        const isEditing=editFamilyId===fam.id;
+        const isNew=newFamilyId===fam.id;
+        const available=students.filter(s=>!s.familyId&&(memberSearch.trim()===""||s.name.toLowerCase().includes(memberSearch.toLowerCase())));
+        return (
+          <div key={fam.id} style={{background:C.white,borderRadius:14,padding:16,marginBottom:10,border:isNew?"2px solid #1565C0":"1px solid "+C.border}}>
+            {isEditing?(
+              <div>
+                <div style={{fontWeight:700,fontSize:14,color:C.text,marginBottom:10}}>Editar familia</div>
+                <div style={{marginBottom:8}}><label style={{fontSize:11,color:C.mutedDark,display:"block",marginBottom:3}}>Nombre de la familia</label><input value={fName} onChange={e=>setFName(e.target.value)} style={iS}/></div>
+                <div style={{fontSize:12,color:"#1565C0",fontWeight:700,marginBottom:6}}>Responsable</div>
+                <div style={{marginBottom:6}}><input value={fRespName} onChange={e=>setFRespName(e.target.value)} placeholder="Nombre" style={iS}/></div>
+                <div style={{marginBottom:6}}><input value={fRespPhone} onChange={e=>setFRespPhone(e.target.value)} placeholder="Teléfono" style={iS}/></div>
+                <div style={{marginBottom:10}}><input value={fRespEmail} onChange={e=>setFRespEmail(e.target.value)} placeholder="Email" style={iS}/></div>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>{setEditFamilyId(null);setFName("");setFRespName("");setFRespPhone("");setFRespEmail("");}} style={{flex:1,padding:"10px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:13,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
+                  <button onClick={()=>{if(!fRespName.trim())return;setFamilies(p=>p.map(x=>x.id===fam.id?{...x,name:fName.trim()||x.name,responsible:{name:fRespName.trim(),phone:fRespPhone.trim(),email:fRespEmail.trim()}}:x));setEditFamilyId(null);setFName("");setFRespName("");setFRespPhone("");setFRespEmail("");}} style={{flex:1,padding:"10px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:13,fontWeight:800}}>Guardar</button>
+                </div>
+              </div>
+            ):(
+              <div>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#1565C0,#42A5F5)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>👨‍👩‍👧</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:700,fontSize:14,color:C.text}}>{fam.name}</div>
+                    {fam.responsible?.name&&<div style={{fontSize:11,color:C.mutedDark}}>Responsable: {fam.responsible.name}</div>}
+                    {fam.responsible?.phone&&<div style={{fontSize:11,color:C.mutedDark}}>📱 {fam.responsible.phone}</div>}
+                  </div>
+                  <button onClick={()=>{setEditFamilyId(fam.id);setFName(fam.name||"");setFRespName(fam.responsible?.name||"");setFRespPhone(fam.responsible?.phone||"");setFRespEmail(fam.responsible?.email||"");}} style={{background:C.blueL,border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:11}}>✏</button>
+                  <button onClick={()=>{if(confirm("¿Eliminar "+fam.name+"? Los alumnos no se eliminarán.")){members.forEach(m=>removeMember(m.id));setFamilies(p=>p.filter(x=>x.id!==fam.id));}}} style={{background:"#FFEBEE",border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#C62828" strokeWidth="3" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </button>
+                </div>
+                {/* Members */}
+                <div style={{marginTop:10,paddingTop:10,borderTop:"1px solid "+C.border}}>
+                  <div style={{fontSize:11,color:C.mutedDark,fontWeight:700,marginBottom:6}}>MIEMBROS ({members.length})</div>
+                  {members.map(m=>(
+                    <div key={m.id} style={{display:"flex",alignItems:"center",gap:8,padding:"4px 0",fontSize:12,color:C.text}}>
+                      <div style={{width:22,height:22,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700,color:C.white}}>{m.avatar}</div>
+                      <span style={{flex:1}}>{m.name}</span>
+                      <button onClick={()=>removeMember(m.id)} style={{background:"none",border:"none",cursor:"pointer",fontSize:11,color:"#C62828"}}>✕</button>
+                    </div>
+                  ))}
+                  {/* Add member */}
+                  <div style={{marginTop:6}}>
+                    <input value={isNew||members.length===0?memberSearch:""} onChange={e=>setMemberSearch(e.target.value)} onFocus={()=>setNewFamilyId(fam.id)} placeholder="Buscar alumno para agregar..." style={{width:"100%",padding:"8px 10px",borderRadius:8,border:"1px solid "+C.border,fontSize:11,boxSizing:"border-box",outline:"none"}}/>
+                    {memberSearch.trim()&&newFamilyId===fam.id&&available.length>0&&(
+                      <div style={{background:C.white,border:"1px solid "+C.border,borderRadius:8,marginTop:4,maxHeight:100,overflowY:"auto"}}>
+                        {available.slice(0,5).map(s=>(
+                          <div key={s.id} onClick={()=>{addMember(s.id,fam.id);setMemberSearch("");}} style={{padding:"8px 10px",cursor:"pointer",fontSize:12,fontWeight:600,color:C.text,borderBottom:"1px solid "+C.border,display:"flex",alignItems:"center",gap:6}}>
+                            <div style={{width:18,height:18,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,fontWeight:700,color:C.white}}>{s.avatar}</div>
+                            {s.name}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {(families||[]).length===0&&!showCreate&&<div style={{textAlign:"center",padding:"20px 0",color:C.mutedDark,fontSize:13}}>Aún no hay grupos familiares</div>}
+
+      {/* Create new family */}
+      {showCreate?(
+        <div style={{background:C.white,borderRadius:14,padding:16,marginTop:10,border:"1.5px solid #1565C0"}}>
+          <div style={{fontWeight:700,fontSize:14,color:C.text,marginBottom:12}}>Nuevo grupo familiar</div>
+          <div style={{fontSize:12,color:"#1565C0",fontWeight:700,marginBottom:8}}>Responsable de pago *</div>
+          <div style={{marginBottom:6}}><input value={fRespName} onChange={e=>setFRespName(e.target.value)} placeholder="Nombre del responsable *" style={iS}/></div>
+          <div style={{marginBottom:6}}><input value={fRespPhone} onChange={e=>setFRespPhone(e.target.value)} placeholder="Teléfono" style={iS}/></div>
+          <div style={{marginBottom:10}}><input value={fRespEmail} onChange={e=>setFRespEmail(e.target.value)} placeholder="Email" style={iS}/></div>
+          <div style={{marginBottom:10}}><label style={{fontSize:11,color:C.mutedDark,display:"block",marginBottom:3}}>Nombre de la familia (opcional)</label><input value={fName} onChange={e=>setFName(e.target.value)} placeholder={"Ej: Familia "+(fRespName.trim().split(" ")[0]||"...")} style={iS}/></div>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>{setShowCreate(false);setFName("");setFRespName("");setFRespPhone("");setFRespEmail("");}} style={{flex:1,padding:"10px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:13,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
+            <button onClick={handleCreate} style={{flex:1,padding:"10px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:13,fontWeight:800}}>Crear familia</button>
+          </div>
+        </div>
+      ):(
+        <button onClick={()=>setShowCreate(true)} style={{width:"100%",padding:"13px",borderRadius:12,border:"1.5px dashed #1565C0",background:"#E3F2FD",color:"#1565C0",fontSize:14,cursor:"pointer",fontWeight:700,marginTop:4}}>+ Crear grupo familiar</button>
+      )}
+    </div>
+  );
+}
+
+function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, families, setFamilies, students, onUpdateStudent, coachProfile, setCoachProfile, initialTab }) {
   const [section,setSection]=useState(initialTab||"general");
   const [showNewCourt,setShowNewCourt]=useState(false);
   const [showNewPack,setShowNewPack]=useState(false);
@@ -692,75 +811,10 @@ function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, famil
         {section==="families"&&(
           <>
             <div style={{fontSize:13,color:C.mutedDark,marginBottom:16}}>Agrupá alumnos por familia para gestionar pagos y comunicación con el responsable.</div>
-            {(families||[]).map(f=>{
-              const members=(students||[]).filter(s=>s.familyId===f.id);
-              const isEditing=editFamilyId===f.id;
-              return (
-                <WhiteCard key={f.id} style={{marginBottom:10}}>
-                  {isEditing?(
-                    <div>
-                      <div style={{fontWeight:700,fontSize:14,color:C.text,marginBottom:12}}>Editar familia</div>
-                      <div style={{marginBottom:10}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>NOMBRE DE LA FAMILIA *</label><input value={fName} onChange={e=>setFName(e.target.value)} placeholder="Ej: Familia Pérez" style={iS}/></div>
-                      <div style={{fontSize:12,color:C.blue,fontWeight:700,marginBottom:8}}>RESPONSABLE DE PAGO</div>
-                      <div style={{marginBottom:8}}><label style={{fontSize:11,color:C.mutedDark,display:"block",marginBottom:3}}>Nombre</label><input value={fRespName} onChange={e=>setFRespName(e.target.value)} placeholder="Ej: Carlos Pérez" style={iS}/></div>
-                      <div style={{marginBottom:8}}><label style={{fontSize:11,color:C.mutedDark,display:"block",marginBottom:3}}>Teléfono</label><input value={fRespPhone} onChange={e=>setFRespPhone(e.target.value)} placeholder="Ej: 0981..." style={iS}/></div>
-                      <div style={{marginBottom:12}}><label style={{fontSize:11,color:C.mutedDark,display:"block",marginBottom:3}}>Email</label><input value={fRespEmail} onChange={e=>setFRespEmail(e.target.value)} placeholder="Ej: carlos@email.com" style={iS}/></div>
-                      <div style={{display:"flex",gap:8}}>
-                        <button onClick={()=>{setEditFamilyId(null);setFName("");setFRespName("");setFRespPhone("");setFRespEmail("");}} style={{flex:1,padding:"11px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:13,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
-                        <button onClick={()=>{if(!fName.trim())return;setFamilies(p=>p.map(x=>x.id===f.id?{...x,name:fName.trim(),responsible:{name:fRespName.trim(),phone:fRespPhone.trim(),email:fRespEmail.trim()}}:x));setEditFamilyId(null);setFName("");setFRespName("");setFRespPhone("");setFRespEmail("");}} style={{flex:1,padding:"11px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:13,fontWeight:800}}>Guardar</button>
-                      </div>
-                    </div>
-                  ):(
-                    <div>
-                      <div style={{display:"flex",alignItems:"center",gap:12}}>
-                        <div style={{width:40,height:40,borderRadius:10,background:"linear-gradient(135deg,#1565C0,#42A5F5)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>👨‍👩‍👧</div>
-                        <div style={{flex:1}}>
-                          <div style={{fontWeight:700,fontSize:14,color:C.text}}>{f.name}</div>
-                          {f.responsible?.name&&<div style={{fontSize:12,color:C.mutedDark}}>Responsable: {f.responsible.name}</div>}
-                          {f.responsible?.phone&&<div style={{fontSize:11,color:C.mutedDark}}>📱 {f.responsible.phone}</div>}
-                          {f.responsible?.email&&<div style={{fontSize:11,color:C.mutedDark}}>✉ {f.responsible.email}</div>}
-                        </div>
-                        <button onClick={()=>{setEditFamilyId(f.id);setFName(f.name||"");setFRespName(f.responsible?.name||"");setFRespPhone(f.responsible?.phone||"");setFRespEmail(f.responsible?.email||"");}} style={{background:C.blueL,border:"none",borderRadius:"50%",width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:12}}>✏</button>
-                        <button onClick={()=>{if(confirm("¿Eliminar "+f.name+"? Los alumnos no se eliminarán.")){setFamilies(p=>p.filter(x=>x.id!==f.id));}}} style={{background:"#FFEBEE",border:"none",borderRadius:"50%",width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#C62828" strokeWidth="3" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                        </button>
-                      </div>
-                      {members.length>0&&(
-                        <div style={{marginTop:10,paddingTop:10,borderTop:"1px solid "+C.border}}>
-                          <div style={{fontSize:11,color:C.mutedDark,fontWeight:700,marginBottom:6}}>MIEMBROS ({members.length})</div>
-                          {members.map(m=>(
-                            <div key={m.id} style={{display:"flex",alignItems:"center",gap:8,padding:"4px 0",fontSize:12,color:C.text}}>
-                              <div style={{width:22,height:22,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700,color:C.white}}>{m.avatar}</div>
-                              {m.name}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {members.length===0&&<div style={{marginTop:8,fontSize:11,color:C.mutedDark,fontStyle:"italic"}}>Sin miembros vinculados aún</div>}
-                    </div>
-                  )}
-                </WhiteCard>
-              );
-            })}
-            {(families||[]).length===0&&<div style={{textAlign:"center",padding:"24px 0",color:C.mutedDark,fontSize:13}}>Aún no hay grupos familiares</div>}
-            {showNewFamily?(
-              <WhiteCard style={{border:"1.5px solid #1565C0"}}>
-                <div style={{fontWeight:700,fontSize:14,color:C.text,marginBottom:12}}>Nuevo grupo familiar</div>
-                <div style={{marginBottom:10}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>NOMBRE DE LA FAMILIA *</label><input value={fName} onChange={e=>setFName(e.target.value)} placeholder="Ej: Familia Pérez" style={iS}/></div>
-                <div style={{fontSize:12,color:C.blue,fontWeight:700,marginBottom:8}}>RESPONSABLE DE PAGO</div>
-                <div style={{marginBottom:8}}><label style={{fontSize:11,color:C.mutedDark,display:"block",marginBottom:3}}>Nombre</label><input value={fRespName} onChange={e=>setFRespName(e.target.value)} placeholder="Ej: Carlos Pérez" style={iS}/></div>
-                <div style={{marginBottom:8}}><label style={{fontSize:11,color:C.mutedDark,display:"block",marginBottom:3}}>Teléfono</label><input value={fRespPhone} onChange={e=>setFRespPhone(e.target.value)} placeholder="Ej: 0981..." style={iS}/></div>
-                <div style={{marginBottom:12}}><label style={{fontSize:11,color:C.mutedDark,display:"block",marginBottom:3}}>Email</label><input value={fRespEmail} onChange={e=>setFRespEmail(e.target.value)} placeholder="Ej: carlos@email.com" style={iS}/></div>
-                <div style={{display:"flex",gap:8}}>
-                  <button onClick={()=>{setShowNewFamily(false);setFName("");setFRespName("");setFRespPhone("");setFRespEmail("");}} style={{flex:1,padding:"11px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:13,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
-                  <button onClick={()=>{if(!fName.trim())return;setFamilies(p=>[...p,{id:Date.now(),name:fName.trim(),responsible:{name:fRespName.trim(),phone:fRespPhone.trim(),email:fRespEmail.trim()},createdAt:new Date().toISOString().slice(0,10)}]);setFName("");setFRespName("");setFRespPhone("");setFRespEmail("");setShowNewFamily(false);}} style={{flex:1,padding:"11px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:13,fontWeight:800}}>Guardar</button>
-                </div>
-              </WhiteCard>
-            ):(
-              <button onClick={()=>setShowNewFamily(true)} style={{width:"100%",padding:"13px",borderRadius:12,border:"1.5px dashed #1565C0",background:"#E3F2FD",color:"#1565C0",fontSize:14,cursor:"pointer",fontWeight:700,marginTop:4}}>+ Agregar grupo familiar</button>
-            )}
+            <FamilyManager families={families} setFamilies={setFamilies} students={students} onUpdateStudent={onUpdateStudent}/>
           </>
         )}
+
 
       </div>
     </div>
@@ -1478,7 +1532,7 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
   );
 }
 
-function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onInvite, userId, onInviteStudent, onRefresh, onOpenFamilies }) {
+function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onInvite, userId, onInviteStudent, onRefresh, families=[], setFamilies }) {
   const [f,setF]=useState("all");
   const [editS,setEditS]=useState(null);
   const [search,setSearch]=useState("");
@@ -1486,6 +1540,7 @@ function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onI
   const [invites,setInvites]=useState({});
   const [expandAll,setExpandAll]=useState(false);
   const [expandedIds,setExpandedIds]=useState(new Set());
+  const [showFamilyModal,setShowFamilyModal]=useState(false);
 
   // Load invite status and detect active students (have messages)
   useEffect(()=>{
@@ -1513,7 +1568,7 @@ function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onI
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
           <div style={{fontSize:18,fontWeight:800,color:C.white}}>Mis Alumnos</div>
           <div style={{display:"flex",gap:8}}>
-            <button onClick={onOpenFamilies} style={{padding:"8px 12px",borderRadius:20,border:"none",background:"rgba(255,255,255,0.2)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>👨‍👩‍👧 Crear Familias</button>
+            <button onClick={()=>setShowFamilyModal(true)} style={{padding:"8px 12px",borderRadius:20,border:"none",background:"rgba(255,255,255,0.2)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>👨‍👩‍👧 Crear Familias</button>
             <button onClick={onInvite} style={{padding:"8px 12px",borderRadius:20,border:"none",background:"rgba(255,255,255,0.2)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>📲 Invitar</button>
             <button onClick={onAdd} style={{padding:"8px 16px",borderRadius:20,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>+ Nuevo</button>
           </div>
@@ -1782,6 +1837,16 @@ function MiniCalendar({ year, month, selDay, onSelect, classes=[] }) {
           );
         })}
       </div>
+      {showFamilyModal&&(
+        <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.5)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
+          <div style={{background:"#F5F7FF",borderRadius:"24px 24px 0 0",padding:"28px 20px",paddingBottom:"calc(40px + env(safe-area-inset-bottom, 34px))",width:"100%",maxHeight:"85vh",overflowY:"auto",boxSizing:"border-box"}}>
+            <div style={{width:40,height:4,borderRadius:2,background:"#DDE3F0",margin:"0 auto 20px"}}></div>
+            <div style={{fontWeight:900,fontSize:19,color:"#0D1B4B",marginBottom:16}}>👨‍👩‍👧 Grupos Familiares</div>
+            <FamilyManager families={families} setFamilies={setFamilies} students={students} onUpdateStudent={onUpdate}/>
+            <button onClick={()=>setShowFamilyModal(false)} style={{width:"100%",padding:"14px",borderRadius:14,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:14,color:C.mutedDark,fontWeight:700,marginTop:12}}>Cerrar</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -6816,7 +6881,7 @@ export default function App() {
       <div key={"cur-"+currency} style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",position:"relative",overflow:"hidden",paddingBottom:"calc(64px + env(safe-area-inset-bottom, 34px))"}}>
         {tab==="dashboard"&&isFirstTime&&<EmptyDashboard onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)}/>}
         {tab==="dashboard"&&!isFirstTime&&<Dashboard students={students} classes={xClasses} onNavigate={handleNavigate} onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)} expenses={expenses} coachProfile={coachProfile} onRefresh={handleRefresh}/>}
-        {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={xClasses} onInvite={()=>setShowInvite(true)} userId={user?.id} onInviteStudent={(s)=>setInviteTarget(s)} onRefresh={handleRefresh} onOpenFamilies={()=>{setConfigInitialTab("families");setShowConfig(true);}}/>}
+        {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={xClasses} onInvite={()=>setShowInvite(true)} userId={user?.id} onInviteStudent={(s)=>setInviteTarget(s)} onRefresh={handleRefresh} families={families} setFamilies={setFamilies}/>}
         {inviteTarget&&<InviteModal student={inviteTarget} userId={user?.id} onClose={()=>setInviteTarget(null)}/>}
         {tab==="agenda"&&<Agenda students={students} classes={xClasses} rawClasses={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])} onRefresh={handleRefresh}/>}
         {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification} userId={user?.id} unreadChats={unreadChats} onMarkRead={(sid)=>setUnreadChats(p=>{const n={...p};delete n[String(sid)];return n;})}/>}
@@ -6824,7 +6889,7 @@ export default function App() {
         {tab==="finanzas"&&<Finances students={students} classes={xClasses} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages}/>}
         {showNewClass&&<NewClassModal onClose={()=>{setShowNewClass(false);if(classes.length===0)setTab("agenda");}} onSave={handleSaveClass} existingClasses={xClasses} students={students} dateLabel="Nueva clase" onCreateStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])}/>}
         {showNewStudent&&<NewStudentModal onClose={()=>setShowNewStudent(false)} onSave={(d)=>setStudents(p=>[...p,{id:Date.now(),...d}])}/>}
-        {showConfig&&<ConfigScreen onClose={()=>{setShowConfig(false);setConfigInitialTab(null);}} courts={courts} setCourts={setCourts} packages={packages} setPackages={setPackages} families={families} setFamilies={setFamilies} students={students} coachProfile={coachProfile} setCoachProfile={setCoachProfile} initialTab={configInitialTab}/>}
+        {showConfig&&<ConfigScreen onClose={()=>{setShowConfig(false);setConfigInitialTab(null);}} courts={courts} setCourts={setCourts} packages={packages} setPackages={setPackages} families={families} setFamilies={setFamilies} students={students} onUpdateStudent={updateStudent} coachProfile={coachProfile} setCoachProfile={setCoachProfile} initialTab={configInitialTab}/>}
         {showInvite&&(
           <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
             <div style={{background:C.white,borderRadius:"24px 24px 0 0",width:"100%",maxHeight:"90%",overflowY:"auto",boxSizing:"border-box",padding:"28px 20px 36px"}}>
