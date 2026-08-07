@@ -480,8 +480,8 @@ function NewPackageModal({ onSave, onClose, currency }) {
   );
 }
 
-function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, families, setFamilies, students, coachProfile, setCoachProfile }) {
-  const [section,setSection]=useState("general");
+function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, families, setFamilies, students, coachProfile, setCoachProfile, initialTab }) {
+  const [section,setSection]=useState(initialTab||"general");
   const [showNewCourt,setShowNewCourt]=useState(false);
   const [showNewPack,setShowNewPack]=useState(false);
   const [showNewFamily,setShowNewFamily]=useState(false);
@@ -1478,7 +1478,7 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
   );
 }
 
-function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onInvite, userId, onInviteStudent, onRefresh, families=[], setFamilies }) {
+function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onInvite, userId, onInviteStudent, onRefresh, onOpenFamilies }) {
   const [f,setF]=useState("all");
   const [editS,setEditS]=useState(null);
   const [search,setSearch]=useState("");
@@ -1486,8 +1486,6 @@ function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onI
   const [invites,setInvites]=useState({});
   const [expandAll,setExpandAll]=useState(false);
   const [expandedIds,setExpandedIds]=useState(new Set());
-  const [showFamilyModal,setShowFamilyModal]=useState(false);
-  const [fName,setFName]=useState(""); const [fRespName,setFRespName]=useState(""); const [fRespPhone,setFRespPhone]=useState(""); const [fRespEmail,setFRespEmail]=useState("");
 
   // Load invite status and detect active students (have messages)
   useEffect(()=>{
@@ -1513,9 +1511,9 @@ function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onI
     <div style={{flex:1,display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden"}}>
       <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"16px 16px 16px",flexShrink:0}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
-          <div style={{fontSize:18,fontWeight:800,color:C.white}}>Mis Alumnos - BUILD TEST</div>
+          <div style={{fontSize:18,fontWeight:800,color:C.white}}>Mis Alumnos</div>
           <div style={{display:"flex",gap:8}}>
-            <button onClick={()=>{console.log("[FAMILY] 1. onClick fired");setShowFamilyModal(true);}} style={{padding:"8px 12px",borderRadius:20,border:"none",background:"rgba(255,255,255,0.2)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>👨‍👩‍👧 Crear Familias</button>
+            <button onClick={onOpenFamilies} style={{padding:"8px 12px",borderRadius:20,border:"none",background:"rgba(255,255,255,0.2)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>👨‍👩‍👧 Crear Familias</button>
             <button onClick={onInvite} style={{padding:"8px 12px",borderRadius:20,border:"none",background:"rgba(255,255,255,0.2)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>📲 Invitar</button>
             <button onClick={onAdd} style={{padding:"8px 16px",borderRadius:20,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>+ Nuevo</button>
           </div>
@@ -1784,49 +1782,6 @@ function MiniCalendar({ year, month, selDay, onSelect, classes=[] }) {
           );
         })}
       </div>
-      {(()=>{console.log("[FAMILY] 2. render check, showFamilyModal=",showFamilyModal);return null;})()}
-      {showFamilyModal&&(
-        <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.5)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
-          <div style={{background:"#F5F7FF",borderRadius:"24px 24px 0 0",padding:"28px 20px",paddingBottom:"calc(40px + env(safe-area-inset-bottom, 34px))",width:"100%",maxHeight:"85vh",overflowY:"auto",boxSizing:"border-box"}}>
-            <div style={{width:40,height:4,borderRadius:2,background:"#DDE3F0",margin:"0 auto 20px"}}></div>
-            {(()=>{console.log("[FAMILY] 3. MODAL MOUNTED, families count=",(families||[]).length);return null;})()}
-            <div style={{fontWeight:900,fontSize:19,color:"#0D1B4B",marginBottom:16}}>👨‍👩‍👧 Grupos Familiares</div>
-            {(families||[]).map(fam=>{
-              const members=students.filter(s=>s.familyId===fam.id);
-              return (
-                <div key={fam.id} style={{background:C.white,borderRadius:14,padding:16,marginBottom:10,border:"1px solid "+C.border}}>
-                  <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:members.length>0?8:0}}>
-                    <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#1565C0,#42A5F5)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>👨‍👩‍👧</div>
-                    <div style={{flex:1}}>
-                      <div style={{fontWeight:700,fontSize:14,color:C.text}}>{fam.name}</div>
-                      {fam.responsible?.name&&<div style={{fontSize:11,color:C.mutedDark}}>Responsable: {fam.responsible.name}</div>}
-                      {fam.responsible?.phone&&<div style={{fontSize:11,color:C.mutedDark}}>📱 {fam.responsible.phone}</div>}
-                    </div>
-                  </div>
-                  {members.length>0&&<div style={{paddingTop:8,borderTop:"1px solid "+C.border}}>{members.map(m=>(
-                    <div key={m.id} style={{display:"flex",alignItems:"center",gap:8,padding:"3px 0",fontSize:12,color:C.text}}>
-                      <div style={{width:20,height:20,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,fontWeight:700,color:C.white}}>{m.avatar}</div>
-                      {m.name}
-                    </div>
-                  ))}</div>}
-                  {members.length===0&&<div style={{fontSize:11,color:C.mutedDark,fontStyle:"italic",marginTop:4}}>Sin miembros vinculados</div>}
-                </div>
-              );
-            })}
-            {(families||[]).length===0&&<div style={{textAlign:"center",padding:"20px 0",color:C.mutedDark,fontSize:13}}>Aún no hay grupos familiares</div>}
-            <div style={{background:C.white,borderRadius:14,padding:16,marginTop:10,border:"1.5px solid #1565C0"}}>
-              <div style={{fontWeight:700,fontSize:14,color:C.text,marginBottom:12}}>Crear nuevo grupo</div>
-              <div style={{marginBottom:8}}><input value={fName} onChange={e=>setFName(e.target.value)} placeholder="Nombre de la familia *" style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:13,boxSizing:"border-box",background:C.white,color:C.text,outline:"none"}}/></div>
-              <div style={{fontSize:12,color:"#1565C0",fontWeight:700,marginBottom:6}}>Responsable de pago</div>
-              <div style={{marginBottom:6}}><input value={fRespName} onChange={e=>setFRespName(e.target.value)} placeholder="Nombre" style={{width:"100%",padding:"9px 12px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:12,boxSizing:"border-box",outline:"none"}}/></div>
-              <div style={{marginBottom:6}}><input value={fRespPhone} onChange={e=>setFRespPhone(e.target.value)} placeholder="Teléfono" style={{width:"100%",padding:"9px 12px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:12,boxSizing:"border-box",outline:"none"}}/></div>
-              <div style={{marginBottom:10}}><input value={fRespEmail} onChange={e=>setFRespEmail(e.target.value)} placeholder="Email" style={{width:"100%",padding:"9px 12px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:12,boxSizing:"border-box",outline:"none"}}/></div>
-              <button onClick={()=>{if(!fName.trim())return;setFamilies(p=>[...p,{id:Date.now(),name:fName.trim(),responsible:{name:fRespName.trim(),phone:fRespPhone.trim(),email:fRespEmail.trim()},createdAt:new Date().toISOString().slice(0,10)}]);setFName("");setFRespName("");setFRespPhone("");setFRespEmail("");}} style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:13,cursor:"pointer",fontWeight:800}}>Crear Grupo Familiar</button>
-            </div>
-            <button onClick={()=>setShowFamilyModal(false)} style={{width:"100%",padding:"14px",borderRadius:14,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:14,color:C.mutedDark,fontWeight:700,marginTop:12}}>Cerrar</button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -5964,6 +5919,7 @@ export default function App() {
     return ()=>supabase.removeChannel(channel);
   },[user?.id]);
   const [showConfig,setShowConfig]=useState(false);
+  const [configInitialTab,setConfigInitialTab]=useState(null);
   const [courts,setCourtsRaw]=useState([]);
   const [packages,setPackagesRaw]=useState([]);
   const [families,setFamiliesRaw]=useState(()=>ls("izi_families",[]));
@@ -6860,7 +6816,7 @@ export default function App() {
       <div key={"cur-"+currency} style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",position:"relative",overflow:"hidden",paddingBottom:"calc(64px + env(safe-area-inset-bottom, 34px))"}}>
         {tab==="dashboard"&&isFirstTime&&<EmptyDashboard onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)}/>}
         {tab==="dashboard"&&!isFirstTime&&<Dashboard students={students} classes={xClasses} onNavigate={handleNavigate} onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)} expenses={expenses} coachProfile={coachProfile} onRefresh={handleRefresh}/>}
-        {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={xClasses} onInvite={()=>setShowInvite(true)} userId={user?.id} onInviteStudent={(s)=>setInviteTarget(s)} onRefresh={handleRefresh} families={families} setFamilies={setFamilies}/>}
+        {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={xClasses} onInvite={()=>setShowInvite(true)} userId={user?.id} onInviteStudent={(s)=>setInviteTarget(s)} onRefresh={handleRefresh} onOpenFamilies={()=>{setConfigInitialTab("families");setShowConfig(true);}}/>}
         {inviteTarget&&<InviteModal student={inviteTarget} userId={user?.id} onClose={()=>setInviteTarget(null)}/>}
         {tab==="agenda"&&<Agenda students={students} classes={xClasses} rawClasses={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])} onRefresh={handleRefresh}/>}
         {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification} userId={user?.id} unreadChats={unreadChats} onMarkRead={(sid)=>setUnreadChats(p=>{const n={...p};delete n[String(sid)];return n;})}/>}
@@ -6868,7 +6824,7 @@ export default function App() {
         {tab==="finanzas"&&<Finances students={students} classes={xClasses} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages}/>}
         {showNewClass&&<NewClassModal onClose={()=>{setShowNewClass(false);if(classes.length===0)setTab("agenda");}} onSave={handleSaveClass} existingClasses={xClasses} students={students} dateLabel="Nueva clase" onCreateStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])}/>}
         {showNewStudent&&<NewStudentModal onClose={()=>setShowNewStudent(false)} onSave={(d)=>setStudents(p=>[...p,{id:Date.now(),...d}])}/>}
-        {showConfig&&<ConfigScreen onClose={()=>setShowConfig(false)} courts={courts} setCourts={setCourts} packages={packages} setPackages={setPackages} families={families} setFamilies={setFamilies} students={students} coachProfile={coachProfile} setCoachProfile={setCoachProfile}/>}
+        {showConfig&&<ConfigScreen onClose={()=>{setShowConfig(false);setConfigInitialTab(null);}} courts={courts} setCourts={setCourts} packages={packages} setPackages={setPackages} families={families} setFamilies={setFamilies} students={students} coachProfile={coachProfile} setCoachProfile={setCoachProfile} initialTab={configInitialTab}/>}
         {showInvite&&(
           <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
             <div style={{background:C.white,borderRadius:"24px 24px 0 0",width:"100%",maxHeight:"90%",overflowY:"auto",boxSizing:"border-box",padding:"28px 20px 36px"}}>
