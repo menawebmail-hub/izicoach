@@ -572,6 +572,7 @@ function FamilyManager({ families, setFamilies, students, onUpdateStudent, onClo
         })}
         <div style={{display:"flex",gap:8,marginTop:6}}>
           <input value={memberSearch} onChange={e=>setMemberSearch(e.target.value)} placeholder="Buscar alumno para agregar..." style={{...iS,flex:1}}/>
+          <button onClick={()=>{const name=prompt("Nombre del alumno:");if(name&&name.trim()&&onUpdateStudent){const newS={id:Date.now(),name:name.trim(),avatar:name.trim()[0].toUpperCase(),status:"active",combos:[],sport:""};onUpdateStudent(newS);setPendingMembers(p=>[...p,newS.id]);}}} style={{padding:"8px 14px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:11,cursor:"pointer",fontWeight:700,whiteSpace:"nowrap",flexShrink:0}}>+ Crear</button>
         </div>
         {memberSearch.trim()&&available.length>0&&(
           <div style={{background:C.white,border:"1px solid "+C.border,borderRadius:8,marginTop:4,maxHeight:120,overflowY:"auto"}}>
@@ -605,7 +606,9 @@ function FamilyManager({ families, setFamilies, students, onUpdateStudent, onClo
           <div key={fam.id} style={{background:C.white,borderRadius:14,padding:16,marginBottom:10,border:isEditing?"2px solid #1565C0":"1px solid "+C.border}}>
             {/* Header */}
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
-              <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#1565C0,#42A5F5)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>👨‍👩‍👧</div>
+              <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#1565C0,#42A5F5)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+                    </div>
               <div style={{flex:1}}>
                 {isEditing?(
                   <input value={fName} onChange={e=>{setFName(e.target.value);setHasChanges(true);}} style={{...iS,fontWeight:700,fontSize:14}} placeholder="Nombre de la familia"/>
@@ -618,7 +621,9 @@ function FamilyManager({ families, setFamilies, students, onUpdateStudent, onClo
               </div>
               {!isEditing&&(
                 <div style={{display:"flex",gap:6}}>
-                  <button onClick={()=>startEdit(fam)} style={{background:C.blueL,border:"none",borderRadius:"50%",width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12}}>✏</button>
+                  <button onClick={()=>startEdit(fam)} style={{background:C.blueL,border:"none",borderRadius:"50%",width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
                   <button onClick={()=>deleteFamily(fam)} style={{background:"#FFEBEE",border:"none",borderRadius:"50%",width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#C62828" strokeWidth="3" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                   </button>
@@ -649,7 +654,10 @@ function FamilyManager({ families, setFamilies, students, onUpdateStudent, onClo
               {/* Search to add member */}
               {isEditing&&(
                 <div style={{marginTop:8}}>
-                  <input value={memberSearch} onChange={e=>setMemberSearch(e.target.value)} placeholder="Buscar alumno para agregar..." style={{...iS,fontSize:12,padding:"8px 10px"}}/>
+                  <div style={{display:"flex",gap:6}}>
+                    <input value={memberSearch} onChange={e=>setMemberSearch(e.target.value)} placeholder="Buscar alumno..." style={{...iS,fontSize:12,padding:"8px 10px",flex:1}}/>
+                    <button onClick={()=>{const name=prompt("Nombre del alumno:");if(name&&name.trim()&&onUpdateStudent){const newS={id:Date.now(),name:name.trim(),avatar:name.trim()[0].toUpperCase(),status:"active",combos:[],sport:"",familyId:fam.id};onUpdateStudent(newS);setHasChanges(true);}}} style={{padding:"6px 12px",borderRadius:8,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:10,cursor:"pointer",fontWeight:700,whiteSpace:"nowrap",flexShrink:0}}>+ Crear</button>
+                  </div>
                   {memberSearch.trim()&&available.length>0&&(
                     <div style={{background:C.white,border:"1px solid "+C.border,borderRadius:8,marginTop:4,maxHeight:100,overflowY:"auto"}}>
                       {available.slice(0,5).map(s=>(
@@ -1695,12 +1703,14 @@ function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onI
             if(item.type==="familyHeader"){
               const fam=item.family;const members=item.members;
               return (
-                <div key={"fh-"+fam.id} onClick={()=>setShowFamilyModal(true)} style={{background:"linear-gradient(135deg,#E3E9F7,#D5DDEE)",borderRadius:14,padding:"12px 16px",marginBottom:4,marginTop:idx>0?12:0,cursor:"pointer",border:"1px solid #C5D0E6"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:10}}>
-                    <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#1565C0,#42A5F5)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:800,color:C.white,flexShrink:0}}>👨‍👩‍👧</div>
-                    <div style={{flex:1}}>
-                      <div style={{fontWeight:800,fontSize:13,color:"#0D1B4B"}}>{fam.name}</div>
-                      <div style={{fontSize:11,color:C.mutedDark}}>Responsable: {fam.responsible?.name||"—"} · {members.length} miembro{members.length!==1?"s":""}</div>
+                <div key={"fh-"+fam.id} onClick={()=>setShowFamilyModal(true)} style={{background:"linear-gradient(135deg,#E3E9F7,#D5DDEE)",borderRadius:16,padding:"14px 16px",marginBottom:4,marginTop:idx>0?12:0,cursor:"pointer",border:"1px solid #C5D0E6"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:12}}>
+                    <div style={{width:44,height:44,borderRadius:"50%",background:"linear-gradient(135deg,#1565C0,#42A5F5)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+                    </div>
+                    <div style={{flex:1,textAlign:"left"}}>
+                      <div style={{fontWeight:800,fontSize:14,color:"#0D1B4B"}}>{fam.name}</div>
+                      <div style={{fontSize:11,color:C.mutedDark}}>{members.length} miembro{members.length!==1?"s":""} ({members.map((m,i)=>i===members.length-1&&i>0?" y "+m.name:m.name).join(", ")})</div>
                     </div>
                   </div>
                 </div>
@@ -1722,7 +1732,7 @@ function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onI
                     </button>
                   </div>
                   <div style={{fontSize:12,color:C.mutedDark,marginBottom:4,textAlign:"left"}}>{"Alta: "+(()=>{const d=s.createdAt||getCombo(s)?.date;return d?fmtDate(d):"—";})()}</div>
-                  {fam&&<div style={{fontSize:10,color:"#1565C0",fontWeight:600,marginBottom:3}}>👨‍👩‍👧 {fam.name}</div>}
+                  {fam&&<div style={{fontSize:10,color:"#1565C0",fontWeight:600,marginBottom:3,display:"flex",alignItems:"center",gap:4}}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#1565C0" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>{fam.name}</div>}
                   <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:7,height:7,borderRadius:"50%",background:s.status==="active"?C.green:"#BDBDBD"}}></div><span style={{fontSize:11,color:s.status==="active"?C.green:"#BDBDBD",fontWeight:600}}>{s.status==="active"?"Activo":"Inactivo"}</span></div>
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
