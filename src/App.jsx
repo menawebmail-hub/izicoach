@@ -1676,26 +1676,40 @@ function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onI
             <span style={{fontSize:13,fontWeight:700,color:C.blue2}}>{expandAll?"Compactar":"Expandir"}</span>
           </button>
         </div>
-        {/* Family cards */}
-        {(families||[]).map(fam=>{
-          const members=students.filter(s=>s.familyId===fam.id);
-          return (
-            <div key={"fam-"+fam.id} onClick={()=>{setShowFamilyModal(true);}} style={{background:"linear-gradient(135deg,#E3E9F7,#D5DDEE)",borderRadius:16,padding:"14px 16px",marginBottom:8,cursor:"pointer",border:"1px solid #C5D0E6"}}>
-              <div style={{display:"flex",alignItems:"center",gap:10}}>
-                <div style={{width:42,height:42,borderRadius:"50%",background:"linear-gradient(135deg,#1565C0,#42A5F5)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:800,color:C.white,flexShrink:0}}>{fam.name?.[0]||"F"}</div>
-                <div style={{flex:1}}>
-                  <div style={{fontWeight:800,fontSize:14,color:C.text}}>{fam.name} <span style={{fontSize:11,color:"#1565C0",fontWeight:700}}>(GRUPO FAMILIAR)</span></div>
-                  <div style={{fontSize:11,color:C.mutedDark}}>Responsable: {fam.responsible?.name||"—"}</div>
-                  {members.length>0&&<div style={{fontSize:11,color:"#2E7D32",marginTop:2}}>● {members.length} miembro{members.length!==1?"s":""}</div>}
+        {(()=>{
+          // Group students: families first, then ungrouped
+          const familyGroups=[];
+          const usedIds=new Set();
+          (families||[]).forEach(fam=>{
+            const members=list.filter(s=>s.familyId===fam.id);
+            if(members.length>0){familyGroups.push({family:fam,members});members.forEach(m=>usedIds.add(m.id));}
+          });
+          const ungrouped=list.filter(s=>!usedIds.has(s.id));
+          const allItems=[];
+          familyGroups.forEach(g=>{
+            allItems.push({type:"familyHeader",family:g.family,members:g.members});
+            g.members.forEach(s=>allItems.push({type:"student",student:s,family:g.family}));
+          });
+          ungrouped.forEach(s=>allItems.push({type:"student",student:s,family:null}));
+          return allItems.map((item,idx)=>{
+            if(item.type==="familyHeader"){
+              const fam=item.family;const members=item.members;
+              return (
+                <div key={"fh-"+fam.id} onClick={()=>setShowFamilyModal(true)} style={{background:"linear-gradient(135deg,#E3E9F7,#D5DDEE)",borderRadius:14,padding:"12px 16px",marginBottom:4,marginTop:idx>0?12:0,cursor:"pointer",border:"1px solid #C5D0E6"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#1565C0,#42A5F5)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:800,color:C.white,flexShrink:0}}>👨‍👩‍👧</div>
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:800,fontSize:13,color:"#0D1B4B"}}>{fam.name}</div>
+                      <div style={{fontSize:11,color:C.mutedDark}}>Responsable: {fam.responsible?.name||"—"} · {members.length} miembro{members.length!==1?"s":""}</div>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
-          );
-        })}
-        {list.map(s=>{
-          const combo=getCombo(s); const rem=getRem(s,classes);
-          const isExpanded=expandAll?!expandedIds.has(s.id):expandedIds.has(s.id);
-          const toggleExpand=()=>setExpandedIds(p=>{const n=new Set(p);if(n.has(s.id))n.delete(s.id);else n.add(s.id);return n;});
+              );
+            }
+            const s=item.student;const fam=item.family;
+            const combo=getCombo(s); const rem=getRem(s,classes);
+            const isExpanded=expandAll?!expandedIds.has(s.id):expandedIds.has(s.id);
+            const toggleExpand=()=>setExpandedIds(p=>{const n=new Set(p);if(n.has(s.id))n.delete(s.id);else n.add(s.id);return n;});
           return (
             <WhiteCard key={s.id} style={{marginBottom:10}}>
               <div style={{display:"flex",alignItems:"center",gap:12}}>
@@ -1708,6 +1722,7 @@ function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onI
                     </button>
                   </div>
                   <div style={{fontSize:12,color:C.mutedDark,marginBottom:4,textAlign:"left"}}>{"Alta: "+(()=>{const d=s.createdAt||getCombo(s)?.date;return d?fmtDate(d):"—";})()}</div>
+                  {fam&&<div style={{fontSize:10,color:"#1565C0",fontWeight:600,marginBottom:3}}>👨‍👩‍👧 {fam.name}</div>}
                   <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:7,height:7,borderRadius:"50%",background:s.status==="active"?C.green:"#BDBDBD"}}></div><span style={{fontSize:11,color:s.status==="active"?C.green:"#BDBDBD",fontWeight:600}}>{s.status==="active"?"Activo":"Inactivo"}</span></div>
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -1794,7 +1809,8 @@ function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onI
               })()}
             </WhiteCard>
           );
-        })}
+        });
+        })()}
       </div>
       <button onClick={onAdd} style={{position:"fixed",bottom:72,right:20,width:56,height:56,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:28,cursor:"pointer",zIndex:50,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
       {editS&&(
