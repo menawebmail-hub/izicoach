@@ -481,7 +481,7 @@ function NewPackageModal({ onSave, onClose, currency }) {
 }
 
 // --- FamilyManager: shared component for managing families ---
-function FamilyManager({ families, setFamilies, students, onUpdateStudent, onClose }) {
+function FamilyManager({ families, setFamilies, students, onUpdateStudent, onAddStudent, onClose }) {
   const [step,setStep]=useState((families||[]).length>0?"list":"create");
   const [fName,setFName]=useState("");
   const [fRespName,setFRespName]=useState("");
@@ -572,7 +572,7 @@ function FamilyManager({ families, setFamilies, students, onUpdateStudent, onClo
         })}
         <div style={{display:"flex",gap:8,marginTop:6}}>
           <input value={memberSearch} onChange={e=>setMemberSearch(e.target.value)} placeholder="Buscar alumno para agregar..." style={{...iS,flex:1}}/>
-          <button onClick={()=>{const name=prompt("Nombre del alumno:");if(name&&name.trim()&&onUpdateStudent){const newS={id:Date.now(),name:name.trim(),avatar:name.trim()[0].toUpperCase(),status:"active",combos:[],sport:""};onUpdateStudent(newS);setPendingMembers(p=>[...p,newS.id]);}}} style={{padding:"8px 14px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:11,cursor:"pointer",fontWeight:700,whiteSpace:"nowrap",flexShrink:0}}>+ Crear</button>
+          <button onClick={()=>{const name=prompt("Nombre del nuevo alumno:");if(name&&name.trim()&&onAddStudent){const newS={id:Date.now(),name:name.trim(),avatar:name.trim()[0].toUpperCase(),status:"active",combos:[],sport:"",phone:"",email:""};onAddStudent(newS);setPendingMembers(p=>[...p,newS.id]);}}} style={{padding:"8px 14px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:11,cursor:"pointer",fontWeight:700,whiteSpace:"nowrap",flexShrink:0}}>+ Crear</button>
         </div>
         {memberSearch.trim()&&available.length>0&&(
           <div style={{background:C.white,border:"1px solid "+C.border,borderRadius:8,marginTop:4,maxHeight:120,overflowY:"auto"}}>
@@ -656,7 +656,7 @@ function FamilyManager({ families, setFamilies, students, onUpdateStudent, onClo
                 <div style={{marginTop:8}}>
                   <div style={{display:"flex",gap:6}}>
                     <input value={memberSearch} onChange={e=>setMemberSearch(e.target.value)} placeholder="Buscar alumno..." style={{...iS,fontSize:12,padding:"8px 10px",flex:1}}/>
-                    <button onClick={()=>{const name=prompt("Nombre del alumno:");if(name&&name.trim()&&onUpdateStudent){const newS={id:Date.now(),name:name.trim(),avatar:name.trim()[0].toUpperCase(),status:"active",combos:[],sport:"",familyId:fam.id};onUpdateStudent(newS);setHasChanges(true);}}} style={{padding:"6px 12px",borderRadius:8,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:10,cursor:"pointer",fontWeight:700,whiteSpace:"nowrap",flexShrink:0}}>+ Crear</button>
+                    <button onClick={()=>{const name=prompt("Nombre del nuevo alumno:");if(name&&name.trim()&&onAddStudent){const newS={id:Date.now(),name:name.trim(),avatar:name.trim()[0].toUpperCase(),status:"active",combos:[],sport:"",phone:"",email:"",familyId:fam.id};onAddStudent(newS);setHasChanges(true);}}} style={{padding:"6px 12px",borderRadius:8,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:10,cursor:"pointer",fontWeight:700,whiteSpace:"nowrap",flexShrink:0}}>+ Crear</button>
                   </div>
                   {memberSearch.trim()&&available.length>0&&(
                     <div style={{background:C.white,border:"1px solid "+C.border,borderRadius:8,marginTop:4,maxHeight:100,overflowY:"auto"}}>
@@ -901,7 +901,7 @@ function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, famil
         {section==="families"&&(
           <>
             <div style={{fontSize:13,color:C.mutedDark,marginBottom:16}}>Agrupá alumnos por familia para gestionar pagos y comunicación con el responsable.</div>
-            <FamilyManager families={families} setFamilies={setFamilies} students={students} onUpdateStudent={onUpdateStudent}/>
+            <FamilyManager families={families} setFamilies={setFamilies} students={students} onUpdateStudent={onUpdateStudent} onAddStudent={(s)=>onUpdateStudent(s)}/>
           </>
         )}
 
@@ -1622,7 +1622,7 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
   );
 }
 
-function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onInvite, userId, onInviteStudent, onRefresh, families=[], setFamilies }) {
+function Students({ students, onAdd, onUpdate, onAddStudentDirect, onDelete, onChat, classes=[], onInvite, userId, onInviteStudent, onRefresh, families=[], setFamilies }) {
   const [f,setF]=useState("all");
   const [editS,setEditS]=useState(null);
   const [search,setSearch]=useState("");
@@ -1703,17 +1703,18 @@ function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onI
             if(item.type==="familyHeader"){
               const fam=item.family;const members=item.members;
               return (
-                <div key={"fh-"+fam.id} onClick={()=>setShowFamilyModal(true)} style={{background:"linear-gradient(135deg,#E3E9F7,#D5DDEE)",borderRadius:16,padding:"14px 16px",marginBottom:4,marginTop:idx>0?12:0,cursor:"pointer",border:"1px solid #C5D0E6"}}>
+                <WhiteCard key={"fh-"+fam.id} onClick={()=>setShowFamilyModal(true)} style={{marginBottom:10,marginTop:idx>0?8:0,background:"linear-gradient(135deg,#E8EDF8,#DDE3F0)",cursor:"pointer",border:"1px solid #C5D0E6"}}>
                   <div style={{display:"flex",alignItems:"center",gap:12}}>
                     <div style={{width:44,height:44,borderRadius:"50%",background:"linear-gradient(135deg,#1565C0,#42A5F5)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
                     </div>
                     <div style={{flex:1,textAlign:"left"}}>
                       <div style={{fontWeight:800,fontSize:14,color:"#0D1B4B"}}>{fam.name}</div>
-                      <div style={{fontSize:11,color:C.mutedDark}}>{members.length} miembro{members.length!==1?"s":""} ({members.map((m,i)=>i===members.length-1&&i>0?" y "+m.name:m.name).join(", ")})</div>
+                      <div style={{fontSize:12,color:C.mutedDark,marginBottom:2}}>{members.length} miembro{members.length!==1?"s":""} ({members.map((m,i)=>i===members.length-1&&i>0?" y "+m.name:m.name).join(", ")})</div>
+                      <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:7,height:7,borderRadius:"50%",background:C.green}}></div><span style={{fontSize:11,color:C.green,fontWeight:600}}>Activo</span></div>
                     </div>
                   </div>
-                </div>
+                </WhiteCard>
               );
             }
             const s=item.student;const fam=item.family;
@@ -1864,7 +1865,7 @@ function Students({ students, onAdd, onUpdate, onDelete, onChat, classes=[], onI
           <div style={{background:"#F5F7FF",borderRadius:"24px 24px 0 0",padding:"28px 20px",paddingBottom:"calc(40px + env(safe-area-inset-bottom, 34px))",width:"100%",maxHeight:"85vh",overflowY:"auto",boxSizing:"border-box"}}>
             <div style={{width:40,height:4,borderRadius:2,background:"#DDE3F0",margin:"0 auto 20px"}}></div>
             <div style={{fontWeight:900,fontSize:19,color:"#0D1B4B",marginBottom:16}}>👨‍👩‍👧 Grupos Familiares</div>
-            <FamilyManager families={families} setFamilies={setFamilies} students={students} onUpdateStudent={onUpdate}/>
+            <FamilyManager families={families} setFamilies={setFamilies} students={students} onUpdateStudent={onUpdate} onAddStudent={onAddStudentDirect}/>
             <button onClick={()=>setShowFamilyModal(false)} style={{width:"100%",padding:"14px",borderRadius:14,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:14,color:C.mutedDark,fontWeight:700,marginTop:12}}>Cerrar</button>
           </div>
         </div>
@@ -7005,7 +7006,7 @@ export default function App() {
       <div key={"cur-"+currency} style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",position:"relative",overflow:"hidden",paddingBottom:"calc(64px + env(safe-area-inset-bottom, 34px))"}}>
         {tab==="dashboard"&&isFirstTime&&<EmptyDashboard onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)}/>}
         {tab==="dashboard"&&!isFirstTime&&<Dashboard students={students} classes={xClasses} onNavigate={handleNavigate} onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)} expenses={expenses} coachProfile={coachProfile} onRefresh={handleRefresh}/>}
-        {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={xClasses} onInvite={()=>setShowInvite(true)} userId={user?.id} onInviteStudent={(s)=>setInviteTarget(s)} onRefresh={handleRefresh} families={families} setFamilies={setFamilies}/>}
+        {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onAddStudentDirect={(s)=>setStudents(p=>[...p,s])} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={xClasses} onInvite={()=>setShowInvite(true)} userId={user?.id} onInviteStudent={(s)=>setInviteTarget(s)} onRefresh={handleRefresh} families={families} setFamilies={setFamilies}/>}
         {inviteTarget&&<InviteModal student={inviteTarget} userId={user?.id} onClose={()=>setInviteTarget(null)}/>}
         {tab==="agenda"&&<Agenda students={students} classes={xClasses} rawClasses={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])} onRefresh={handleRefresh}/>}
         {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification} userId={user?.id} unreadChats={unreadChats} onMarkRead={(sid)=>setUnreadChats(p=>{const n={...p};delete n[String(sid)];return n;})}/>}
