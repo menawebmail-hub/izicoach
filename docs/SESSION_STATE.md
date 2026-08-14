@@ -1,66 +1,71 @@
 SESSION_STATE.md — IziCoach
+
 CURRENT TASK
-Pantalla Mis Alumnos — ajustes de Familias.
+None. Last completed task: Familias — Mis Alumnos, Cobros, y Portal del Alumno.
+
 STATUS
-In progress.
-Claude recibió los requerimientos y comenzó la fase de análisis.
-Último estado reportado:
-	•	Desglosó los cambios solicitados.
-	•	Identificó una implementación incremental.
-	•	Empezó a analizar la implementación actual antes de modificar código.
-	•	Todavía no está confirmado que haya realizado cambios de código.
+Complete and verified in browser (coach session + student portal session). Not yet committed.
 
-REQUESTED CHANGES
-1. Family card
-Agregar debajo del nombre de la familia:
-Representante: Nombre
-Mantener debajo:
-X miembros (Nombre y Nombre)
-No modificar el diseño aprobado de la tarjeta.
+SUMMARY OF WORK DONE
+1. Family card (Mis Alumnos)
+   - Header muestra "Representante: Nombre" y "X miembros (...)" sin rediseñar la tarjeta aprobada.
+   - Collapse/expand por familia, con indentación de las tarjetas de alumno debajo.
+   - Badge "(Responsable)" en la tarjeta del alumno que es representante y también miembro.
+
 2. Family representative
-En Crear/Editar Familia:
-	•	Permitir buscar y seleccionar un Student existente como representante.
-	•	Si el representante no es alumno, permitir ingresar el nombre manualmente como actualmente.
-	•	Si es Student, relacionarlo sin duplicar innecesariamente sus datos.
-	•	Mantener student.familyId como fuente principal de membresía familiar.
-	•	Revisar primero la implementación actual de Family antes de modificar el modelo.
-3. Mis Alumnos filters
-Reemplazar:
-Todos | Activos | Inactivos
-por:
-Todos | Familias | Solo alumnos
-Behavior:
-	•	Todos → familias + alumnos que no pertenecen a una familia.
-	•	Familias → solo tarjetas familiares.
-	•	Solo alumnos → solo alumnos individuales.
-Eliminar Activos/Inactivos como filtros principales.
-4. Search
-Mantener un único buscador que encuentre:
-	•	familias
-	•	alumnos
-	•	representantes
-5. Invite
-Eliminar el botón Invitar.
+   - Crear/Editar Familia permite buscar y vincular un Student existente como responsable
+     (family.responsible.studentId), o ingresar el nombre manualmente si no es alumno.
+   - Si no hay match en la búsqueda: "+ Crear como alumno" (crea el Student y lo vincula) o
+     "Usar solo como representante" (queda solo el nombre manual, sin studentId).
+   - student.familyId sigue siendo la única fuente de verdad de membresía. No se duplican Students.
 
-CONSTRAINTS
-	•	Preserve the current approved UI.
-	•	Do not redesign Mis Alumnos or Family cards.
-	•	Preserve student.familyId as the Family membership source of truth.
-	•	Do not create duplicate Family/Student relationships or unnecessary duplicate data.
-	•	Make incremental, minimal changes.
-	•	Preserve existing functionality.
+3. Mis Alumnos filters
+   - Reemplazado Todos/Activos/Inactivos por Todos/Familias/Solo alumnos, con el comportamiento
+     de agrupación pedido (familias primero, alumnos sin familia después).
+
+4. Search
+   - Buscador único: familia, alumno y representante.
+
+5. Invite
+   - Botón "Invitar" masivo eliminado del header de Mis Alumnos. El botón "INVITAR" por alumno
+     (dentro de cada tarjeta expandida) se mantuvo sin cambios.
+
+6. Cobros (PaymentsTab)
+   - Agrupación visual por familia (header + collapse/expand + indentación), representante
+     primero dentro del grupo. PaymentCard/PagoModal sin cambios — cada alumno mantiene su
+     estado de cuenta y "Actualizar Pagos" totalmente independiente.
+
+7. Portal del Alumno (StudentApp)
+   - Si el alumno logueado es el responsable de una familia (family.responsible.studentId),
+     ve una sección "MI FAMILIA" (Inicio) con horario + estado de cuenta de cada hijo, y
+     "CLASES DE {hijo}" (pestaña Clases) — ambas de solo lectura, sin fusionar saldos.
+   - Los dos flujos de login de alumno ahora también cargan `families` desde Supabase.
+
+8. Selector de alumnos compartido (StudentSearch)
+   - Extendido con un prop opcional retrocompatible `noResultsSlot` (usado solo para el
+     buscador de representante). Reemplazó la búsqueda custom duplicada en Crear/Editar
+     Familia (representante y miembros), sin tocar el uso existente en Crear Clase.
+
+BUGS ENCONTRADOS Y CORREGIDOS EN EL CAMINO (no relacionados directamente al pedido original,
+pero descubiertos y arreglados durante la verificación en browser)
+   - "Eliminar familia"/"Eliminar alumno"/"Eliminar Clase" no funcionaban: usaban
+     window.confirm(), no soportado en el entorno de prueba → reemplazados por confirmación
+     inline (banner con Cancelar/Eliminar).
+   - "+ Crear alumno" dentro de Crear Familia no funcionaba: usaba window.prompt(), mismo
+     problema → reemplazado por input inline.
+   - ConfigScreen → Familias: onAddStudent estaba mal cableado a onUpdateStudent (nunca
+     insertaba alumnos nuevos) → corregido.
+   - Paneles de pantalla completa (Editar Alumno, Modificar Clase) quedaban debajo del
+     NavBar (zIndex 99 vs 100) → subido a 200.
+
+VERIFICATION PERFORMED
+   - Build de producción (`vite build`) limpio después de cada cambio.
+   - Verificado en browser como coach: Mis Alumnos (filtros, buscador, collapse, badges),
+     Cobros (agrupación, PaymentCard intacto), Crear/Editar Familia (StudentSearch para
+     representante y miembros, fallback de "no match", exclusión de ya-seleccionados).
+   - Verificado en browser como alumno (portal real, login con email/password hecho por el
+     usuario — Claude no ingresa contraseñas): sección "MI FAMILIA" y "CLASES DE {hijo}"
+     mostrando datos correctos y separados por alumno.
 
 NEXT STEP
-Continue the analysis of the current implementation.
-Before editing:
-	1	Inspect current Family and Student structures.
-	2	Inspect Family create/edit representative flow.
-	3	Locate Mis Alumnos family/student rendering.
-	4	Locate current Todos / Activos / Inactivos filter logic.
-	5	Locate current search logic.
-	6	Identify the Invite button implementation.
-	7	List the exact components/functions that require modification.
-Then implement the changes incrementally following CLAUDE.md and ARCHITECTURE.md.
-IMPORTANT
-Do not restart the task from scratch.
-First inspect the current Git/code state to determine whether Claude already made any partial changes after the last recorded message.
+Ninguno pendiente de este task. A la espera de aprobación del usuario para commit/push.

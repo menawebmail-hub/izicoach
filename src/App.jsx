@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
@@ -481,32 +481,82 @@ function NewPackageModal({ onSave, onClose, currency }) {
 }
 
 // --- FamilyManager: shared component for managing families ---
-function FamilyManager({ families, setFamilies, students, onUpdateStudent, onAddStudent, onClose }) {
+const FamilyManager = forwardRef(function FamilyManager({ families, setFamilies, students, onUpdateStudent, onAddStudent, onClose, hideCreateButton }, ref) {
   const [step,setStep]=useState((families||[]).length>0?"list":"create");
   const [fName,setFName]=useState("");
   const [fRespName,setFRespName]=useState("");
   const [fRespPhone,setFRespPhone]=useState("");
   const [fRespEmail,setFRespEmail]=useState("");
+  const [fRespStudentId,setFRespStudentId]=useState(null);
   const [editFamilyId,setEditFamilyId]=useState(null);
-  const [memberSearch,setMemberSearch]=useState("");
   const [pendingMembers,setPendingMembers]=useState([]);
   const [hasChanges,setHasChanges]=useState(false);
+  const [addingMember,setAddingMember]=useState(false);
+  const [newMemberName,setNewMemberName]=useState("");
+  const [confirmDeleteId,setConfirmDeleteId]=useState(null);
   const iS={width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:13,boxSizing:"border-box",background:C.white,color:C.text,outline:"none"};
 
   const startCreate=()=>{
-    setStep("create");setFName("");setFRespName("");setFRespPhone("");setFRespEmail("");setPendingMembers([]);
+    setStep("create");setFName("");setFRespName("");setFRespPhone("");setFRespEmail("");setFRespStudentId(null);setPendingMembers([]);setAddingMember(false);setNewMemberName("");
   };
+
+  useImperativeHandle(ref,()=>({openCreate:startCreate}));
+
+  const createMember=(extra={})=>{
+    const nm=newMemberName.trim();
+    if(!nm||!onAddStudent) return null;
+    const newS={id:Date.now(),name:nm,avatar:nm[0].toUpperCase(),status:"active",combos:[],sport:"",phone:"",email:"",...extra};
+    onAddStudent(newS);
+    setNewMemberName("");
+    setAddingMember(false);
+    return newS;
+  };
+
+  const linkRepStudent=(st)=>{
+    setFRespStudentId(st.id);
+    setFRespName(st.name);
+    if(st.phone) setFRespPhone(st.phone);
+    if(st.email) setFRespEmail(st.email);
+    if(editFamilyId) setHasChanges(true);
+  };
+
+  const unlinkRepStudent=()=>{
+    setFRespStudentId(null);
+    if(editFamilyId) setHasChanges(true);
+  };
+
+  const createRepAsStudent=(name)=>{
+    const nm=name.trim();
+    if(!nm||!onAddStudent) return;
+    const newS={id:Date.now(),name:nm,avatar:nm[0].toUpperCase(),status:"active",combos:[],sport:"",phone:"",email:""};
+    onAddStudent(newS);
+    linkRepStudent(newS);
+  };
+
+  const useRepNameOnly=(name)=>{
+    setFRespName(name.trim());
+    setFRespStudentId(null);
+    if(editFamilyId) setHasChanges(true);
+  };
+
+  const repNoResultsSlot=(query)=>(
+    <div style={{padding:10}}>
+      <div style={{fontSize:11,color:C.mutedDark,marginBottom:8}}>No se encontró ningún alumno con ese nombre.</div>
+      <button onClick={()=>createRepAsStudent(query)} style={{width:"100%",marginBottom:6,padding:"9px 10px",borderRadius:8,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:12,fontWeight:700,cursor:"pointer"}}>+ Crear como alumno</button>
+      <button onClick={()=>useRepNameOnly(query)} style={{width:"100%",padding:"9px 10px",borderRadius:8,border:"1.5px solid "+C.border,background:C.white,color:C.mutedDark,fontSize:12,fontWeight:700,cursor:"pointer"}}>Usar solo como representante</button>
+    </div>
+  );
 
   const handleCreate=()=>{
     if(!fRespName.trim()) return;
     const id=Date.now();
     const name=fName.trim()||("Familia "+fRespName.trim().split(" ")[0]);
-    setFamilies(p=>[...p,{id,name,responsible:{name:fRespName.trim(),phone:fRespPhone.trim(),email:fRespEmail.trim()},createdAt:new Date().toISOString().slice(0,10)}]);
+    setFamilies(p=>[...p,{id,name,responsible:{name:fRespName.trim(),phone:fRespPhone.trim(),email:fRespEmail.trim(),studentId:fRespStudentId||null},createdAt:new Date().toISOString().slice(0,10)}]);
     pendingMembers.forEach(sid=>{
       const st=students.find(s=>s.id===sid);
       if(st&&onUpdateStudent) onUpdateStudent({...st,familyId:id});
     });
-    setFName("");setFRespName("");setFRespPhone("");setFRespEmail("");setPendingMembers([]);setStep("list");
+    setFName("");setFRespName("");setFRespPhone("");setFRespEmail("");setFRespStudentId(null);setPendingMembers([]);setStep("list");
   };
 
   const startEdit=(fam)=>{
@@ -515,23 +565,24 @@ function FamilyManager({ families, setFamilies, students, onUpdateStudent, onAdd
     setFRespName(fam.responsible?.name||"");
     setFRespPhone(fam.responsible?.phone||"");
     setFRespEmail(fam.responsible?.email||"");
+    setFRespStudentId(fam.responsible?.studentId||null);
+    setAddingMember(false);setNewMemberName("");
     setHasChanges(false);
   };
 
   const saveEdit=(famId)=>{
     if(!fRespName.trim()) return;
-    setFamilies(p=>p.map(x=>x.id===famId?{...x,name:fName.trim()||x.name,responsible:{name:fRespName.trim(),phone:fRespPhone.trim(),email:fRespEmail.trim()}}:x));
+    setFamilies(p=>p.map(x=>x.id===famId?{...x,name:fName.trim()||x.name,responsible:{name:fRespName.trim(),phone:fRespPhone.trim(),email:fRespEmail.trim(),studentId:fRespStudentId||null}}:x));
     setEditFamilyId(null);setHasChanges(false);
   };
 
   const cancelEdit=()=>{
-    setEditFamilyId(null);setFName("");setFRespName("");setFRespPhone("");setFRespEmail("");setHasChanges(false);
+    setEditFamilyId(null);setFName("");setFRespName("");setFRespPhone("");setFRespEmail("");setFRespStudentId(null);setAddingMember(false);setNewMemberName("");setHasChanges(false);
   };
 
   const addMember=(studentId,familyId)=>{
     const st=students.find(s=>s.id===studentId);
     if(st&&onUpdateStudent){onUpdateStudent({...st,familyId});setHasChanges(true);}
-    setMemberSearch("");
   };
 
   const removeMember=(studentId)=>{
@@ -540,25 +591,39 @@ function FamilyManager({ families, setFamilies, students, onUpdateStudent, onAdd
   };
 
   const deleteFamily=(fam)=>{
-    if(!confirm("¿Eliminar "+fam.name+"? Los alumnos no se eliminarán.")) return;
     const members=students.filter(s=>s.familyId===fam.id);
     members.forEach(m=>removeMember(m.id));
     setFamilies(p=>p.filter(x=>x.id!==fam.id));
     if(editFamilyId===fam.id) cancelEdit();
+    setConfirmDeleteId(null);
   };
 
   // CREATE STEP
   if(step==="create"){
-    const available=students.filter(s=>!s.familyId&&!pendingMembers.includes(s.id)&&(memberSearch.trim()===""||s.name.toLowerCase().includes(memberSearch.toLowerCase())));
     return (
       <div>
         <div style={{fontSize:12,color:"#1565C0",fontWeight:700,marginBottom:10}}>RESPONSABLE DE PAGO *</div>
-        <div style={{marginBottom:6}}><input value={fRespName} onChange={e=>setFRespName(e.target.value)} placeholder="Nombre del responsable *" style={iS}/></div>
+        {fRespStudentId?(
+          <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",background:C.blueL,borderRadius:10,marginBottom:6}}>
+            <div style={{width:24,height:24,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:C.white,flexShrink:0}}>{fRespName.trim()[0]?.toUpperCase()}</div>
+            <span style={{flex:1,fontSize:13,fontWeight:700,color:C.text}}>{fRespName}</span>
+            <button onClick={unlinkRepStudent} style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:"#C62828"}}>✕</button>
+          </div>
+        ):(
+          <>
+            <div style={{marginBottom:6}}><input value={fRespName} onChange={e=>setFRespName(e.target.value)} placeholder="Nombre del responsable *" style={iS}/></div>
+            <div style={{marginBottom:6,fontSize:11,color:C.mutedDark}}>O buscar un alumno existente:</div>
+            <StudentSearch students={students} selected={[]} onAdd={linkRepStudent} noResultsSlot={repNoResultsSlot}/>
+          </>
+        )}
         <div style={{marginBottom:6}}><input value={fRespPhone} onChange={e=>setFRespPhone(e.target.value)} placeholder="Teléfono" style={iS}/></div>
         <div style={{marginBottom:10}}><input value={fRespEmail} onChange={e=>setFRespEmail(e.target.value)} placeholder="Email" style={iS}/></div>
         <div style={{marginBottom:10}}><label style={{fontSize:11,color:C.mutedDark,display:"block",marginBottom:3}}>Nombre de la familia (opcional)</label><input value={fName} onChange={e=>setFName(e.target.value)} placeholder={"Ej: Familia "+(fRespName.trim().split(" ")[0]||"...")} style={iS}/></div>
 
-        <div style={{fontSize:12,color:"#1565C0",fontWeight:700,marginBottom:8,marginTop:16}}>MIEMBROS DE LA FAMILIA</div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8,marginTop:16}}>
+          <div style={{fontSize:12,color:"#1565C0",fontWeight:700}}>MIEMBROS DE LA FAMILIA</div>
+          <button onClick={()=>setAddingMember(true)} style={{padding:"6px 12px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:11,cursor:"pointer",fontWeight:800,letterSpacing:0.3}}>+ CREAR ALUMNO</button>
+        </div>
         {pendingMembers.map(sid=>{
           const s=students.find(x=>x.id===sid);
           if(!s) return null;
@@ -570,21 +635,14 @@ function FamilyManager({ families, setFamilies, students, onUpdateStudent, onAdd
             </div>
           );
         })}
-        <div style={{display:"flex",gap:8,marginTop:6}}>
-          <input value={memberSearch} onChange={e=>setMemberSearch(e.target.value)} placeholder="Buscar alumno para agregar..." style={{...iS,flex:1}}/>
-          <button onClick={()=>{const name=prompt("Nombre del nuevo alumno:");if(name&&name.trim()&&onAddStudent){const newS={id:Date.now(),name:name.trim(),avatar:name.trim()[0].toUpperCase(),status:"active",combos:[],sport:"",phone:"",email:""};onAddStudent(newS);setPendingMembers(p=>[...p,newS.id]);}}} style={{padding:"8px 14px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:11,cursor:"pointer",fontWeight:700,whiteSpace:"nowrap",flexShrink:0}}>+ Crear</button>
-        </div>
-        {memberSearch.trim()&&available.length>0&&(
-          <div style={{background:C.white,border:"1px solid "+C.border,borderRadius:8,marginTop:4,maxHeight:120,overflowY:"auto"}}>
-            {available.slice(0,5).map(s=>(
-              <div key={s.id} onClick={()=>{setPendingMembers(p=>[...p,s.id]);setMemberSearch("");}} style={{padding:"10px 12px",cursor:"pointer",fontSize:13,fontWeight:600,color:C.text,borderBottom:"1px solid "+C.border,display:"flex",alignItems:"center",gap:8}}>
-                <div style={{width:22,height:22,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700,color:C.white}}>{s.avatar}</div>
-                {s.name}
-              </div>
-            ))}
+        {addingMember&&(
+          <div style={{display:"flex",gap:8,marginTop:6,marginBottom:6}}>
+            <input value={newMemberName} onChange={e=>setNewMemberName(e.target.value)} placeholder="Nombre del nuevo alumno" style={{...iS,flex:1}} autoFocus/>
+            <button onClick={()=>{const newS=createMember();if(newS) setPendingMembers(p=>[...p,newS.id]);}} disabled={!newMemberName.trim()} style={{padding:"8px 14px",borderRadius:10,border:"none",background:newMemberName.trim()?"linear-gradient(135deg,#52C048,#65CE5A)":"#ccc",color:C.white,fontSize:11,cursor:newMemberName.trim()?"pointer":"not-allowed",fontWeight:700,whiteSpace:"nowrap",flexShrink:0}}>OK</button>
+            <button onClick={()=>{setAddingMember(false);setNewMemberName("");}} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:"#C62828",flexShrink:0}}>✕</button>
           </div>
         )}
-        {memberSearch.trim()&&available.length===0&&<div style={{padding:"8px 0",fontSize:11,color:C.mutedDark}}>No encontrado</div>}
+        <StudentSearch students={students.filter(s=>!s.familyId)} selected={pendingMembers.map(id=>({id}))} onAdd={s=>setPendingMembers(p=>[...p,s.id])}/>
 
         <div style={{display:"flex",gap:8,marginTop:16}}>
           <button onClick={()=>{if((families||[]).length>0)setStep("list");else if(onClose)onClose();}} style={{flex:1,padding:"13px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:14,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
@@ -600,7 +658,6 @@ function FamilyManager({ families, setFamilies, students, onUpdateStudent, onAdd
       {(families||[]).map(fam=>{
         const members=students.filter(s=>s.familyId===fam.id);
         const isEditing=editFamilyId===fam.id;
-        const available=students.filter(s=>!s.familyId&&(memberSearch.trim()===""||s.name.toLowerCase().includes(memberSearch.toLowerCase())));
 
         return (
           <div key={fam.id} style={{background:C.white,borderRadius:14,padding:16,marginBottom:10,border:isEditing?"2px solid #1565C0":"1px solid "+C.border}}>
@@ -624,18 +681,41 @@ function FamilyManager({ families, setFamilies, students, onUpdateStudent, onAdd
                   <button onClick={()=>startEdit(fam)} style={{background:C.blueL,border:"none",borderRadius:"50%",width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                     </button>
-                  <button onClick={()=>deleteFamily(fam)} style={{background:"#FFEBEE",border:"none",borderRadius:"50%",width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <button onClick={()=>setConfirmDeleteId(fam.id)} style={{background:"#FFEBEE",border:"none",borderRadius:"50%",width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#C62828" strokeWidth="3" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                   </button>
                 </div>
               )}
             </div>
 
+            {/* Confirmación de borrado (reemplaza window.confirm, no soportado en algunos entornos) */}
+            {confirmDeleteId===fam.id&&(
+              <div style={{marginBottom:10,padding:10,borderRadius:10,background:"#FFEBEE",border:"1px solid #FFCDD2"}}>
+                <div style={{fontSize:12,color:"#C62828",fontWeight:600,marginBottom:8}}>¿Eliminar {fam.name}? Los alumnos no se eliminarán.</div>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>setConfirmDeleteId(null)} style={{flex:1,padding:"8px",borderRadius:10,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:12,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
+                  <button onClick={()=>deleteFamily(fam)} style={{flex:1,padding:"8px",borderRadius:10,border:"none",background:"#C62828",color:C.white,cursor:"pointer",fontSize:12,fontWeight:800}}>Eliminar</button>
+                </div>
+              </div>
+            )}
+
             {/* Responsable edit */}
             {isEditing&&(
               <div style={{marginBottom:10,paddingBottom:10,borderBottom:"1px solid "+C.border}}>
                 <div style={{fontSize:11,color:"#1565C0",fontWeight:700,marginBottom:6}}>RESPONSABLE</div>
-                <div style={{marginBottom:4}}><input value={fRespName} onChange={e=>{setFRespName(e.target.value);setHasChanges(true);}} placeholder="Nombre" style={{...iS,fontSize:12,padding:"8px 10px"}}/></div>
+                {fRespStudentId?(
+                  <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",background:C.blueL,borderRadius:8,marginBottom:4}}>
+                    <div style={{width:20,height:20,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700,color:C.white,flexShrink:0}}>{fRespName.trim()[0]?.toUpperCase()}</div>
+                    <span style={{flex:1,fontSize:12,fontWeight:700,color:C.text}}>{fRespName}</span>
+                    <button onClick={unlinkRepStudent} style={{background:"none",border:"none",cursor:"pointer",fontSize:11,color:"#C62828"}}>✕</button>
+                  </div>
+                ):(
+                  <>
+                    <div style={{marginBottom:4}}><input value={fRespName} onChange={e=>{setFRespName(e.target.value);setHasChanges(true);}} placeholder="Nombre" style={{...iS,fontSize:12,padding:"8px 10px"}}/></div>
+                    <div style={{marginBottom:4,fontSize:10,color:C.mutedDark}}>O buscar un alumno existente:</div>
+                    <StudentSearch students={students} selected={[]} onAdd={linkRepStudent} noResultsSlot={repNoResultsSlot}/>
+                  </>
+                )}
                 <div style={{marginBottom:4}}><input value={fRespPhone} onChange={e=>{setFRespPhone(e.target.value);setHasChanges(true);}} placeholder="Teléfono" style={{...iS,fontSize:12,padding:"8px 10px"}}/></div>
                 <div><input value={fRespEmail} onChange={e=>{setFRespEmail(e.target.value);setHasChanges(true);}} placeholder="Email" style={{...iS,fontSize:12,padding:"8px 10px"}}/></div>
               </div>
@@ -643,7 +723,10 @@ function FamilyManager({ families, setFamilies, students, onUpdateStudent, onAdd
 
             {/* Members */}
             <div style={{paddingTop:isEditing?0:10,borderTop:isEditing?"none":"1px solid "+C.border}}>
-              <div style={{fontSize:11,color:C.mutedDark,fontWeight:700,marginBottom:6}}>MIEMBROS ({members.length})</div>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                <div style={{fontSize:11,color:C.mutedDark,fontWeight:700}}>MIEMBROS ({members.length})</div>
+                {isEditing&&<button onClick={()=>setAddingMember(true)} style={{padding:"5px 10px",borderRadius:8,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:10,cursor:"pointer",fontWeight:800,letterSpacing:0.3}}>+ CREAR ALUMNO</button>}
+              </div>
               {members.map(m=>(
                 <div key={m.id} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0",fontSize:13,color:C.text}}>
                   <div style={{width:24,height:24,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:C.white}}>{m.avatar}</div>
@@ -651,23 +734,16 @@ function FamilyManager({ families, setFamilies, students, onUpdateStudent, onAdd
                   {isEditing&&<button onClick={()=>removeMember(m.id)} style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:"#C62828"}}>✕</button>}
                 </div>
               ))}
-              {/* Search to add member */}
               {isEditing&&(
                 <div style={{marginTop:8}}>
-                  <div style={{display:"flex",gap:6}}>
-                    <input value={memberSearch} onChange={e=>setMemberSearch(e.target.value)} placeholder="Buscar alumno..." style={{...iS,fontSize:12,padding:"8px 10px",flex:1}}/>
-                    <button onClick={()=>{const name=prompt("Nombre del nuevo alumno:");if(name&&name.trim()&&onAddStudent){const newS={id:Date.now(),name:name.trim(),avatar:name.trim()[0].toUpperCase(),status:"active",combos:[],sport:"",phone:"",email:"",familyId:fam.id};onAddStudent(newS);setHasChanges(true);}}} style={{padding:"6px 12px",borderRadius:8,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:10,cursor:"pointer",fontWeight:700,whiteSpace:"nowrap",flexShrink:0}}>+ Crear</button>
-                  </div>
-                  {memberSearch.trim()&&available.length>0&&(
-                    <div style={{background:C.white,border:"1px solid "+C.border,borderRadius:8,marginTop:4,maxHeight:100,overflowY:"auto"}}>
-                      {available.slice(0,5).map(s=>(
-                        <div key={s.id} onClick={()=>addMember(s.id,fam.id)} style={{padding:"8px 10px",cursor:"pointer",fontSize:12,fontWeight:600,color:C.text,borderBottom:"1px solid "+C.border,display:"flex",alignItems:"center",gap:6}}>
-                          <div style={{width:20,height:20,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,fontWeight:700,color:C.white}}>{s.avatar}</div>
-                          {s.name}
-                        </div>
-                      ))}
+                  {addingMember&&(
+                    <div style={{display:"flex",gap:6,marginBottom:6}}>
+                      <input value={newMemberName} onChange={e=>setNewMemberName(e.target.value)} placeholder="Nombre del nuevo alumno" style={{...iS,fontSize:12,padding:"8px 10px",flex:1}} autoFocus/>
+                      <button onClick={()=>{if(createMember({familyId:fam.id})) setHasChanges(true);}} disabled={!newMemberName.trim()} style={{padding:"6px 12px",borderRadius:8,border:"none",background:newMemberName.trim()?"linear-gradient(135deg,#52C048,#65CE5A)":"#ccc",color:C.white,fontSize:10,cursor:newMemberName.trim()?"pointer":"not-allowed",fontWeight:700,whiteSpace:"nowrap",flexShrink:0}}>OK</button>
+                      <button onClick={()=>{setAddingMember(false);setNewMemberName("");}} style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:"#C62828",flexShrink:0}}>✕</button>
                     </div>
                   )}
+                  <StudentSearch students={students.filter(s=>!s.familyId)} selected={members} onAdd={s=>addMember(s.id,fam.id)}/>
                 </div>
               )}
             </div>
@@ -683,13 +759,13 @@ function FamilyManager({ families, setFamilies, students, onUpdateStudent, onAdd
         );
       })}
 
-      <button onClick={startCreate} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800,marginTop:8}}>+ Crear Nuevo Grupo Familiar</button>
+      {!hideCreateButton&&<button onClick={startCreate} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800,marginTop:8}}>+ Crear Nuevo Grupo Familiar</button>}
     </div>
   );
-}
+});
 
 
-function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, families, setFamilies, students, onUpdateStudent, coachProfile, setCoachProfile, initialTab }) {
+function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, families, setFamilies, students, onUpdateStudent, onAddStudent, coachProfile, setCoachProfile, initialTab }) {
   const [section,setSection]=useState(initialTab||"general");
   const [showNewCourt,setShowNewCourt]=useState(false);
   const [showNewPack,setShowNewPack]=useState(false);
@@ -901,7 +977,7 @@ function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, famil
         {section==="families"&&(
           <>
             <div style={{fontSize:13,color:C.mutedDark,marginBottom:16}}>Agrupá alumnos por familia para gestionar pagos y comunicación con el responsable.</div>
-            <FamilyManager families={families} setFamilies={setFamilies} students={students} onUpdateStudent={onUpdateStudent} onAddStudent={(s)=>onUpdateStudent(s)}/>
+            <FamilyManager families={families} setFamilies={setFamilies} students={students} onUpdateStudent={onUpdateStudent} onAddStudent={onAddStudent}/>
           </>
         )}
 
@@ -1055,7 +1131,7 @@ function DayPicker({ value, onChange }) {
   );
 }
 
-function StudentSearch({ students, selected, onAdd }) {
+function StudentSearch({ students, selected, onAdd, noResultsSlot }) {
   const [query,setQuery]=useState("");
   const selectedIds=selected.map(x=>x.id);
   const results=query.trim().length>0?students.filter(s=>s.name.toLowerCase().includes(query.toLowerCase())&&!selectedIds.includes(s.id)):[];
@@ -1067,7 +1143,7 @@ function StudentSearch({ students, selected, onAdd }) {
       </div>
       {query.trim().length>0&&(
         <div style={{position:"absolute",top:"100%",left:0,right:0,background:C.white,borderRadius:12,border:"1.5px solid "+C.border,zIndex:50,overflow:"hidden",marginTop:4}}>
-          {results.length===0?<div style={{padding:"12px 14px",fontSize:13,color:C.mutedDark}}>No se encontraron alumnos</div>
+          {results.length===0?(noResultsSlot?noResultsSlot(query):<div style={{padding:"12px 14px",fontSize:13,color:C.mutedDark}}>No se encontraron alumnos</div>)
           :results.map(s=>(
             <div key={s.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderBottom:"1px solid "+C.border,cursor:"pointer"}} onClick={()=>{onAdd(s);setQuery("");}}>
               <div style={{width:34,height:34,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:C.white,flexShrink:0}}>{s.avatar}</div>
@@ -1631,6 +1707,9 @@ function Students({ students, onAdd, onUpdate, onAddStudentDirect, onDelete, onC
   const [expandAll,setExpandAll]=useState(false);
   const [expandedIds,setExpandedIds]=useState(new Set());
   const [showFamilyModal,setShowFamilyModal]=useState(false);
+  const [collapsedFamilies,setCollapsedFamilies]=useState(new Set());
+  const familyManagerRef=useRef(null);
+  const [confirmDeleteStudent,setConfirmDeleteStudent]=useState(false);
 
   // Load invite status and detect active students (have messages)
   useEffect(()=>{
@@ -1650,8 +1729,26 @@ function Students({ students, onAdd, onUpdate, onAddStudentDirect, onDelete, onC
       setInvites(map);
     });
   },[userId,students]);
-  let list=f==="all"?students:students.filter(s=>s.status===f);
-  if(search.trim()) list=list.filter(s=>s.name.toLowerCase().includes(search.toLowerCase()));
+  const searchLower=search.trim().toLowerCase();
+  const familyMatchesSearch=fam=>!searchLower||(fam.name||"").toLowerCase().includes(searchLower)||(fam.responsible?.name||"").toLowerCase().includes(searchLower);
+  const studentMatchesSearch=s=>!searchLower||s.name.toLowerCase().includes(searchLower);
+
+  const usedIds=new Set();
+  const allFamilyGroups=[];
+  (families||[]).forEach(fam=>{
+    const allMembers=students.filter(s=>s.familyId===fam.id);
+    if(allMembers.length===0) return;
+    allMembers.forEach(m=>usedIds.add(m.id));
+    const famMatches=familyMatchesSearch(fam);
+    const members=famMatches?allMembers:allMembers.filter(studentMatchesSearch);
+    if(searchLower&&!famMatches&&members.length===0) return;
+    allFamilyGroups.push({family:fam,members});
+  });
+  const ungroupedAll=students.filter(s=>!usedIds.has(s.id)&&studentMatchesSearch(s));
+
+  const familyGroups=f==="students"?[]:allFamilyGroups;
+  const ungrouped=f==="families"?[]:ungroupedAll;
+  const list=[...familyGroups.flatMap(g=>g.members),...ungrouped];
   return (
     <div style={{flex:1,display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden"}}>
       <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"16px 16px 16px",flexShrink:0}}>
@@ -1659,7 +1756,6 @@ function Students({ students, onAdd, onUpdate, onAddStudentDirect, onDelete, onC
           <div style={{fontSize:18,fontWeight:800,color:C.white}}>Mis Alumnos</div>
           <div style={{display:"flex",gap:8}}>
             <button onClick={()=>setShowFamilyModal(true)} style={{padding:"8px 12px",borderRadius:20,border:"none",background:"rgba(255,255,255,0.2)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>👨‍👩‍👧 Crear Familias</button>
-            <button onClick={onInvite} style={{padding:"8px 12px",borderRadius:20,border:"none",background:"rgba(255,255,255,0.2)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>📲 Invitar</button>
             <button onClick={onAdd} style={{padding:"8px 16px",borderRadius:20,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700}}>+ Nuevo</button>
           </div>
         </div>
@@ -1667,11 +1763,11 @@ function Students({ students, onAdd, onUpdate, onAddStudentDirect, onDelete, onC
           <div style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",pointerEvents:"none"}}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           </div>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar alumno..." style={{width:"100%",padding:"10px 36px 10px 36px",borderRadius:12,border:"none",fontSize:14,boxSizing:"border-box",background:"rgba(255,255,255,0.18)",color:C.white,outline:"none"}}/>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar alumno, familia o representante..." style={{width:"100%",padding:"10px 36px 10px 36px",borderRadius:12,border:"none",fontSize:14,boxSizing:"border-box",background:"rgba(255,255,255,0.18)",color:C.white,outline:"none"}}/>
           {search&&<button onClick={()=>setSearch("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,0.7)",fontSize:18,lineHeight:1}}>×</button>}
         </div>
         <div style={{display:"flex",gap:8}}>
-          {[["all","Todos"],["active","Activos"],["inactive","Inactivos"]].map(([k,l])=>(
+          {[["all","Todos"],["families","Familias"],["students","Solo alumnos"]].map(([k,l])=>(
             <button key={k} onClick={()=>setF(k)} style={{padding:"6px 14px",borderRadius:20,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:f===k?C.white:C.whiteA,color:f===k?C.blue2:C.white}}>{l}</button>
           ))}
         </div>
@@ -1685,14 +1781,7 @@ function Students({ students, onAdd, onUpdate, onAddStudentDirect, onDelete, onC
           </button>
         </div>
         {(()=>{
-          // Group students: families first, then ungrouped
-          const familyGroups=[];
-          const usedIds=new Set();
-          (families||[]).forEach(fam=>{
-            const members=list.filter(s=>s.familyId===fam.id);
-            if(members.length>0){familyGroups.push({family:fam,members});members.forEach(m=>usedIds.add(m.id));}
-          });
-          const ungrouped=list.filter(s=>!usedIds.has(s.id));
+          // Render: family cards first, then ungrouped students (grouping/filtering already computed above)
           const allItems=[];
           familyGroups.forEach(g=>{
             allItems.push({type:"familyHeader",family:g.family,members:g.members});
@@ -1702,38 +1791,44 @@ function Students({ students, onAdd, onUpdate, onAddStudentDirect, onDelete, onC
           return allItems.map((item,idx)=>{
             if(item.type==="familyHeader"){
               const fam=item.family;const members=item.members;
+              const isCollapsed=collapsedFamilies.has(fam.id);
               return (
-                <WhiteCard key={"fh-"+fam.id} onClick={()=>setShowFamilyModal(true)} style={{marginBottom:10,marginTop:idx>0?8:0,background:"linear-gradient(135deg,#E8EDF8,#DDE3F0)",cursor:"pointer",border:"1px solid #C5D0E6"}}>
+                <WhiteCard key={"fh-"+fam.id} onClick={()=>setShowFamilyModal(true)} style={{marginBottom:isCollapsed?10:6,marginTop:idx>0?8:0,background:"linear-gradient(135deg,#E8EDF8,#DDE3F0)",cursor:"pointer",border:"1px solid #C5D0E6"}}>
                   <div style={{display:"flex",alignItems:"center",gap:12}}>
                     <div style={{width:44,height:44,borderRadius:"50%",background:"linear-gradient(135deg,#1565C0,#42A5F5)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
                     </div>
                     <div style={{flex:1,textAlign:"left"}}>
                       <div style={{fontWeight:800,fontSize:14,color:"#0D1B4B"}}>{fam.name}</div>
+                      {fam.responsible?.name&&<div style={{fontSize:12,color:C.mutedDark,marginBottom:2}}>Representante: {fam.responsible.name}</div>}
                       <div style={{fontSize:12,color:C.mutedDark,marginBottom:2}}>{members.length} miembro{members.length!==1?"s":""} ({members.map((m,i)=>i===members.length-1&&i>0?" y "+m.name:m.name).join(", ")})</div>
                       <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:7,height:7,borderRadius:"50%",background:C.green}}></div><span style={{fontSize:11,color:C.green,fontWeight:600}}>Activo</span></div>
                     </div>
+                    <button onClick={(e)=>{e.stopPropagation();setCollapsedFamilies(p=>{const n=new Set(p);if(n.has(fam.id))n.delete(fam.id);else n.add(fam.id);return n;});}} style={{background:"rgba(255,255,255,0.55)",border:"none",cursor:"pointer",padding:8,borderRadius:8,flexShrink:0,display:"flex"}}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1565C0" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">{isCollapsed?<polyline points="6 9 12 15 18 9"/>:<polyline points="18 15 12 9 6 15"/>}</svg>
+                    </button>
                   </div>
                 </WhiteCard>
               );
             }
             const s=item.student;const fam=item.family;
+            if(fam&&collapsedFamilies.has(fam.id)) return null;
             const combo=getCombo(s); const rem=getRem(s,classes);
             const isExpanded=expandAll?!expandedIds.has(s.id):expandedIds.has(s.id);
             const toggleExpand=()=>setExpandedIds(p=>{const n=new Set(p);if(n.has(s.id))n.delete(s.id);else n.add(s.id);return n;});
-          return (
-            <WhiteCard key={s.id} style={{marginBottom:10}}>
+          const studentCard=(
+            <WhiteCard style={{marginBottom:fam?0:10}}>
               <div style={{display:"flex",alignItems:"center",gap:12}}>
                 {s.photo?<img src={s.photo} style={{width:44,height:44,borderRadius:"50%",objectFit:"cover",flexShrink:0}}/>:<div style={{width:44,height:44,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white,flexShrink:0}}>{s.avatar}</div>}
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{display:"flex",alignItems:"center",gap:6}}>
                     <span style={{fontWeight:700,fontSize:14,color:C.text}}>{s.name}</span>
-                    <button onClick={()=>setEditS({...s})} style={{background:"none",border:"none",cursor:"pointer",padding:2}}>
+                    <button onClick={()=>{setEditS({...s});setConfirmDeleteStudent(false);}} style={{background:"none",border:"none",cursor:"pointer",padding:2}}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                     </button>
                   </div>
                   <div style={{fontSize:12,color:C.mutedDark,marginBottom:4,textAlign:"left"}}>{"Alta: "+(()=>{const d=s.createdAt||getCombo(s)?.date;return d?fmtDate(d):"—";})()}</div>
-                  {fam&&<div style={{fontSize:10,color:"#1565C0",fontWeight:600,marginBottom:3,display:"flex",alignItems:"center",gap:4}}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#1565C0" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>{fam.name}</div>}
+                  {fam&&<div style={{fontSize:10,color:"#1565C0",fontWeight:600,marginBottom:3,display:"flex",alignItems:"center",gap:4}}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#1565C0" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>{fam.name}{fam.responsible?.studentId===s.id?" (Responsable)":""}</div>}
                   <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:7,height:7,borderRadius:"50%",background:s.status==="active"?C.green:"#BDBDBD"}}></div><span style={{fontSize:11,color:s.status==="active"?C.green:"#BDBDBD",fontWeight:600}}>{s.status==="active"?"Activo":"Inactivo"}</span></div>
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -1820,12 +1915,17 @@ function Students({ students, onAdd, onUpdate, onAddStudentDirect, onDelete, onC
               })()}
             </WhiteCard>
           );
+          return (
+            <div key={s.id} style={fam?{marginLeft:14,paddingLeft:12,marginBottom:10,borderLeft:"2px solid #C5D0E6"}:undefined}>
+              {studentCard}
+            </div>
+          );
         });
         })()}
       </div>
       <button onClick={onAdd} style={{position:"fixed",bottom:72,right:20,width:56,height:56,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:28,cursor:"pointer",zIndex:50,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
       {editS&&(
-        <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:99,display:"flex",flexDirection:"column",background:C.bg}}>
+        <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:200,display:"flex",flexDirection:"column",background:C.bg}}>
           <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
             <button onClick={()=>setEditS(null)} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
             <span style={{flex:1,fontWeight:800,fontSize:16,color:C.white}}>Editar Alumno</span>
@@ -1856,17 +1956,32 @@ function Students({ students, onAdd, onUpdate, onAddStudentDirect, onDelete, onC
               </div>
             </div>
             <button onClick={()=>{if(!editS.name.trim())return;onUpdate(editS);setEditS(null);}} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:10}}>Guardar cambios</button>
-            <button onClick={()=>{if(window.confirm("¿Eliminar a "+editS.name+"? Esta acción no se puede deshacer.")){onDelete(editS.id);setEditS(null);}}} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"#FFF0F0",color:"#D32F2F",fontSize:15,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:20}}>🗑 Eliminar alumno</button>
+            {confirmDeleteStudent?(
+              <div style={{padding:12,borderRadius:14,background:"#FFEBEE",border:"1px solid #FFCDD2",marginBottom:20}}>
+                <div style={{fontSize:13,color:"#C62828",fontWeight:600,marginBottom:10,textAlign:"center"}}>¿Eliminar a {editS.name}? Esta acción no se puede deshacer.</div>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>setConfirmDeleteStudent(false)} style={{flex:1,padding:"12px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:13,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
+                  <button onClick={()=>{onDelete(editS.id);setEditS(null);setConfirmDeleteStudent(false);}} style={{flex:1,padding:"12px",borderRadius:12,border:"none",background:"#C62828",color:C.white,cursor:"pointer",fontSize:13,fontWeight:800}}>Eliminar</button>
+                </div>
+              </div>
+            ):(
+              <button onClick={()=>setConfirmDeleteStudent(true)} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"#FFF0F0",color:"#D32F2F",fontSize:15,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:20}}>🗑 Eliminar alumno</button>
+            )}
           </div>
         </div>
       )}
       {showFamilyModal&&(
         <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"flex-end"}}>
-          <div style={{background:"#F5F7FF",borderRadius:"24px 24px 0 0",padding:"28px 20px",paddingBottom:"calc(40px + env(safe-area-inset-bottom, 34px))",width:"100%",maxHeight:"85vh",overflowY:"auto",boxSizing:"border-box"}}>
-            <div style={{width:40,height:4,borderRadius:2,background:"#DDE3F0",margin:"0 auto 20px"}}></div>
-            <div style={{fontWeight:900,fontSize:19,color:"#0D1B4B",marginBottom:16}}>👨‍👩‍👧 Grupos Familiares</div>
-            <FamilyManager families={families} setFamilies={setFamilies} students={students} onUpdateStudent={onUpdate} onAddStudent={onAddStudentDirect}/>
-            <button onClick={()=>setShowFamilyModal(false)} style={{width:"100%",padding:"14px",borderRadius:14,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:14,color:C.mutedDark,fontWeight:700,marginTop:12}}>Cerrar</button>
+          <div style={{background:"#F5F7FF",borderRadius:"24px 24px 0 0",width:"100%",maxHeight:"85vh",display:"flex",flexDirection:"column",boxSizing:"border-box"}}>
+            <div style={{padding:"28px 20px 20px",overflowY:"auto",flex:1,minHeight:0,boxSizing:"border-box"}}>
+              <div style={{width:40,height:4,borderRadius:2,background:"#DDE3F0",margin:"0 auto 20px"}}></div>
+              <div style={{fontWeight:900,fontSize:19,color:"#0D1B4B",marginBottom:16}}>👨‍👩‍👧 Grupos Familiares</div>
+              <FamilyManager ref={familyManagerRef} hideCreateButton families={families} setFamilies={setFamilies} students={students} onUpdateStudent={onUpdate} onAddStudent={onAddStudentDirect}/>
+            </div>
+            <div style={{display:"flex",gap:8,padding:"12px 20px",paddingBottom:"calc(14px + env(safe-area-inset-bottom, 34px))",borderTop:"1px solid "+C.border,background:"#F5F7FF",flexShrink:0}}>
+              <button onClick={()=>familyManagerRef.current?.openCreate()} style={{flex:1,padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:800}}>+ Crear Familia</button>
+              <button onClick={()=>setShowFamilyModal(false)} style={{flex:1,padding:"12px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:12,color:C.mutedDark,fontWeight:700}}>Cerrar</button>
+            </div>
           </div>
         </div>
       )}
@@ -1986,6 +2101,7 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
   const [query,setQuery]=useState("");
   const [showCreateStudent,setShowCreateStudent]=useState(false);
   const [allStudents,setAllStudents]=useState(initialStudents);
+  const [confirmDeleteClass,setConfirmDeleteClass]=useState(false);
   // Per-student package/amount editing
   const [studentPacks,setStudentPacks]=useState(()=>{
     const init={};
@@ -2031,7 +2147,7 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
   };
 
   return (
-    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:99,display:"flex",flexDirection:"column",background:C.bg}}>
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:200,display:"flex",flexDirection:"column",background:C.bg}}>
       <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
         <button onClick={onClose} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
         <span style={{flex:1,fontWeight:800,fontSize:16,color:C.white}}>Modificar Clase</span>
@@ -2150,7 +2266,17 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
           changedPacks.forEach(sid=>{if(studentPacks[sid])filteredPacks[sid]=studentPacks[sid];});
           onSave({...cls,title,court,days,time:t1,timeEnd:t2,students:clsSt,studentPacks:Object.keys(filteredPacks).length>0?filteredPacks:undefined,occurrences:newOccurrences});
         }} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:10}}>Actualizar Clase</button>
-        <button onClick={()=>{if(window.confirm("¿Eliminar esta clase? Todas las instancias serán eliminadas del calendario.")) {onDelete&&onDelete(cls.id);onClose();}}} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"#FFF0F0",color:"#D32F2F",fontSize:15,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:20}}>🗑 Eliminar Clase</button>
+        {confirmDeleteClass?(
+          <div style={{padding:12,borderRadius:14,background:"#FFEBEE",border:"1px solid #FFCDD2",marginBottom:20}}>
+            <div style={{fontSize:13,color:"#C62828",fontWeight:600,marginBottom:10,textAlign:"center"}}>¿Eliminar esta clase? Todas las instancias serán eliminadas del calendario.</div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>setConfirmDeleteClass(false)} style={{flex:1,padding:"12px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:13,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
+              <button onClick={()=>{onDelete&&onDelete(cls.id);onClose();}} style={{flex:1,padding:"12px",borderRadius:12,border:"none",background:"#C62828",color:C.white,cursor:"pointer",fontSize:13,fontWeight:800}}>Eliminar</button>
+            </div>
+          </div>
+        ):(
+          <button onClick={()=>setConfirmDeleteClass(true)} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"#FFF0F0",color:"#D32F2F",fontSize:15,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:20}}>🗑 Eliminar Clase</button>
+        )}
       </div>
       {showCreateStudent&&<NewStudentModal onClose={()=>setShowCreateStudent(false)} onSave={handleCreateStudent}/>}
     </div>
@@ -4867,9 +4993,10 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
   );
 }
 
-function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance }) {
+function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance, families=[] }) {
   const [search,setSearch]=useState("");
   const [filter,setFilter]=useState("none");
+  const [collapsedFamilies,setCollapsedFamilies]=useState(new Set());
   const allList=students.filter(s=>classes.some(c=>c.students&&c.students.includes(s.id)));
   const uniqueClasses=[...new Set(classes.map(c=>c.title))].sort();
   let list=[...allList];
@@ -4903,6 +5030,15 @@ function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], send
     const diffDays=Math.floor((today-nextDue)/(1000*60*60*24))+1;
     return !isPaid||diffDays>0;
   });
+  // Group the already-filtered/sorted list by family (visual grouping only; payment logic untouched)
+  const usedFamilyIds=new Set();
+  const familyGroups=[];
+  (families||[]).forEach(fam=>{
+    const members=list.filter(s=>s.familyId===fam.id).sort((a,b)=>(a.id===fam.responsible?.studentId?0:1)-(b.id===fam.responsible?.studentId?0:1));
+    if(members.length>0){familyGroups.push({family:fam,members});members.forEach(m=>usedFamilyIds.add(m.id));}
+  });
+  const ungroupedList=list.filter(s=>!usedFamilyIds.has(s.id));
+
   // Summary stats
   const activeStudents=allList.filter(s=>s.status==="active").length;
   const enMora=allList.filter(s=>{if(s.suspended)return false;const r=getRem(s,classes);return r!==null&&r<0;});
@@ -4963,12 +5099,39 @@ function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], send
           </button>
         </div>
       )}
-      {list.map(s=><PaymentCard key={s.id} student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance}/>)}
+      {familyGroups.map(g=>{
+        const isCollapsed=collapsedFamilies.has(g.family.id);
+        return (
+          <div key={"fh-"+g.family.id}>
+            <WhiteCard style={{marginBottom:isCollapsed?10:6,background:"linear-gradient(135deg,#E8EDF8,#DDE3F0)",border:"1px solid #C5D0E6"}}>
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                <div style={{width:44,height:44,borderRadius:"50%",background:"linear-gradient(135deg,#1565C0,#42A5F5)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+                </div>
+                <div style={{flex:1,textAlign:"left"}}>
+                  <div style={{fontWeight:800,fontSize:14,color:"#0D1B4B"}}>{g.family.name}</div>
+                  {g.family.responsible?.name&&<div style={{fontSize:12,color:C.mutedDark,marginBottom:2}}>Representante: {g.family.responsible.name}</div>}
+                  <div style={{fontSize:12,color:C.mutedDark,marginBottom:2}}>{g.members.length} miembro{g.members.length!==1?"s":""} ({g.members.map((m,i)=>i===g.members.length-1&&i>0?" y "+m.name:m.name).join(", ")})</div>
+                </div>
+                <button onClick={()=>setCollapsedFamilies(p=>{const n=new Set(p);if(n.has(g.family.id))n.delete(g.family.id);else n.add(g.family.id);return n;})} style={{background:"rgba(255,255,255,0.55)",border:"none",cursor:"pointer",padding:8,borderRadius:8,flexShrink:0,display:"flex"}}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1565C0" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">{isCollapsed?<polyline points="6 9 12 15 18 9"/>:<polyline points="18 15 12 9 6 15"/>}</svg>
+                </button>
+              </div>
+            </WhiteCard>
+            {!isCollapsed&&g.members.map(s=>(
+              <div key={s.id} style={{marginLeft:14,paddingLeft:12,borderLeft:"2px solid #C5D0E6",marginBottom:10}}>
+                <PaymentCard student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance}/>
+              </div>
+            ))}
+          </div>
+        );
+      })}
+      {ungroupedList.map(s=><PaymentCard key={s.id} student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance}/>)}
     </div>
   );
 }
 
-function Finances({ students, classes, initialTab="payments", onUpdate, expenses=[], setExpenses, addIncome, packages=[], sendNotification, onAttendance }) {
+function Finances({ students, classes, initialTab="payments", onUpdate, expenses=[], setExpenses, addIncome, packages=[], sendNotification, onAttendance, families=[] }) {
   const [tab,setTab]=useState(initialTab);
   const [selMonth,setSelMonth]=useState((()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");})());
   const [finView,setFinView]=useState("mensual");
@@ -5036,7 +5199,7 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
         </div>
       </div>
       <div style={{padding:"16px",marginTop:-8}}>
-        {tab==="payments"&&<PaymentsTab students={students} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance}/>}
+        {tab==="payments"&&<PaymentsTab students={students} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} families={families}/>}
         {tab==="expenses"&&(
           <div>
             {/* Stats badges */}
@@ -5347,9 +5510,13 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
   );
 }
 
-function StudentApp({ student: initialStudent, onExit, classes=[], notifications=[], sendNotification, coachId }) {
+function StudentApp({ student: initialStudent, onExit, classes=[], notifications=[], sendNotification, coachId, students=[], families=[] }) {
   const [tab,setTab]=useState("home");
   const [student,setStudent]=useState(initialStudent);
+  // Family account view: only visible if this student is the family's payment representative.
+  // student.familyId remains the sole membership source; nothing here writes payment data.
+  const myFamily=(families||[]).find(f=>f.responsible?.studentId===student.id);
+  const familyMembers=myFamily?(students||[]).filter(s=>s.familyId===myFamily.id&&s.id!==student.id):[];
   const [msg,setMsg]=useState("");
   const [msgs,setMsgs]=useState([]);
   const [alerts,setAlerts]=useState([]);
@@ -5412,6 +5579,102 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
 
   // Student's classes schedule
   const myClasses=classes.filter(c=>c.students&&c.students.includes(student.id));
+
+  // Shared "Estado de Cuenta" computation — same logic used for the own account and for family members (read-only, no shared state)
+  const computeAccountStats=(memberStudent,memberClasses)=>{
+    const allDates=(memberStudent.combos||[]).filter(c=>c.total>0&&c.packType!=="mensual").flatMap(c=>{
+      const seen=new Set();
+      return (c.dates||[]).filter(d=>{if(seen.has(d))return false;seen.add(d);return true;}).map((d,i)=>{
+        const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
+        const clsChk=memberClasses.find(cl=>cl.date===d);
+        const isPausedChk=!!(clsChk&&(clsChk.paused||clsChk.cancelType==="paused"));
+        const isCancelledClass=!!(clsChk&&clsChk.cancelled&&clsChk.cancelType==="cancelled");
+        const npBefore=(c.dates||[]).slice(0,i).filter(dd=>{const cl3=memberClasses.find(cl=>cl.date===dd);return !(cl3&&(cl3.paused||cl3.cancelType==="paused"))&&!(cl3&&cl3.cancelled&&cl3.cancelType==="cancelled");}).length;
+        const isPaid=(isPausedChk||isCancelledClass)?false:npBefore<paidCount;
+        const isPast=d<=TODAY_DATE;
+        const attEntry=memberClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===d);
+        const isGiven=attEntry?(attEntry.present||[]).includes(memberStudent.id)||(attEntry.ausente_dada||[]).includes(memberStudent.id):isPast;
+        return {date:d,isPaid,isGiven,isPast};
+      });
+    });
+    const seen2=new Set();
+    const deduped=allDates.filter(d=>{if(seen2.has(d.date))return false;seen2.add(d.date);return true;});
+    return {
+      noPagada:deduped.filter(d=>!d.isPaid).length,
+      pagada:deduped.filter(d=>d.isPaid).length,
+      programada:deduped.filter(d=>!d.isGiven&&d.date>TODAY_DATE).length,
+      realizada:deduped.filter(d=>d.isGiven||d.date<=TODAY_DATE).length,
+    };
+  };
+
+  // Shared "Mis Clases" card rendering — same logic used for the own classes and for family members' classes
+  const renderClassCards=(person,personClasses)=>{
+    return [...new Map(personClasses.map(c=>[c.title,c])).values()].map(cls=>{
+      const allDates=(person.combos||[]).filter(c=>c.total>0&&c.packType!=="mensual").flatMap(c=>{
+        const seen=new Set();
+        return (c.dates||[]).filter(d=>{if(seen.has(d))return false;seen.add(d);return true;}).map((d,i)=>{
+          const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
+          const clsChk=personClasses.find(cl=>cl.date===d);
+          const isPausedChk=!!(clsChk&&(clsChk.paused||clsChk.cancelType==="paused"));
+          const isCancelledClass=!!(clsChk&&clsChk.cancelled&&clsChk.cancelType==="cancelled");
+          const npBefore=(c.dates||[]).slice(0,i).filter(dd=>{const cl3=personClasses.find(cl=>cl.date===dd);return !(cl3&&(cl3.paused||cl3.cancelType==="paused"))&&!(cl3&&cl3.cancelled&&cl3.cancelType==="cancelled");}).length;
+          const isPaid=(isPausedChk||isCancelledClass)?false:npBefore<paidCount;
+          const isPast=d<=TODAY_DATE;
+          const clsForDate=personClasses.find(cl=>cl.date===d);
+          const isPaused=!!(clsForDate&&(clsForDate.paused||clsForDate.cancelType==="paused"));
+          const isReprogWithDate=!!(clsForDate&&clsForDate.cancelled&&clsForDate.cancelType==="cancelled_reprog"&&clsForDate.rescheduledTo);
+          const isReprogNoDate=!!(clsForDate&&clsForDate.cancelled&&clsForDate.cancelType==="cancelled_reprog"&&!clsForDate.rescheduledTo);
+          const attEntry=(cls.attendanceLog||[]).find(e=>e.date===d);
+          const isGiven=isPaused?false:isCancelledClass?true:isReprogWithDate?true:isReprogNoDate?false:attEntry?(attEntry.present||[]).includes(person.id)||(attEntry.ausente_dada||[]).includes(person.id):isPast;
+          return {date:d,isPaid:isPaused?false:isPaid,isGiven,isPast,isPaused,isCancelledClass,isReprogWithDate,isReprogNoDate,rescheduledTo:clsForDate&&clsForDate.rescheduledTo||null};
+        });
+      }).sort((a,b)=>a.date.localeCompare(b.date));
+      const seen2=new Set();
+      const deduped=allDates.filter(d=>{if(seen2.has(d.date))return false;seen2.add(d.date);return true;});
+      return (
+        <WhiteCard key={cls.id} style={{marginBottom:12}}>
+          <div style={{fontWeight:800,fontSize:15,color:C.text,marginBottom:6}}>{cls.title}</div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+            {(cls.days||[]).map(d=><span key={d} style={{fontSize:11,padding:"3px 10px",borderRadius:20,background:C.blueL,color:C.blue2,fontWeight:600}}>{d}</span>)}
+            <span style={{fontSize:12,color:C.mutedDark}}>🕐 {cls.time}{cls.timeEnd?" – "+cls.timeEnd:""}</span>
+            <span style={{fontSize:12,color:C.mutedDark}}>📍 {cls.court}</span>
+          </div>
+          {deduped.length===0?<div style={{fontSize:12,color:C.mutedDark}}>Sin clases asignadas</div>:(
+            <div>
+              {deduped.map((item,i)=>{
+                let leftBg,leftColor,leftLabel;
+                if(item.isPaused){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="Pausada";}
+                else if(item.isCancelledClass){leftBg="#FFF0F0";leftColor="#C62828";leftLabel="Cancelada";}
+                else if(item.isReprogWithDate){leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="Reprogramada";}
+                else if(item.isReprogNoDate){leftBg="#E3F2FD";leftColor="#1565C0";leftLabel="A Reprogramar";}
+                else if(item.isGiven){leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="Realizada";}
+                else{leftBg=C.blueL;leftColor=C.blue2;leftLabel="Programada";}
+                let rightBg,rightColor,rightLabel;
+                if(item.isPaused){rightBg="#FFF3E0";rightColor="#E65100";rightLabel="Pausada";}
+                else if(item.isPaid){rightBg="#E8F5E9";rightColor="#2E7D32";rightLabel="Pagada";}
+                else{rightBg="#FFEBEE";rightColor="#C62828";rightLabel="Pendiente";}
+                const cBg=item.isPaused?"#FFF3E0":item.isCancelledClass?"#FFF0F0":item.isReprogWithDate?"#E8F5E9":item.isReprogNoDate?"#E3F2FD":C.blueL;
+                const cCol=item.isPaused?"#E65100":item.isCancelledClass?"#C62828":item.isReprogWithDate?"#2E7D32":item.isReprogNoDate?"#1565C0":C.blue2;
+                return (
+                  <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid "+C.border}}>
+                    <div style={{width:26,height:26,borderRadius:"50%",background:cBg,border:"2px solid "+cCol,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                      <span style={{fontSize:10,fontWeight:800,color:cCol}}>{i+1}</span>
+                    </div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:600,color:C.text}}>{fmtDate(item.date)}</div>
+                      {item.isReprogWithDate&&item.rescheduledTo&&<div style={{fontSize:10,color:"#2E7D32",marginTop:1}}>{"-> "+fmtDate(item.rescheduledTo)}</div>}
+                    </div>
+                    <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:leftBg,color:leftColor,fontWeight:700}}>{leftLabel}</span>
+                    <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700}}>{rightLabel}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </WhiteCard>
+      );
+    });
+  };
 
   const tabs=[
     {id:"home",label:"Inicio",icon:(col)=><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={col} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z"/><path d="M9 21V12h6v9"/></svg>},
@@ -5500,32 +5763,12 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
 
             {/* Estado de Cuenta */}
             {(()=>{
-              const allDates=(student.combos||[]).filter(c=>c.total>0&&c.packType!=="mensual").flatMap(c=>{
-                const seen=new Set();
-                return (c.dates||[]).filter(d=>{if(seen.has(d))return false;seen.add(d);return true;}).map((d,i)=>{
-                  const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
-                  const clsChk=myClasses.find(cl=>cl.date===d);
-                  const isPausedChk=!!(clsChk&&(clsChk.paused||clsChk.cancelType==="paused"));
-                  const isCancelledClass=!!(clsChk&&clsChk.cancelled&&clsChk.cancelType==="cancelled");
-                  const npBefore=(c.dates||[]).slice(0,i).filter(dd=>{const cl3=myClasses.find(cl=>cl.date===dd);return !(cl3&&(cl3.paused||cl3.cancelType==="paused"))&&!(cl3&&cl3.cancelled&&cl3.cancelType==="cancelled");}).length;
-                  const isPaid=(isPausedChk||isCancelledClass)?false:npBefore<paidCount;
-                  const isPast=d<=TODAY_DATE;
-                  const attEntry=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===d);
-                  const isGiven=attEntry?(attEntry.present||[]).includes(student.id)||(attEntry.ausente_dada||[]).includes(student.id):isPast;
-                  return {date:d,isPaid,isGiven,isPast};
-                });
-              });
-              const seen2=new Set();
-              const deduped=allDates.filter(d=>{if(seen2.has(d.date))return false;seen2.add(d.date);return true;});
-              const noPagada=deduped.filter(d=>!d.isPaid).length;
-              const pagada=deduped.filter(d=>d.isPaid).length;
-              const programada=deduped.filter(d=>!d.isGiven&&d.date>TODAY_DATE).length;
-              const realizada=deduped.filter(d=>d.isGiven||d.date<=TODAY_DATE).length;
+              const stats=computeAccountStats(student,myClasses);
               const boxes=[
-                {label:"Pendiente",val:noPagada,bg:"#FFEBEE",color:"#C62828"},
-                {label:"Pagada",val:pagada,bg:C.greenL,color:"#2E7D32"},
-                {label:"Programada",val:programada,bg:C.blueL,color:C.blue2},
-                {label:"Realizada",val:realizada,bg:"#F5F5F5",color:"#616161"},
+                {label:"Pendiente",val:stats.noPagada,bg:"#FFEBEE",color:"#C62828"},
+                {label:"Pagada",val:stats.pagada,bg:C.greenL,color:"#2E7D32"},
+                {label:"Programada",val:stats.programada,bg:C.blueL,color:C.blue2},
+                {label:"Realizada",val:stats.realizada,bg:"#F5F5F5",color:"#616161"},
               ];
               return (
                 <div style={{margin:"8px 12px 0"}}>
@@ -5541,6 +5784,52 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                 </div>
               );
             })()}
+
+            {/* Mi Familia — visible solo si sos el responsable de pago de la familia. Solo lectura: cada alumno mantiene su cuenta separada. */}
+            {familyMembers.length>0&&(
+              <div style={{margin:"8px 12px 0"}}>
+                <div style={{fontSize:11,fontWeight:700,color:C.mutedDark,letterSpacing:1,marginBottom:8,textAlign:"center"}}>MI FAMILIA</div>
+                <div style={{background:C.white,borderRadius:20,padding:"4px 16px",boxShadow:"0 2px 12px rgba(44,94,247,0.08)"}}>
+                  {familyMembers.map((m,i)=>{
+                    const mClassesList=classes.filter(c=>c.students&&c.students.includes(m.id));
+                    const mDays=mClassesList.length>0?mClassesList[0].days:[];
+                    const mTime=mClassesList.length>0?mClassesList[0].time:"";
+                    const mCourt=mClassesList.length>0?mClassesList[0].court:"";
+                    const mStats=computeAccountStats(m,mClassesList);
+                    const mBoxes=[
+                      {label:"Pendiente",val:mStats.noPagada,bg:"#FFEBEE",color:"#C62828"},
+                      {label:"Pagada",val:mStats.pagada,bg:C.greenL,color:"#2E7D32"},
+                      {label:"Programada",val:mStats.programada,bg:C.blueL,color:C.blue2},
+                      {label:"Realizada",val:mStats.realizada,bg:"#F5F5F5",color:"#616161"},
+                    ];
+                    return (
+                      <div key={m.id} style={{padding:"12px 0",borderBottom:i<familyMembers.length-1?"1px solid "+C.border:"none"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:10}}>
+                          {m.photo?<img src={m.photo} style={{width:40,height:40,borderRadius:"50%",objectFit:"cover",flexShrink:0}}/>:<div style={{width:40,height:40,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white,flexShrink:0}}>{m.avatar}</div>}
+                          <div style={{flex:1,textAlign:"left"}}>
+                            <div style={{fontSize:13,fontWeight:700,color:C.text}}>{m.name}{m.id===student.id?" (vos)":""}</div>
+                            {(mDays.length>0||mTime)&&(
+                              <div style={{display:"flex",alignItems:"center",gap:6,marginTop:3,flexWrap:"wrap"}}>
+                                {mDays.map(d=><span key={d} style={{fontSize:10,padding:"2px 6px",borderRadius:20,background:C.blueL,color:C.blue2,fontWeight:600}}>{d}</span>)}
+                                {mTime&&<span style={{fontSize:11,color:C.mutedDark}}>{mTime}{mCourt?" · "+mCourt:""}</span>}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginTop:8}}>
+                          {mBoxes.map(b=>(
+                            <div key={b.label} style={{background:b.bg,borderRadius:10,padding:"8px 4px",textAlign:"center"}}>
+                              <div style={{fontSize:16,fontWeight:900,color:b.color,lineHeight:1}}>{b.val}</div>
+                              <div style={{fontSize:8,fontWeight:700,color:b.color,marginTop:2}}>{b.label}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             <div style={{padding:"10px 12px 0"}}>
               {/* Chat button */}
@@ -5575,72 +5864,17 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
         {/* CLASES */}
         {tab==="clases"&&(
           <div style={{flex:1,overflowY:"auto",padding:16,paddingBottom:"calc(120px + env(safe-area-inset-bottom, 34px))"}}>
-            <div style={{fontSize:16,fontWeight:800,color:C.text,marginBottom:16}}>Mis Clases</div>
+            <div style={{fontSize:16,fontWeight:800,color:C.text,marginBottom:16}}>Tus Clases</div>
             {myClasses.length===0&&<div style={{textAlign:"center",padding:"32px 0",color:C.mutedDark}}>No tenés clases asignadas aún</div>}
-            {[...new Map(myClasses.map(c=>[c.title,c])).values()].map(cls=>{
-              const allDates=(student.combos||[]).filter(c=>c.total>0&&c.packType!=="mensual").flatMap(c=>{
-                const seen=new Set();
-                return (c.dates||[]).filter(d=>{if(seen.has(d))return false;seen.add(d);return true;}).map((d,i)=>{
-                  const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
-                  const clsChk=myClasses.find(cl=>cl.date===d);
-                  const isPausedChk=!!(clsChk&&(clsChk.paused||clsChk.cancelType==="paused"));
-                  const isCancelledClass=!!(clsChk&&clsChk.cancelled&&clsChk.cancelType==="cancelled");
-                  const npBefore=(c.dates||[]).slice(0,i).filter(dd=>{const cl3=myClasses.find(cl=>cl.date===dd);return !(cl3&&(cl3.paused||cl3.cancelType==="paused"))&&!(cl3&&cl3.cancelled&&cl3.cancelType==="cancelled");}).length;
-                  const isPaid=(isPausedChk||isCancelledClass)?false:npBefore<paidCount;
-                  const isPast=d<=TODAY_DATE;
-                  const clsForDate=myClasses.find(cl=>cl.date===d);
-                  const isPaused=!!(clsForDate&&(clsForDate.paused||clsForDate.cancelType==="paused"));
-                  const isReprogWithDate=!!(clsForDate&&clsForDate.cancelled&&clsForDate.cancelType==="cancelled_reprog"&&clsForDate.rescheduledTo);
-                  const isReprogNoDate=!!(clsForDate&&clsForDate.cancelled&&clsForDate.cancelType==="cancelled_reprog"&&!clsForDate.rescheduledTo);
-                  const attEntry=(cls.attendanceLog||[]).find(e=>e.date===d);
-                  const isGiven=isPaused?false:isCancelledClass?true:isReprogWithDate?true:isReprogNoDate?false:attEntry?(attEntry.present||[]).includes(student.id)||(attEntry.ausente_dada||[]).includes(student.id):isPast;
-                  return {date:d,isPaid:isPaused?false:isPaid,isGiven,isPast,isPaused,isCancelledClass,isReprogWithDate,isReprogNoDate,rescheduledTo:clsForDate&&clsForDate.rescheduledTo||null};
-                });
-              }).sort((a,b)=>a.date.localeCompare(b.date));
-              // No dynamic extension - ResumeModal handles replacement dates
-              const seen2=new Set();
-              const deduped=allDates.filter(d=>{if(seen2.has(d.date))return false;seen2.add(d.date);return true;});
+            {renderClassCards(student,myClasses)}
+            {/* Clases de la familia — solo los hijos relacionados (student.familyId), cada uno con sus propias clases */}
+            {familyMembers.length>0&&familyMembers.map(m=>{
+              const mClasses=classes.filter(c=>c.students&&c.students.includes(m.id));
               return (
-                <WhiteCard key={cls.id} style={{marginBottom:12}}>
-                  <div style={{fontWeight:800,fontSize:15,color:C.text,marginBottom:6}}>{cls.title}</div>
-                  <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
-                    {(cls.days||[]).map(d=><span key={d} style={{fontSize:11,padding:"3px 10px",borderRadius:20,background:C.blueL,color:C.blue2,fontWeight:600}}>{d}</span>)}
-                    <span style={{fontSize:12,color:C.mutedDark}}>🕐 {cls.time}{cls.timeEnd?" – "+cls.timeEnd:""}</span>
-                    <span style={{fontSize:12,color:C.mutedDark}}>📍 {cls.court}</span>
-                  </div>
-                  {deduped.length===0?<div style={{fontSize:12,color:C.mutedDark}}>Sin clases asignadas</div>:(
-                    <div>
-                      {deduped.map((item,i)=>{
-                        let leftBg,leftColor,leftLabel;
-                        if(item.isPaused){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="Pausada";}
-                        else if(item.isCancelledClass){leftBg="#FFF0F0";leftColor="#C62828";leftLabel="Cancelada";}
-                        else if(item.isReprogWithDate){leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="Reprogramada";}
-                        else if(item.isReprogNoDate){leftBg="#E3F2FD";leftColor="#1565C0";leftLabel="A Reprogramar";}
-                        else if(item.isGiven){leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="Realizada";}
-                        else{leftBg=C.blueL;leftColor=C.blue2;leftLabel="Programada";}
-                        let rightBg,rightColor,rightLabel;
-                        if(item.isPaused){rightBg="#FFF3E0";rightColor="#E65100";rightLabel="Pausada";}
-                        else if(item.isPaid){rightBg="#E8F5E9";rightColor="#2E7D32";rightLabel="Pagada";}
-                        else{rightBg="#FFEBEE";rightColor="#C62828";rightLabel="Pendiente";}
-                        const cBg=item.isPaused?"#FFF3E0":item.isCancelledClass?"#FFF0F0":item.isReprogWithDate?"#E8F5E9":item.isReprogNoDate?"#E3F2FD":C.blueL;
-                        const cCol=item.isPaused?"#E65100":item.isCancelledClass?"#C62828":item.isReprogWithDate?"#2E7D32":item.isReprogNoDate?"#1565C0":C.blue2;
-                        return (
-                          <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid "+C.border}}>
-                            <div style={{width:26,height:26,borderRadius:"50%",background:cBg,border:"2px solid "+cCol,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                              <span style={{fontSize:10,fontWeight:800,color:cCol}}>{i+1}</span>
-                            </div>
-                            <div style={{flex:1,minWidth:0}}>
-                              <div style={{fontSize:13,fontWeight:600,color:C.text}}>{fmtDate(item.date)}</div>
-                              {item.isReprogWithDate&&item.rescheduledTo&&<div style={{fontSize:10,color:"#2E7D32",marginTop:1}}>{"-> "+fmtDate(item.rescheduledTo)}</div>}
-                            </div>
-                            <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:leftBg,color:leftColor,fontWeight:700}}>{leftLabel}</span>
-                            <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700}}>{rightLabel}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </WhiteCard>
+                <div key={m.id} style={{marginTop:20}}>
+                  <div style={{fontSize:11,fontWeight:700,color:C.mutedDark,letterSpacing:1,marginBottom:10}}>CLASES DE {m.name.toUpperCase()}</div>
+                  {mClasses.length===0?<div style={{fontSize:12,color:C.mutedDark,marginBottom:12}}>Sin clases asignadas</div>:renderClassCards(m,mClasses)}
+                </div>
               );
             })}
           </div>
@@ -6937,9 +7171,10 @@ export default function App() {
             try{
               const cd2=await loadAllFromSupabase(sa.coach_id);
               if(Object.keys(cd2).length>0){
-                const s=cd2.students||[];const cl=cd2.classes||[];
+                const s=cd2.students||[];const cl=cd2.classes||[];const f=cd2.families||[];
                 if(s.length>0){setStudentsRaw(s);lsSet("izi_students",s);}
                 if(cl.length>0){setClassesRaw(cl);lsSet("izi_classes",cl);}
+                if(f.length>0){setFamiliesRaw(f);lsSet("izi_families",f);}
               }
             }catch(e){}
             setModeP("student_portal");
@@ -6955,9 +7190,10 @@ export default function App() {
         try{
           const cd3=await loadAllFromSupabase(inviteInfo.coach_id);
           if(Object.keys(cd3).length>0){
-            const s=cd3.students||[];const cl=cd3.classes||[];
+            const s=cd3.students||[];const cl=cd3.classes||[];const f=cd3.families||[];
             if(s.length>0){setStudentsRaw(s);lsSet("izi_students",s);}
             if(cl.length>0){setClassesRaw(cl);lsSet("izi_classes",cl);}
+            if(f.length>0){setFamiliesRaw(f);lsSet("izi_families",f);}
           }
         }catch(e){console.error(e);}
         setModeP("student_portal");
@@ -6977,7 +7213,7 @@ export default function App() {
                       {id:0,name:user?.email||"Alumno",avatar:"A",sport:"",combos:[]};
     return (
       <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden"}}>
-        <StudentApp student={studentData||{id:0,name:"Alumno",avatar:"A",sport:"",combos:[]}} onExit={async()=>{await supabase.auth.signOut();setUserWithRef(null);setMode(null);localStorage.clear();}} classes={xClasses} notifications={notifications} sendNotification={sendNotification} coachId={(()=>{try{const v=localStorage.getItem("izi_student_coach_id");return v?JSON.parse(v):null;}catch{return localStorage.getItem("izi_student_coach_id");}})()}/>
+        <StudentApp student={studentData||{id:0,name:"Alumno",avatar:"A",sport:"",combos:[]}} onExit={async()=>{await supabase.auth.signOut();setUserWithRef(null);setMode(null);localStorage.clear();}} classes={xClasses} notifications={notifications} sendNotification={sendNotification} coachId={(()=>{try{const v=localStorage.getItem("izi_student_coach_id");return v?JSON.parse(v):null;}catch{return localStorage.getItem("izi_student_coach_id");}})()} students={students} families={families}/>
       </div>
     );
   }
@@ -7010,11 +7246,11 @@ export default function App() {
         {inviteTarget&&<InviteModal student={inviteTarget} userId={user?.id} onClose={()=>setInviteTarget(null)}/>}
         {tab==="agenda"&&<Agenda students={students} classes={xClasses} rawClasses={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])} onRefresh={handleRefresh}/>}
         {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification} userId={user?.id} unreadChats={unreadChats} onMarkRead={(sid)=>setUnreadChats(p=>{const n={...p};delete n[String(sid)];return n;})}/>}
-        {tab==="cobros"&&<Finances students={students} classes={xClasses} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance}/>}
+        {tab==="cobros"&&<Finances students={students} classes={xClasses} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance} families={families}/>}
         {tab==="finanzas"&&<Finances students={students} classes={xClasses} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages}/>}
         {showNewClass&&<NewClassModal onClose={()=>{setShowNewClass(false);if(classes.length===0)setTab("agenda");}} onSave={handleSaveClass} existingClasses={xClasses} students={students} dateLabel="Nueva clase" onCreateStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])}/>}
         {showNewStudent&&<NewStudentModal onClose={()=>setShowNewStudent(false)} onSave={(d)=>setStudents(p=>[...p,{id:Date.now(),...d}])}/>}
-        {showConfig&&<ConfigScreen onClose={()=>{setShowConfig(false);setConfigInitialTab(null);}} courts={courts} setCourts={setCourts} packages={packages} setPackages={setPackages} families={families} setFamilies={setFamilies} students={students} onUpdateStudent={updateStudent} coachProfile={coachProfile} setCoachProfile={setCoachProfile} initialTab={configInitialTab}/>}
+        {showConfig&&<ConfigScreen onClose={()=>{setShowConfig(false);setConfigInitialTab(null);}} courts={courts} setCourts={setCourts} packages={packages} setPackages={setPackages} families={families} setFamilies={setFamilies} students={students} onUpdateStudent={updateStudent} onAddStudent={(s)=>setStudents(p=>[...p,s])} coachProfile={coachProfile} setCoachProfile={setCoachProfile} initialTab={configInitialTab}/>}
         {showInvite&&(
           <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
             <div style={{background:C.white,borderRadius:"24px 24px 0 0",width:"100%",maxHeight:"90%",overflowY:"auto",boxSizing:"border-box",padding:"28px 20px 36px"}}>
