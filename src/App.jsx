@@ -3518,7 +3518,10 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
       .then(({data})=>{setMsgs(data||[]);setLoading(false);});
     const channel=supabase.channel("chat_"+userId+"_"+studentId)
       .on("postgres_changes",{event:"INSERT",schema:"public",table:"messages",filter:`coach_id=eq.${userId}`},(payload)=>{
-        if(payload.new.student_id===studentId) setMsgs(p=>[...p,payload.new]);
+        if(payload.new.student_id===studentId){
+          setMsgs(p=>[...p,payload.new]);
+          setLastMsgTime(p=>({...p,[studentId]:payload.new.created_at}));
+        }
       }).subscribe();
     return ()=>supabase.removeChannel(channel);
   },[active,userId]);
@@ -3527,6 +3530,7 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
     if(!msg.trim()||!active||!userId) return;
     const text=msg;setMsg("");
     await supabase.from("messages").insert({coach_id:userId,student_id:active.id,text,from_coach:true,read:false,is_alert:isAlert});
+    setLastMsgTime(p=>({...p,[active.id]:new Date().toISOString()}));
     if(isAlert&&sendNotification) sendNotification(text,"alert");
     setIsAlert(false);
   };
@@ -5520,6 +5524,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
   const [msg,setMsg]=useState("");
   const [msgs,setMsgs]=useState([]);
   const [alerts,setAlerts]=useState([]);
+  const [unreadChatCount,setUnreadChatCount]=useState(0);
   const [oldPass,setOldPass]=useState(""); const [newPass,setNewPass]=useState(""); const [newPass2,setNewPass2]=useState("");
   const combo=getCombo(student); const rem=getRem(student);
 
@@ -5539,16 +5544,26 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
       .then(({data})=>{
         setMsgs(data||[]);
         setAlerts((data||[]).filter(m=>m.is_alert&&m.from_coach&&!dismissed.includes(m.id)).slice(-3).reverse());
+        setUnreadChatCount((data||[]).filter(m=>m.from_coach&&!m.read).length);
       });
     const channel=supabase.channel("student_chat_"+coachId+"_"+student.id)
       .on("postgres_changes",{event:"INSERT",schema:"public",table:"messages",filter:`coach_id=eq.${coachId}`},(payload)=>{
         if(payload.new.student_id===student.id){
           setMsgs(p=>[...p,payload.new]);
           if(payload.new.is_alert&&payload.new.from_coach) setAlerts(p=>[payload.new,...p].slice(0,3));
+          if(payload.new.from_coach&&!payload.new.read) setUnreadChatCount(p=>p+1);
         }
       }).subscribe();
     return ()=>supabase.removeChannel(channel);
   },[coachId,student?.id]);
+
+  // Mark coach messages as read when the student opens the Chat tab
+  useEffect(()=>{
+    if(tab!=="chat"||!coachId||!student?.id) return;
+    setUnreadChatCount(0);
+    supabase.from("messages").update({read:true}).eq("coach_id",coachId).eq("student_id",student.id).eq("from_coach",true).eq("read",false)
+      .then(({error})=>{if(error)console.error("mark read error:",error);});
+  },[tab,coachId,student?.id]);
   const saveProfile=async()=>{
     try{
       const cId=coachId||(localStorage.getItem("izi_student_coach_id")?.replace(/"/g,""));
@@ -5993,7 +6008,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
           return (
             <button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,background:"none",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"8px 0 6px",position:"relative"}}>
               {isActive&&<div style={{position:"absolute",top:0,left:"50%",transform:"translateX(-50%)",width:28,height:3,borderRadius:"0 0 4px 4px",background:C.blue2}}></div>}
-              {t.id==="chat"&&unreadAlerts>0&&<div style={{position:"absolute",top:6,right:"20%",width:8,height:8,borderRadius:"50%",background:"#FF4757",border:"1.5px solid #fff"}}></div>}
+              {t.id==="chat"&&(unreadAlerts>0||unreadChatCount>0)&&<div style={{position:"absolute",top:6,right:"20%",width:8,height:8,borderRadius:"50%",background:"#FF4757",border:"1.5px solid #fff"}}></div>}
               <div style={{width:38,height:38,borderRadius:12,background:isActive?"linear-gradient(135deg,"+C.blueL+",#D0E4FF)":"transparent",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.15s"}}>
                 {t.icon(col)}
               </div>
