@@ -4121,7 +4121,8 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
 
   return (
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
-      <div style={{background:"#FFFFFF",borderRadius:"24px 24px 0 0",width:"100%",maxHeight:"94%",overflowY:"auto",boxSizing:"border-box"}}>
+      <div style={{background:"#FFFFFF",borderRadius:"24px 24px 0 0",width:"100%",maxHeight:"94%",display:"flex",flexDirection:"column",overflow:"hidden",boxSizing:"border-box"}}>
+      <div style={{flex:1,overflowY:"auto",minHeight:0,boxSizing:"border-box"}}>
         <div style={{padding:"20px 20px 16px"}}>
           <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:16,paddingBottom:14,borderBottom:"1px solid "+C.border}}>
             {s.photo
@@ -4130,7 +4131,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             }
             <div style={{flex:1,textAlign:"left",minWidth:0}}>
               <div style={{fontWeight:900,fontSize:22,color:"#1A237E",lineHeight:1.1,textAlign:"left"}}>{s.name}</div>
-              <div style={{fontSize:12,color:"#5C7A9F",marginTop:3,textAlign:"left"}}>Actualizar Pagos</div>
+              <div style={{fontSize:12,color:"#5C7A9F",marginTop:3,textAlign:"left"}}>Detalles de Pagos</div>
             </div>
           </div>
 
@@ -4369,9 +4370,9 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             })}
           </div>
           );})()}
+        </div>
 
-
-        <div style={{padding:"0 20px 32px",display:"flex",gap:10}}>
+        <div style={{flexShrink:0,padding:"12px 20px calc(20px + env(safe-area-inset-bottom,0px))",display:"flex",gap:10,background:"#FFFFFF"}}>
           <button onClick={onClose} style={{flex:1,padding:"14px",borderRadius:14,border:"1.5px solid rgba(21,101,192,0.12)",background:"#FFFFFF",cursor:"pointer",fontSize:14,color:"#5C7A9F",fontWeight:700}}>Cancelar</button>
           <button onClick={handleConfirm} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:(parseInt(localClasses)>0&&parseInt(localAmount)>0)||(pagoTipo==="mensual"&&parseInt(localAmount)>0)?"linear-gradient(135deg,#52C048,#65CE5A)":"#CBD5E0",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:800}}>✓ Confirmar pago</button>
         </div>
@@ -4512,7 +4513,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             return <span style={{fontSize:12,padding:"6px 14px",borderRadius:20,background:"#F5F5F5",color:C.text,fontWeight:400}}>GRUPOS: <strong>{groupNames.join(", ")}</strong></span>;
           })()}
         </div>
-        {/* ESTADO DE CUENTAS */}
+        {/* ESTADO DE CLASES */}
         {combo&&rem!==null&&(()=>{
           // MENSUAL: show different UI
           if(combo.packType==="mensual"&&combo.cobroDia){
@@ -4557,7 +4558,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
           ].filter(Boolean);
           return (
             <div style={{marginBottom:12}}>
-              <div style={{fontSize:11,fontWeight:800,color:C.blue2,letterSpacing:1,marginBottom:8}}>ESTADO DE CUENTAS</div>
+              <div style={{fontSize:11,fontWeight:800,color:C.blue2,letterSpacing:1,marginBottom:8}}>ESTADO DE CLASES</div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:extraCols.length>0?8:0}}>
                 {cols.map((col,i)=>(
                   <div key={i} style={{background:col.bg,borderRadius:12,padding:"10px 4px",textAlign:"center"}}>
@@ -4591,7 +4592,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
           const overdue=!isPaid||diffDays>0;
           return (
             <div style={{marginBottom:12}}>
-              <div style={{fontSize:11,fontWeight:800,color:C.blue2,letterSpacing:1,marginBottom:8}}>ESTADO DE CUENTAS</div>
+              <div style={{fontSize:11,fontWeight:800,color:C.blue2,letterSpacing:1,marginBottom:8}}>ESTADO DE CLASES</div>
               <div style={{background:overdue?"#FFEBEE":"#EDFBEC",borderRadius:12,padding:"12px 16px",textAlign:"center"}}>
                 {overdue?<><div style={{fontSize:36,fontWeight:900,color:"#C62828",lineHeight:1}}>{diffDays}</div><div style={{fontSize:12,fontWeight:700,color:"#C62828",marginTop:2}}>días vencido</div></>
                 :<><div style={{fontSize:16,fontWeight:900,color:"#43A047"}}>Pago al Día ✓</div></>}
@@ -4658,7 +4659,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
               Asignar paquete
             </button>
           ):(
-            <button onClick={()=>setShowPago(true)} style={{padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:"#fff",fontSize:14,cursor:"pointer",fontWeight:800}}>Actualizar Pagos</button>
+            <button onClick={()=>setShowPago(true)} style={{padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:"#fff",fontSize:14,cursor:"pointer",fontWeight:800}}>Detalles de Pagos</button>
           )}
           <div style={{display:"flex",gap:8}}>
             <button onClick={()=>setShowRecordatorio(true)} style={{flex:1,padding:"10px",borderRadius:10,border:"1.5px solid #65CE5A",background:C.white,color:"#2E7D32",fontSize:12,cursor:"pointer",fontWeight:700}}>Enviar Recordatorio</button>
