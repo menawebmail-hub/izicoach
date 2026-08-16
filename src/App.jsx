@@ -4529,11 +4529,12 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
           const reprogramadas=allDatesForStudent.filter(d=>d.isReprogWithDate).length;
           const aReprogramar=allDatesForStudent.filter(d=>d.isReprogNoDate).length;
           const pausadas=allDatesForStudent.filter(d=>d.isPaused).length;
+          const totalEntitlement=activeCombosForCount.reduce((sum,c)=>sum+(c.total||0),0);
+          const restantes=Math.max(0,totalEntitlement-canceladas-realizadas);
           const cols=[
-            {n:noPagadas,label:"Pendiente",color:"#C62828",bg:"#FFEBEE"},
-            {n:pagadas,label:"Pagada",color:"#2E7D32",bg:"#EDFBEC"},
-            {n:programadas,label:"Programada",color:C.blue2,bg:C.blueL},
-            {n:realizadas,label:"Realizada",color:"#555",bg:"#F5F5F5"},
+            {n:noPagadas,label:"No pagadas",color:"#C62828",bg:"#FFEBEE"},
+            {n:pagadas,label:"Pagadas",color:"#2E7D32",bg:"#EDFBEC"},
+            {n:restantes,label:"Restantes",color:C.blue2,bg:C.blueL},
           ];
           const extraCols=[
             canceladas>0&&{n:canceladas,label:"Cancelada",color:"#C62828",bg:"#FFF0F0"},
@@ -4552,7 +4553,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
           return (
             <div style={{marginBottom:12}}>
               <div style={{fontSize:11,fontWeight:800,color:C.blue2,letterSpacing:1,marginBottom:8}}>ESTADO DE CUENTAS</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:extraCols.length>0?8:0}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:extraCols.length>0?8:0}}>
                 {cols.map((col,i)=>(
                   <div key={i} style={{background:col.bg,borderRadius:12,padding:"10px 4px",textAlign:"center"}}>
                     <div style={{fontSize:26,fontWeight:900,color:col.color,lineHeight:1}}>{col.n}</div>
