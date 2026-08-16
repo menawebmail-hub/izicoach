@@ -4483,6 +4483,12 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
   attLogs.sort((a,b)=>b.date.localeCompare(a.date));
   const byMonth={};
   attLogs.forEach(l=>{const k=l.month+" "+l.year;if(!byMonth[k])byMonth[k]=[];byMonth[k].push(l);});
+  const ATT_STATUS_LABEL={
+    presente:{text:"✓ Presente",short:"✓",color:"#2E7D32",bg:"#EDFBEC"},
+    ausente_dada:{text:"Ausente",short:"Ausente",color:"#E65100",bg:"#FFF3E0"},
+    pausada:{text:"Pausada",short:"Pausada",color:"#E65100",bg:"#FFF3E0"},
+    cancelada:{text:"Cancelada",short:"Cancelada",color:"#C62828",bg:"#FFF0F0"},
+  };
 
   return (
     <>
@@ -4943,9 +4949,10 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
                 ctx.fillText(d.getDate()+" "+mN[d.getMonth()]+" "+d.getFullYear(),30,y+26);
                 ctx.fillText(e.day||"",160,y+26);
                 ctx.fillText((e.className||"").slice(0,22),260,y+26);
-                ctx.fillStyle=e.status==="ausente_dada"?"#E65100":"#2E7D32";
+                const stPng=ATT_STATUS_LABEL[e.status]||ATT_STATUS_LABEL.presente;
+                ctx.fillStyle=stPng.color;
                 ctx.font="bold 11px Arial";
-                ctx.fillText(e.status==="ausente_dada"?"Ausente":"✓ Presente",440,y+26);
+                ctx.fillText(stPng.text,440,y+26);
                 ctx.strokeStyle="#EEF2FF"; ctx.lineWidth=1;
                 ctx.beginPath(); ctx.moveTo(0,y+rowH); ctx.lineTo(600,y+rowH); ctx.stroke();
               });
@@ -4988,7 +4995,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
                           </div>
                           <div style={{textAlign:"right"}}>
                             <div style={{fontSize:12,fontWeight:600,color:C.blue2}}>{e.time}</div>
-                            <span style={{fontSize:10,padding:"2px 6px",borderRadius:10,background:e.status==="ausente_dada"?"#FFF3E0":"#EDFBEC",color:e.status==="ausente_dada"?"#E65100":"#2E7D32",fontWeight:700}}>{e.status==="ausente_dada"?"Ausente":"✓"}</span>
+                            <span style={{fontSize:10,padding:"2px 6px",borderRadius:10,background:(ATT_STATUS_LABEL[e.status]||ATT_STATUS_LABEL.presente).bg,color:(ATT_STATUS_LABEL[e.status]||ATT_STATUS_LABEL.presente).color,fontWeight:700}}>{(ATT_STATUS_LABEL[e.status]||ATT_STATUS_LABEL.presente).short}</span>
                           </div>
                         </div>
                       </WhiteCard>
