@@ -68,3 +68,106 @@ No global list-level listener was added — a conversation that is neither activ
 Verified in browser (no reload): student message to the active conversation moves it up on return to list; coach-sent message to a non-active, zero-unread conversation moves it to the top of its tier; unread counts (e.g. existing "3" badge) unaffected; production build clean.
 
 ---
+
+## BUG-ACCOUNT-01 — `computeAccountStats` counts paused/cancelled dates as unpaid
+
+**Status:** Pending — fix on hold, see Notes  
+**Area:** Student Portal (`StudentApp`)  
+**Priority:** Medium
+
+### Description
+`computeAccountStats` (`App.jsx:5613-5637`), used for the student's own "Estado de Cuenta" and for each child in "Mi Familia", does not exclude `isPaused`/`isCancelled` dates when computing `noPagada`/`pagada`. `getAccountCounters` (the reference implementation used by PaymentCard/Cobros) does exclude them.
+
+### Expected behavior
+A paused or cancelled class date should not be counted as "Pendiente" (unpaid) in the Student Portal, matching how Cobros treats the same date.
+
+### Current behavior
+A paused class shows up as unpaid debt ("Pendiente") in the Student Portal, even though Cobros does not count that same date as unpaid or paid at all.
+
+### Notes
+Confirmed during the C1+C2 investigation (read-only, no code changed). Fix is on hold pending a product decision between two PaymentCard presentations (`No pagadas | Pagadas | Restantes` vs. adding `Realizadas`) — this bug must be fixed regardless of which option is chosen, since it affects the underlying calculation, not the box layout.
+
+Relevant code:
+- `App.jsx:5613-5637` (`computeAccountStats`)
+- Compare with `App.jsx:360-433` (`getAccountCounters`, the correct reference)
+
+---
+
+## BUG-ACCOUNT-02 — `computeAccountStats` marks non-given past classes as "Realizada"
+
+**Status:** Pending — fix on hold, see Notes  
+**Area:** Student Portal (`StudentApp`)  
+**Priority:** Medium-High
+
+### Description
+In `computeAccountStats` (`App.jsx:5613-5637`), the `realizada` count is computed as:
+```js
+realizada: deduped.filter(d=>d.isGiven||d.date<=TODAY_DATE).length
+```
+The `||d.date<=TODAY_DATE` clause counts a date as "Realizada" purely because it's in the past, even when `isGiven` was explicitly computed as `false` for that same date (e.g. a class marked "Ausente — No Dada" / `ausente_reprog`).
+
+### Expected behavior
+A past class explicitly marked as not given (needs reschedule) should not be counted as "Realizada" — should match `getAccountCounters`'s `realizadas`, which correctly excludes it.
+
+### Current behavior
+The student/family can see a class as "Realizada" that the coach has recorded as pending reschedule — the two portals can disagree about whether a specific class actually happened.
+
+### Notes
+Most consequential of the four findings — it's a genuine factual disagreement between what the coach recorded and what the student sees, not just a cosmetic difference. Fix on hold for the same reason as BUG-ACCOUNT-01 (pending product decision on box layout), but the calculation bug itself is independent of that decision.
+
+Relevant code:
+- `App.jsx:5613-5637` (`computeAccountStats`)
+
+---
+
+## BUG-ACCOUNT-03 — Mis Alumnos mini "ESTADO DE CUENTA" panel has the same paused/cancelled gap as BUG-ACCOUNT-01
+
+**Status:** Pending — fix on hold, see Notes  
+**Area:** Mis Alumnos (`Students` component, expanded student panel)  
+**Priority:** Medium
+
+### Description
+The 4-column mini summary in the expanded "VER PAGOS" panel (`App.jsx:1943-1989`) computes `isPaid`/`isGiven` from raw combo dates with no `isCancelled`/`isPaused` exclusion at all — same gap as BUG-ACCOUNT-01, in a separate independent calculation.
+
+### Expected behavior
+Paused/cancelled dates should not count toward "No Pag." / "Pagada" in this panel, consistent with Cobros.
+
+### Current behavior
+A paused or cancelled class inflates "No Pag." or "Pagada" in Mis Alumnos even though the same date is excluded from those buckets in PaymentCard/Cobros for the same student.
+
+### Notes
+Confirmed during the C1+C2 investigation. Also noted in passing: `statusLabel`/`statusColor` (`App.jsx:1941-1942`, values like "A cobrar"/"Al día"/"Programadas") are computed but never rendered anywhere — dead code, not a live inconsistency, left untouched per this task's scope (no fixes yet).
+
+Relevant code:
+- `App.jsx:1943-1989` (mini "ESTADO DE CUENTA" panel)
+- Compare with `App.jsx:360-433` (`getAccountCounters`)
+
+---
+
+## BUG-ACCOUNT-04 — Inconsistent "today" boundary across the three account calculations
+
+**Status:** Pending — fix on hold, see Notes  
+**Area:** Cobros / Mis Alumnos / Student Portal (cross-cutting)  
+**Priority:** Low
+
+### Description
+Three different comparisons decide whether a date counts as "past" or "future":
+- `getAccountCounters` (Cobros, reference): `isClassDone(date, timeEnd)` — time-of-day aware, with a 30-minute margin after class end.
+- `computeAccountStats` (Student Portal): `date<=TODAY_DATE` / `date>TODAY_DATE` — plain date comparison, no time of day.
+- Mis Alumnos mini panel: `date<TODAY_DATE` / `date>=TODAY_DATE` — plain date comparison, opposite inclusive/exclusive boundary from the Student Portal's.
+
+### Expected behavior
+The three surfaces should agree on whether "today's" class (before/after it happens) counts as past or future.
+
+### Current behavior
+For a class scheduled today, the three surfaces can disagree on whether it's already "done" depending on the time of day the coach/student/family checks, and Mis Alumnos vs. Student Portal use opposite boundary inclusivity even for date-only comparisons (ignoring time of day).
+
+### Notes
+Lowest priority of the four — only manifests same-day, and only shifts one date between adjacent buckets rather than misrepresenting payment/attendance facts. Documented for completeness per the C1+C2 investigation; fix on hold along with the other three, pending the product decision on final box layout.
+
+Relevant code:
+- `App.jsx:360-433` (`getAccountCounters`, uses `isClassDone`)
+- `App.jsx:5613-5637` (`computeAccountStats`)
+- `App.jsx:1943-1989` (Mis Alumnos mini panel)
+
+---
