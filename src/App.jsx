@@ -156,6 +156,30 @@ const isClassDone=(date,timeEnd)=>{
   return now>=endWithMargin;
 };
 
+// Attendance status for a student chip on an Agenda class card, for the occurrence c.date.
+// Paused/cancelled/reprogramming states always win — never assume Present for those.
+// Otherwise: explicit attendanceLog entry wins; past-with-no-record defaults to Presente (existing
+// business default used elsewhere, e.g. getAccountCounters); future/within-margin stays neutral (null).
+const getAttendanceChipStatus=(c,sid)=>{
+  const isPaused=c.paused||c.cancelType==="paused";
+  const isCancelled=c.cancelled&&c.cancelType==="cancelled";
+  const isReprog=c.cancelled&&c.cancelType==="cancelled_reprog";
+  if(isPaused||isCancelled||isReprog) return null;
+  const log=(c.attendanceLog||[]).find(e=>e.date===c.date);
+  if(log){
+    if((log.present||[]).includes(sid)) return "presente";
+    if((log.ausente_dada||[]).includes(sid)) return "ausente_dada";
+    if((log.ausente_reprog||[]).includes(sid)) return "ausente_reprog";
+    return null;
+  }
+  return isClassDone(c.date,c.timeEnd||"23:59")?"presente":null;
+};
+const ATT_CHIP_STYLE={
+  presente:{bg:"#E8F5E9",color:"#2E7D32",icon:"✓"},
+  ausente_reprog:{bg:"#E8EAF6",color:"#3949AB",icon:"↻"},
+  ausente_dada:{bg:"#FFEBEE",color:"#C62828",icon:"!"},
+};
+
 // Currency formatting
 const _cur={v:"₲"};
 const formatNum=(n,cur)=>{
@@ -3128,12 +3152,12 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                   </div>
                 </div>
                 <div style={{display:"flex",gap:4,marginTop:8,flexWrap:"wrap"}}>
-                  {(c.students||[]).map(sid=>{const st=students.find(s=>s.id===sid);return st?(
-                    <div key={sid} style={{display:"flex",alignItems:"center",gap:4,background:C.blueL,borderRadius:20,padding:"3px 8px 3px 4px"}}>
-                      <div style={{width:18,height:18,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,fontWeight:800,color:C.white}}>{st.avatar[0]}</div>
-                      <span style={{fontSize:11,color:C.blue2,fontWeight:600}}>{st.name.split(" ")[0]}</span>
+                  {(c.students||[]).map(sid=>{const st=students.find(s=>s.id===sid);if(!st)return null;const attSt=getAttendanceChipStatus(c,sid);const attStyle=attSt&&ATT_CHIP_STYLE[attSt];return (
+                    <div key={sid} style={{display:"flex",alignItems:"center",gap:4,background:attStyle?attStyle.bg:C.blueL,borderRadius:20,padding:"3px 8px 3px 4px"}}>
+                      <div style={{width:18,height:18,borderRadius:"50%",background:attStyle?attStyle.color:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,fontWeight:800,color:C.white}}>{st.avatar[0]}</div>
+                      <span style={{fontSize:11,color:attStyle?attStyle.color:C.blue2,fontWeight:600}}>{st.name.split(" ")[0]}{attStyle?" "+attStyle.icon:""}</span>
                     </div>
-                  ):null;})}
+                  );})}
                 </div>
               </div>
             );})}
@@ -3161,12 +3185,12 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                     </div>
                   </div>
                   <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:18}}>
-                    {(c.students||[]).map(sid=>{const st=students.find(s=>s.id===sid);return st?(
-                      <div key={sid} style={{display:"flex",alignItems:"center",gap:5,background:C.blueL,borderRadius:20,padding:"4px 10px 4px 4px"}}>
-                        <div style={{width:22,height:22,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:800,color:C.white}}>{st.avatar[0]}</div>
-                        <span style={{fontSize:12,color:C.blue2,fontWeight:700}}>{st.name.split(" ")[0]}</span>
+                    {(c.students||[]).map(sid=>{const st=students.find(s=>s.id===sid);if(!st)return null;const attSt=getAttendanceChipStatus(c,sid);const attStyle=attSt&&ATT_CHIP_STYLE[attSt];return (
+                      <div key={sid} style={{display:"flex",alignItems:"center",gap:5,background:attStyle?attStyle.bg:C.blueL,borderRadius:20,padding:"4px 10px 4px 4px"}}>
+                        <div style={{width:22,height:22,borderRadius:"50%",background:attStyle?attStyle.color:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:800,color:C.white}}>{st.avatar[0]}</div>
+                        <span style={{fontSize:12,color:attStyle?attStyle.color:C.blue2,fontWeight:700}}>{st.name.split(" ")[0]}{attStyle?" "+attStyle.icon:""}</span>
                       </div>
-                    ):null;})}
+                    );})}
                   </div>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                     {[
@@ -3321,12 +3345,12 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                         <div style={{fontSize:11,color:C.mutedDark,marginTop:1}}>{c.time+(c.timeEnd?" – "+c.timeEnd:"")} · {c.court}</div>
                         {(()=>{const log=(c.attendanceLog||[]).find(e=>e.date===c.date);if(!log)return null;const dC=(log.ausente_dada||[]).length;const nC=(log.ausente_reprog||[]).length;if(!dC&&!nC)return null;return(<div style={{display:"flex",gap:4,marginTop:4}}>{dC>0&&<span style={{fontSize:11,padding:"3px 8px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ Ausente-Dada</span>}{nC>0&&<span style={{fontSize:11,padding:"3px 8px",borderRadius:10,background:"#FFF8E1",color:"#F57F17",fontWeight:700}}>↩ A Reprogramar</span>}</div>);})()}
                         {heightPx>52&&<div style={{display:"flex",gap:3,marginTop:4,flexWrap:"wrap"}}>
-                          {(c.students||[]).map(sid=>{const st=students.find(s=>s.id===sid);return st?(
-                            <div key={sid} style={{display:"flex",alignItems:"center",gap:3,background:C.blueL,borderRadius:20,padding:"2px 6px 2px 3px"}}>
-                              <div style={{width:14,height:14,borderRadius:"50%",background:C.blue2,display:"flex",alignItems:"center",justifyContent:"center",fontSize:7,fontWeight:800,color:C.white}}>{st.avatar[0]}</div>
-                              <span style={{fontSize:10,color:C.blue2,fontWeight:600}}>{st.name.split(" ")[0]}</span>
+                          {(c.students||[]).map(sid=>{const st=students.find(s=>s.id===sid);if(!st)return null;const attSt=getAttendanceChipStatus(c,sid);const attStyle=attSt&&ATT_CHIP_STYLE[attSt];return (
+                            <div key={sid} style={{display:"flex",alignItems:"center",gap:3,background:attStyle?attStyle.bg:C.blueL,borderRadius:20,padding:"2px 6px 2px 3px"}}>
+                              <div style={{width:14,height:14,borderRadius:"50%",background:attStyle?attStyle.color:C.blue2,display:"flex",alignItems:"center",justifyContent:"center",fontSize:7,fontWeight:800,color:C.white}}>{st.avatar[0]}</div>
+                              <span style={{fontSize:10,color:attStyle?attStyle.color:C.blue2,fontWeight:600}}>{st.name.split(" ")[0]}{attStyle?" "+attStyle.icon:""}</span>
                             </div>
-                          ):null;})}
+                          );})}
                         </div>}
                       </div>
                     );
@@ -3356,12 +3380,12 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                       </div>
                       {/* Students */}
                       <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:18}}>
-                        {(c.students||[]).map(sid=>{const st=students.find(s=>s.id===sid);return st?(
-                          <div key={sid} style={{display:"flex",alignItems:"center",gap:5,background:C.blueL,borderRadius:20,padding:"4px 10px 4px 4px"}}>
-                            <div style={{width:22,height:22,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:800,color:C.white}}>{st.avatar[0]}</div>
-                            <span style={{fontSize:12,color:C.blue2,fontWeight:700}}>{st.name.split(" ")[0]}</span>
+                        {(c.students||[]).map(sid=>{const st=students.find(s=>s.id===sid);if(!st)return null;const attSt=getAttendanceChipStatus(c,sid);const attStyle=attSt&&ATT_CHIP_STYLE[attSt];return (
+                          <div key={sid} style={{display:"flex",alignItems:"center",gap:5,background:attStyle?attStyle.bg:C.blueL,borderRadius:20,padding:"4px 10px 4px 4px"}}>
+                            <div style={{width:22,height:22,borderRadius:"50%",background:attStyle?attStyle.color:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:800,color:C.white}}>{st.avatar[0]}</div>
+                            <span style={{fontSize:12,color:attStyle?attStyle.color:C.blue2,fontWeight:700}}>{st.name.split(" ")[0]}{attStyle?" "+attStyle.icon:""}</span>
                           </div>
-                        ):null;})}
+                        );})}
                       </div>
                       {/* Action buttons */}
                       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
