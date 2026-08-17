@@ -2229,7 +2229,7 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
         <button onClick={onClose} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
         <span style={{flex:1,fontWeight:800,fontSize:16,color:C.white}}>Modificar Clase</span>
       </div>
-      <div style={{flex:1,overflowY:"auto",padding:16,paddingBottom:"calc(120px + env(safe-area-inset-bottom, 34px))"}}>
+      <div style={{flex:1,overflowY:"auto",minHeight:0,padding:16}}>
         <div style={{marginBottom:14}}><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Título</label><input value={title} onChange={e=>setTitle(e.target.value)} style={iS}/></div>
         <div style={{marginBottom:14}}><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Local / Cancha</label><input value={court} onChange={e=>setCourt(e.target.value)} style={iS}/></div>
         <div style={{marginBottom:14}}><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:8}}>Días</label><DayPicker value={days} onChange={setDays}/></div>
@@ -2315,6 +2315,8 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
             </div>
           )}
         </div>
+      </div>
+      <div style={{flexShrink:0,padding:"12px 16px calc(16px + env(safe-area-inset-bottom,0px))",background:C.bg}}>
         <button onClick={()=>{
           // Regenerate occurrences if days changed OR if current occurrences are too few for the days selected
           let newOccurrences=cls.occurrences||[];
