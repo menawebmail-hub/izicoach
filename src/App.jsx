@@ -6825,58 +6825,72 @@ export default function App() {
     // Resolve to the real class id (support expanded virtual classes)
     const realId=cls._seriesId||cls.id;
     const allClassStudents=classes.find(c=>c.id===realId)?.students||cls.students;
+    // Merge the new entry once (replacing any prior entry for this date) — shared by the class log
+    // write and the idempotent 'used' recount below, so both reflect the same final attendance state.
+    const existingLogForClass=classes.find(c=>c.id===realId)?.attendanceLog||[];
+    const mergedLog=[...existingLogForClass.filter(e=>e.date!==classDate),
+      {date:classDate,day,present:presentIds,ausente_dada:ausenteDadaIds,ausente_reprog:ausenteReprogIds}];
     // Save attendance log with full status
-    setClasses(p=>p.map(c=>{
-      if(c.id!==realId) return c;
-      const log=[...(c.attendanceLog||[]).filter(e=>e.date!==classDate),
-        {date:classDate,day,present:presentIds,ausente_dada:ausenteDadaIds,ausente_reprog:ausenteReprogIds}];
-      return {...c,attendanceLog:log};
-    }));
-    // Only increment 'used' for present + ausente_dada (class was given)
-    const givenIds=[...presentIds,...ausenteDadaIds];
+    setClasses(p=>p.map(c=>c.id===realId?{...c,attendanceLog:mergedLog}:c));
     setStudents(p=>p.map(s=>{
       if(!allClassStudents.includes(s.id)) return s;
-      const wasGiven=givenIds.includes(s.id);
-      if(!wasGiven) return s;
       const combos=[...s.combos];
       if(combos.length===0) return s;
-      const lastIdx=combos.length-1;
-      const last=combos[lastIdx];
-      const newUsed=(last.used||0)+1;
-      combos[lastIdx]={...last,used:newUsed};
-      // Check if combo is now complete (all paid + all given)
-      const effectiveTotal=last.total||0;
-      const paidCount=last.paidCount!==undefined?last.paidCount:(last.paid?effectiveTotal:0);
-      const allGiven=newUsed>=paidCount&&paidCount>=effectiveTotal&&effectiveTotal>0;
-      if(allGiven&&last.dates&&last.dates.length>0){
-        // Generate next combo dates starting from day after last date
-        const myClsForStudent=classes.filter(c=>c.students&&c.students.includes(s.id));
-        const classDays=myClsForStudent.length>0?myClsForStudent[0].days:[];
-        const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
-        const dowSet=new Set(classDays.map(d=>DAY_MAP[d]));
-        const lastDate=last.dates[last.dates.length-1];
-        let cur=new Date(lastDate+"T12:00:00");
-        cur.setDate(cur.getDate()+1);
-        const nextDates=[];
-        while(nextDates.length<effectiveTotal){
-          if(dowSet.size===0||dowSet.has(cur.getDay())){
-            nextDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
-          }
+      // Target the combo that actually contains classDate (supports legacy single c.date).
+      // Search from the end so the most recent matching combo wins if more than one unexpectedly matches.
+      // Fall back to the last combo when none contains it, preserving prior behavior for that case.
+      let targetIdx=-1;
+      for(let i=combos.length-1;i>=0;i--){
+        const c=combos[i];
+        if((c.dates||[]).includes(classDate)||c.date===classDate){targetIdx=i;break;}
+      }
+      const lastIdx=targetIdx>=0?targetIdx:combos.length-1;
+      const target=combos[lastIdx];
+      // Recompute 'used' idempotently from the merged attendance log (present+ausente_dada = given),
+      // instead of incrementing blindly — re-saving or changing status for the same date no longer drifts.
+      const targetDates=target.dates||(target.date?[target.date]:[]);
+      const newUsed=targetDates.filter(d=>{
+        const entry=mergedLog.find(e=>e.date===d);
+        return entry&&((entry.present||[]).includes(s.id)||(entry.ausente_dada||[]).includes(s.id));
+      }).length;
+      combos[lastIdx]={...target,used:newUsed};
+      // Check if combo is now complete (all paid + all given) — only meaningful when we just updated
+      // the student's current/last combo; an edit to an older, already-superseded combo must not
+      // re-trigger auto-renewal.
+      if(lastIdx===combos.length-1){
+        const effectiveTotal=target.total||0;
+        const paidCount=target.paidCount!==undefined?target.paidCount:(target.paid?effectiveTotal:0);
+        const allGiven=newUsed>=paidCount&&paidCount>=effectiveTotal&&effectiveTotal>0;
+        if(allGiven&&target.dates&&target.dates.length>0){
+          // Generate next combo dates starting from day after last date
+          const myClsForStudent=classes.filter(c=>c.students&&c.students.includes(s.id));
+          const classDays=myClsForStudent.length>0?myClsForStudent[0].days:[];
+          const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+          const dowSet=new Set(classDays.map(d=>DAY_MAP[d]));
+          const lastDate=target.dates[target.dates.length-1];
+          let cur=new Date(lastDate+"T12:00:00");
           cur.setDate(cur.getDate()+1);
+          const nextDates=[];
+          while(nextDates.length<effectiveTotal){
+            if(dowSet.size===0||dowSet.has(cur.getDay())){
+              nextDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+            }
+            cur.setDate(cur.getDate()+1);
+          }
+          // Add new unpaid combo
+          combos.push({
+            id:combos.length+1,
+            total:effectiveTotal,
+            packType:target.packType||"combo",
+            used:0,
+            paid:false,
+            paidCount:0,
+            date:nextDates[0]||lastDate,
+            amount:target.amount,
+            dates:nextDates,
+            payments:[],
+          });
         }
-        // Add new unpaid combo
-        combos.push({
-          id:combos.length+1,
-          total:effectiveTotal,
-          packType:last.packType||"combo",
-          used:0,
-          paid:false,
-          paidCount:0,
-          date:nextDates[0]||lastDate,
-          amount:last.amount,
-          dates:nextDates,
-          payments:[],
-        });
       }
       return {...s,combos};
     }));
