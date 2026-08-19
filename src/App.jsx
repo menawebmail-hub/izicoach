@@ -3810,6 +3810,11 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
     // Include active combos - hide fully paid AND fully realized ones (those go to history)
     const activeCombos=allCombos.filter(c=>{
       if(c.total>0){
+        if(c.packType==="combo"){
+          // Stay visible here once closed — only excluded once the coach archives it
+          if(isComboClosed(c,myClasses)&&c.archived===true) return false;
+          return true;
+        }
         if(isComboClosed(c,myClasses)) return false;
         return true;
       }
@@ -4296,6 +4301,26 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
           {pagoTipo==="clases"&&(()=>{
           const hasNew=parseInt(localClasses)>0;
           const activeDates=allDates;
+          // Group dates by combo: current/active combo first, then completed (not archived)
+          // combos most-recent-first. Numbering resets per group; payment-priority math below
+          // still uses the flat activeDates index (idx), unrelated to the display number (localI).
+          const comboGroups=(()=>{
+            const byId=new Map();
+            activeDates.forEach((item,idx)=>{
+              const key=item.comboId;
+              if(!byId.has(key)) byId.set(key,[]);
+              byId.get(key).push({item,idx});
+            });
+            const orderIndex=new Map(allCombos.map((c,i)=>[c.id,i]));
+            const groups=[...byId.entries()].map(([comboId,entries])=>{
+              const comboObj=allCombos.find(c=>c.id===comboId);
+              const closed=comboObj?isComboClosed(comboObj,myClasses):false;
+              return {comboId,comboObj,entries,closed};
+            });
+            const current=groups.filter(g=>!g.closed);
+            const completed=groups.filter(g=>g.closed).sort((a,b)=>(orderIndex.get(b.comboId)??0)-(orderIndex.get(a.comboId)??0));
+            return [...current,...completed];
+          })();
           // Fallback when all combos are fully paid and realized
           if(activeDates.length===0&&!hasNew){
             const totalPaid=allCombos.reduce((sum,c)=>sum+(c.paidCount||0),0);
@@ -4321,7 +4346,12 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
           return (
           <div style={{padding:"0 20px 16px"}}>
             <div style={{fontSize:11,fontWeight:700,color:"#5C7A9F",letterSpacing:0.5,marginBottom:8}}>FECHAS DE CLASE</div>
-            {activeDates.map((item,i)=>{
+            {comboGroups.map((group,gi)=>(
+              <div key={group.comboId} style={{marginBottom:gi<comboGroups.length-1?16:0}}>
+                {comboGroups.length>1&&(
+                  <div style={{fontSize:11,fontWeight:700,color:group.closed?C.mutedDark:C.blue2,marginBottom:6}}>{group.closed?"Combo anterior":"Combo actual"}</div>
+                )}
+                {group.entries.map(({item,idx},localI)=>{
               const qty=parseInt(localClasses)||0;
               const isCancelled=item.isCancelled||false;
               const isReprogWithDate=item.isReprogWithDate||false;
@@ -4330,7 +4360,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               const wasAbsent=item.wasAbsent||false;
               const wasAusenteDada=item.wasAusenteDada||false;
               const wasAusenteReprog=item.wasAusenteReprog||false;
-              const unpaidBefore=activeDates.slice(0,i).filter(d=>
+              const unpaidBefore=activeDates.slice(0,idx).filter(d=>
                 (d.status==="pendiente"||d.status==="dada_unpaid")&&!d.isCancelled&&!d.isPaused
               ).length;
               const isUnpaid=item.status==="pendiente"||item.status==="dada_unpaid";
@@ -4352,9 +4382,9 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               const rightColor=isPausedItem?"#E65100":isPaid?"#2E7D32":"#C62828";
               const rightLabel=isPausedItem?"⏸ Pausada":isPaid?"✓ Pagada":"Pendiente";
               return (
-                <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid #E3F2FD"}}>
+                <div key={localI} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid #E3F2FD"}}>
                   <div style={{width:28,height:28,borderRadius:"50%",background:isPausedItem?"#FFF3E0":isCancelled?"#FFF0F0":isReprogWithDate?"#E8F5E9":isReprogNoDate?"#E3F2FD":C.blueL,border:"2px solid "+(isPausedItem?"#E65100":isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":"#1976D2"),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                    <span style={{fontSize:11,fontWeight:800,color:isPausedItem?"#E65100":isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":C.blue2}}>{i+1}</span>
+                    <span style={{fontSize:11,fontWeight:800,color:isPausedItem?"#E65100":isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":C.blue2}}>{localI+1}</span>
                   </div>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(item.date)}{item.packType==="individual"&&<span style={{fontSize:9,fontWeight:700,color:"#6B7BAD",background:"#E8EAF6",borderRadius:6,padding:"2px 6px",marginLeft:6}}>Individual</span>}</div>
@@ -4364,7 +4394,15 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
                   <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700,flexShrink:0}}>{rightLabel}</span>
                 </div>
               );
-            })}
+                })}
+                {group.closed&&group.comboObj?.packType==="combo"&&group.comboObj.archived!==true&&(
+                  <button onClick={()=>{
+                    const updatedCombos=s.combos.map(c=>c.id===group.comboId?{...c,archived:true}:c);
+                    onUpdate({...s,combos:updatedCombos});
+                  }} style={{width:"100%",marginTop:8,padding:"10px",borderRadius:10,border:"1px solid "+C.border,background:C.white,color:C.mutedDark,fontSize:12,fontWeight:700,cursor:"pointer"}}>Archivar combo completo</button>
+                )}
+              </div>
+            ))}
           </div>
           );})()}
         </div>
