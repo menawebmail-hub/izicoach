@@ -453,7 +453,7 @@ function getAccountCounters(s, classes=[]) {
   const pausadas=allDates.filter(d=>d.isPaused).length;
   const totalEntitlement=activeCombosForCount.reduce((sum,c)=>sum+(c.total||0),0);
   const restantes=Math.max(0,totalEntitlement-canceladas-realizadas);
-  return {noPagadas,pagadas,restantes,canceladas,reprogramadas,aReprogramar,pausadas,totalEntitlement};
+  return {noPagadas,pagadas,realizadas,restantes,canceladas,reprogramadas,aReprogramar,pausadas,totalEntitlement};
 }
 
 function IziLogoBlack({ height=34 }) {
@@ -4209,14 +4209,20 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             });
             // Restantes = current entitlement (not a projection based on qty being paid now)
             const {restantes}=getAccountCounters(s,classes);
-            const cols=[
+            const isCombo=combo?.packType==="combo";
+            const cols=isCombo?[
+              cols4.noPagada>0&&{n:cols4.noPagada,label:"No pagadas",color:"#C62828",bg:"#FFEBEE"},
+              {n:cols4.pagada,label:"Pagadas",color:"#2E7D32",bg:"#EDFBEC"},
+              {n:cols4.realizada,label:"Realizadas",color:"#616161",bg:"#F5F5F5"},
+              {n:restantes,label:"Restantes",color:C.blue2,bg:C.blueL},
+            ].filter(Boolean):[
               {n:cols4.noPagada,label:"No pagadas",color:"#C62828",bg:"#FFEBEE"},
               {n:cols4.pagada,label:"Pagadas",color:"#2E7D32",bg:"#EDFBEC"},
               {n:restantes,label:"Restantes",color:C.blue2,bg:C.blueL},
             ];
             return (
               <>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:cols4.pausada>0?8:16}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat("+cols.length+",1fr)",gap:6,marginBottom:cols4.pausada>0?8:16}}>
                   {cols.map((col,i)=>(
                     <div key={i} style={{background:col.bg,borderRadius:12,padding:"10px 4px",textAlign:"center"}}>
                       <div style={{fontSize:24,fontWeight:900,color:col.color,lineHeight:1}}>{col.n}</div>
@@ -4576,12 +4582,19 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             );
           }
           // CLASES: existing logic — per-date account counters via shared helper
-          const {noPagadas,pagadas,restantes,canceladas,reprogramadas,aReprogramar,pausadas}=getAccountCounters(s,classes);
-          const cols=[
+          const {noPagadas,pagadas,realizadas,restantes,canceladas,reprogramadas,aReprogramar,pausadas,totalEntitlement}=getAccountCounters(s,classes);
+          const isCombo=combo.packType==="combo";
+          const cols=isCombo?[
+            noPagadas>0&&{n:noPagadas,label:"No pagadas",color:"#C62828",bg:"#FFEBEE"},
+            {n:pagadas,label:"Pagadas",color:"#2E7D32",bg:"#EDFBEC"},
+            {n:realizadas,label:"Realizadas",color:"#616161",bg:"#F5F5F5"},
+            {n:restantes,label:"Restantes",color:C.blue2,bg:C.blueL},
+          ].filter(Boolean):[
             {n:noPagadas,label:"No pagadas",color:"#C62828",bg:"#FFEBEE"},
             {n:pagadas,label:"Pagadas",color:"#2E7D32",bg:"#EDFBEC"},
             {n:restantes,label:"Restantes",color:C.blue2,bg:C.blueL},
           ];
+          const showProgress=isCombo&&totalEntitlement>0;
           const extraCols=[
             canceladas>0&&{n:canceladas,label:"Cancelada",color:"#C62828",bg:"#FFF0F0"},
             reprogramadas>0&&{n:reprogramadas,label:"Reprogramada",color:"#2E7D32",bg:"#E8F5E9"},
@@ -4591,7 +4604,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
           return (
             <div style={{marginBottom:12}}>
               <div style={{fontSize:11,fontWeight:800,color:C.blue2,letterSpacing:1,marginBottom:8}}>ESTADO DE CLASES</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:extraCols.length>0?8:0}}>
+              <div style={{display:"grid",gridTemplateColumns:"repeat("+cols.length+",1fr)",gap:6,marginBottom:(showProgress||extraCols.length>0)?8:0}}>
                 {cols.map((col,i)=>(
                   <div key={i} style={{background:col.bg,borderRadius:12,padding:"10px 4px",textAlign:"center"}}>
                     <div style={{fontSize:26,fontWeight:900,color:col.color,lineHeight:1}}>{col.n}</div>
@@ -4599,6 +4612,17 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
                   </div>
                 ))}
               </div>
+              {showProgress&&(
+                <div style={{marginBottom:extraCols.length>0?8:0}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                    <span style={{fontSize:10,fontWeight:700,color:C.mutedDark}}>Progreso del combo</span>
+                    <span style={{fontSize:10,fontWeight:600,color:C.mutedDark}}>{realizadas} de {totalEntitlement} clases</span>
+                  </div>
+                  <div style={{height:6,borderRadius:999,background:C.blueL,overflow:"hidden"}}>
+                    <div style={{height:"100%",width:Math.min(100,(realizadas/totalEntitlement)*100)+"%",borderRadius:999,background:realizadas>=totalEntitlement?C.green:C.blue2}}/>
+                  </div>
+                </div>
+              )}
               {extraCols.length>0&&(
                 <div style={{display:"grid",gridTemplateColumns:"repeat("+extraCols.length+",1fr)",gap:6}}>
                   {extraCols.map((col,i)=>(
