@@ -3983,34 +3983,6 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         const newPayment={id:Date.now()+remaining,qty:canPay,amount:Math.round((parseInt(localAmount)||0)*(canPay/qty)),method:payMethod,date:localDate||TODAY,dates:paymentDates};
         return {...c,paid:fullyPaid,paidCount:newPaidCount,used:Math.max(c.used||0,givenCount),payments:[...(c.payments||[]),newPayment]};
       });
-      // Check if last combo is now fully paid and all non-paused given → auto-create next
-      const lastC=updatedCombos[updatedCombos.length-1];
-      if(lastC&&lastC.paid&&lastC.total>0){
-        const myClsLast=classes.filter(cl=>(cl.students||[]).includes(s.id));
-        const givenCount=(lastC.dates||[]).filter(d=>{
-          if(d>TODAY_DATE) return false;
-          const clsD=myClsLast.find(cl=>cl.date===d);
-          if(clsD&&(clsD.paused||clsD.cancelType==="paused")) return false;
-          return true;
-        }).length;
-        const nonPausedTotal=(lastC.dates||[]).filter(d=>{
-          const clsD=myClsLast.find(cl=>cl.date===d);
-          return !(clsD&&(clsD.paused||clsD.cancelType==="paused"));
-        }).length;
-        if(givenCount>=nonPausedTotal){
-          const lastComboDate=(lastC.dates||[]).slice(-1)[0]||TODAY;
-          // Use real occurrences
-          const editedClassFull=classes.find(cl=>(cl.students||[]).includes(s.id)&&cl.occurrences);
-          const realOcc=(editedClassFull?.occurrences||[]).filter(d=>d>lastComboDate);
-          const nextDates=realOcc.slice(0,lastC.total);
-          if(nextDates.length===0){
-            const nextDatesGen=generateNewDates(lastC.total, lastComboDate);
-            updatedCombos.push({id:updatedCombos.length+1,total:lastC.total,packType:lastC.packType||"combo",used:0,paid:false,paidCount:0,date:nextDatesGen[0]||TODAY,amount:lastC.amount||0,dates:nextDatesGen,payments:[]});
-          } else {
-            updatedCombos.push({id:updatedCombos.length+1,total:lastC.total,packType:lastC.packType||"combo",used:0,paid:false,paidCount:0,date:nextDates[0]||TODAY,amount:lastC.amount||0,dates:nextDates,payments:[]});
-          }
-        }
-      }
     } else if(pagoTipo==="clases"&&qty>0){
       const allExistingDates=updatedCombos.flatMap(c=>c.dates||[]).sort();
       const lastDate=allExistingDates.length>0?allExistingDates[allExistingDates.length-1]:TODAY;
@@ -6871,44 +6843,6 @@ export default function App() {
         return entry&&((entry.present||[]).includes(s.id)||(entry.ausente_dada||[]).includes(s.id));
       }).length;
       combos[lastIdx]={...target,used:newUsed};
-      // Check if combo is now complete (all paid + all given) — only meaningful when we just updated
-      // the student's current/last combo; an edit to an older, already-superseded combo must not
-      // re-trigger auto-renewal.
-      if(lastIdx===combos.length-1){
-        const effectiveTotal=target.total||0;
-        const paidCount=target.paidCount!==undefined?target.paidCount:(target.paid?effectiveTotal:0);
-        const allGiven=newUsed>=paidCount&&paidCount>=effectiveTotal&&effectiveTotal>0;
-        if(allGiven&&target.dates&&target.dates.length>0){
-          // Generate next combo dates starting from day after last date
-          const myClsForStudent=classes.filter(c=>c.students&&c.students.includes(s.id));
-          const classDays=myClsForStudent.length>0?myClsForStudent[0].days:[];
-          const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
-          const dowSet=new Set(classDays.map(d=>DAY_MAP[d]));
-          const lastDate=target.dates[target.dates.length-1];
-          let cur=new Date(lastDate+"T12:00:00");
-          cur.setDate(cur.getDate()+1);
-          const nextDates=[];
-          while(nextDates.length<effectiveTotal){
-            if(dowSet.size===0||dowSet.has(cur.getDay())){
-              nextDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
-            }
-            cur.setDate(cur.getDate()+1);
-          }
-          // Add new unpaid combo
-          combos.push({
-            id:combos.length+1,
-            total:effectiveTotal,
-            packType:target.packType||"combo",
-            used:0,
-            paid:false,
-            paidCount:0,
-            date:nextDates[0]||lastDate,
-            amount:target.amount,
-            dates:nextDates,
-            payments:[],
-          });
-        }
-      }
       return {...s,combos};
     }));
     // For ausente_reprog: mark their combo date as needing reschedule
