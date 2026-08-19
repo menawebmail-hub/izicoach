@@ -379,25 +379,31 @@ function getRem(s, classes=[]) {
   return totalPorDar;
 }
 
+// Shared by getAccountCounters and PagoModal.buildAllDates: a combo with total>0 is
+// "closed" (fully paid AND all its non-paused dates already happened) once no paused
+// date remains pending — used by both to exclude it from their respective active sets.
+function isComboClosed(c, myClasses) {
+  const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
+  if(!(c.paid&&paidCount>=(c.total||1))) return false;
+  const nonPausedDates=(c.dates||[]).filter(d=>{
+    const cl=myClasses.find(cls=>cls.date===d);
+    return !(cl&&(cl.paused||cl.cancelType==="paused"));
+  });
+  const hasPausedDates=(c.dates||[]).some(d=>{
+    const cl=myClasses.find(cls=>cls.date===d);
+    return cl&&(cl.paused||cl.cancelType==="paused");
+  });
+  const allDone=nonPausedDates.length>0&&nonPausedDates.every(d=>isClassDone(d,"23:59"));
+  return allDone&&!hasPausedDates;
+}
+
 // Shared per-date account counters for a student's active class combos (individual/combo).
 // Not applicable to mensual (returns all-zero, mensual has its own separate UI/logic).
 function getAccountCounters(s, classes=[]) {
   const myClasses=classes.filter(c=>c.students&&c.students.includes(s.id));
   const activeCombosForCount=(s.combos||[]).filter(c=>{
     if(!(c.total>0||(c.packType&&c.packType!=="mensual"))) return false;
-    const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
-    if(c.paid&&paidCount>=(c.total||1)){
-      const npDates=(c.dates||[]).filter(d=>{
-        const cl=myClasses.find(cls=>cls.date===d);
-        return !(cl&&(cl.paused||cl.cancelType==="paused"));
-      });
-      const hasPaused=(c.dates||[]).some(d=>{
-        const cl=myClasses.find(cls=>cls.date===d);
-        return cl&&(cl.paused||cl.cancelType==="paused");
-      });
-      const allDone=npDates.length>0&&npDates.every(d=>isClassDone(d,"23:59"));
-      if(allDone&&!hasPaused) return false;
-    }
+    if(isComboClosed(c,myClasses)) return false;
     return true;
   });
   const allDatesRaw=activeCombosForCount.flatMap(c=>{
@@ -3804,20 +3810,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
     // Include active combos - hide fully paid AND fully realized ones (those go to history)
     const activeCombos=allCombos.filter(c=>{
       if(c.total>0){
-        const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
-        // Hide only if fully paid AND all non-paused dates are realized
-        if(c.paid&&paidCount>=(c.total||1)){
-          const nonPausedDates=(c.dates||[]).filter(d=>{
-            const clsD=myClasses.find(cl=>cl.date===d);
-            return !(clsD&&(clsD.paused||clsD.cancelType==="paused"));
-          });
-          const hasPausedDates=(c.dates||[]).some(d=>{
-            const clsD=myClasses.find(cl=>cl.date===d);
-            return clsD&&(clsD.paused||clsD.cancelType==="paused");
-          });
-          const allRealized=nonPausedDates.length>0&&nonPausedDates.every(d=>isClassDone(d,"23:59"));
-          if(allRealized&&!hasPausedDates) return false;
-        }
+        if(isComboClosed(c,myClasses)) return false;
         return true;
       }
       if(c.packType==="individual"){
