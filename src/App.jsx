@@ -244,9 +244,17 @@ const expandClasses=(classes)=>{
     const isNewFormat=c.hasOwnProperty("cancelledDates");
     if(isNewFormat&&c.occurrences&&c.occurrences.length>0){
       const dc=c.dateCancellations||{};
-      // Collect rescheduled-to dates that aren't already in occurrences
+      // Collect rescheduled-to dates that aren't already in occurrences.
+      // When the target date IS already an occurrence, don't create a second
+      // card for it — instead flag it below so the existing occurrence absorbs
+      // the "reprogramada" marker (avoids a duplicate card for the same date).
       const reschDates=new Set();
-      Object.values(dc).forEach(info=>{if(info.rescheduledTo&&!c.occurrences.includes(info.rescheduledTo))reschDates.add(info.rescheduledTo);});
+      const rescheduledIntoOccurrence=new Set();
+      Object.values(dc).forEach(info=>{
+        if(!info.rescheduledTo) return;
+        if(c.occurrences.includes(info.rescheduledTo)) rescheduledIntoOccurrence.add(info.rescheduledTo);
+        else reschDates.add(info.rescheduledTo);
+      });
       // Expand regular occurrences
       for(const date of c.occurrences){
         const log=(c.attendanceLog||[]).find(e=>e.date===date);
@@ -261,6 +269,7 @@ const expandClasses=(classes)=>{
           rescheduledTo:cancelInfo?.rescheduledTo||null,
           rescheduled:!!(cancelInfo?.rescheduledTo),
           paused:!!(cancelInfo&&cancelInfo.cancelType==="paused"),
+          _isRescheduledInstance:rescheduledIntoOccurrence.has(date),
           attendanceLog:log?[log]:[],
         });
       }
