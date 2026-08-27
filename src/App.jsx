@@ -3894,6 +3894,10 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   };
 
   const allDates=buildAllDates();
+  // Scoped to the active combo only (combo?.id, from getCombo(s)) — used for the top
+  // indicators and the stepper cap. allDates itself stays unscoped: it still feeds
+  // buildAllDates/comboGroups below so a previous combo remains visible as history.
+  const activeComboDates=allDates.filter(d=>d.comboId===combo?.id);
 
   // For new combo projection (mora + future)
   const buildProjectedDates=(qty)=>{
@@ -3965,17 +3969,16 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
     };
 
     if(pagoTipo==="clases"&&qty>0){
-      // Distribute payment across combos from oldest to newest, skipping paused/cancelled
-      let remaining=qty;
+      // Payment applies exclusively to the active combo (combo?.id, from getCombo(s)).
+      // Never distributes into a previous or later combo.
       updatedCombos=updatedCombos.map(c=>{
-        if(remaining<=0||!c.total||c.total===null) return c;
+        if(c.id!==combo?.id||!c.total||c.total===null) return c;
         const prevPaid=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
         if(prevPaid>=c.total) return c; // already fully paid
-        // Pay up to remaining, skipping paused/cancelled for payment record
+        // Pay up to qty, skipping paused/cancelled for payment record
         const myClsForCombo=classes.filter(cl=>(cl.students||[]).includes(s.id));
-        const canPay=Math.min(c.total-prevPaid,remaining);
+        const canPay=Math.min(c.total-prevPaid,qty);
         if(canPay<=0) return c;
-        remaining-=canPay;
         const newPaidCount=prevPaid+canPay;
         const fullyPaid=newPaidCount>=c.total;
         // Count given dates excluding paused
@@ -3994,7 +3997,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
           return true;
         });
         const paymentDates=payableDates.slice(0,canPay);
-        const newPayment={id:Date.now()+remaining,qty:canPay,amount:Math.round((parseInt(localAmount)||0)*(canPay/qty)),method:payMethod,date:localDate||TODAY,dates:paymentDates};
+        const newPayment={id:Date.now(),qty:canPay,amount:Math.round((parseInt(localAmount)||0)*(canPay/qty)),method:payMethod,date:localDate||TODAY,dates:paymentDates};
         return {...c,paid:fullyPaid,paidCount:newPaidCount,used:Math.max(c.used||0,givenCount),payments:[...(c.payments||[]),newPayment]};
       });
     } else if(pagoTipo==="clases"&&qty>0){
@@ -4167,11 +4170,11 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
           )}
 
           {/* Estado de cuenta - 4 column live summary */}
-          {pagoTipo==="clases"&&allDates.length>0&&(()=>{
+          {pagoTipo==="clases"&&activeComboDates.length>0&&(()=>{
             const qty=parseInt(localClasses)||0;
             let unpaidCount=0;
             const cols4={noPagada:0,pagada:0,programada:0,realizada:0,pausada:0};
-            allDates.forEach((d,i)=>{
+            activeComboDates.forEach((d,i)=>{
               if(d.isCancelled) return;
               if(d.isPaused){cols4.pausada++;return;}
               const alreadyPaid=d.status==="adar"||d.status==="dada";
@@ -4235,8 +4238,8 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               <div>
                 <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>¿Cuántas clases pagamos?</div>
                 {(()=>{
-                  // Count total unpaid across ALL combos, excluding paused and cancelled
-                  const totalUnpaidAll=allDates.filter(d=>{
+                  // Count total unpaid for the active combo only, excluding paused and cancelled
+                  const totalUnpaidAll=activeComboDates.filter(d=>{
                     if(d.isPaused||d.isCancelled) return false;
                     const alreadyPaid=d.status==="adar"||d.status==="dada";
                     return !alreadyPaid;
