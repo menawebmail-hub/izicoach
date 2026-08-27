@@ -2297,7 +2297,7 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
                   <select value={studentPacks[sid]?.pack||""} onChange={e=>{
                     const val=e.target.value;
                     const pkg=packages.find(p=>String(p.id)===val);
-                    setStudentPacks(p=>({...p,[sid]:{pack:val,amount:pkg?pkg.price:(p[sid]?.amount||0)}}));
+                    setStudentPacks(p=>({...p,[sid]:{...(p[sid]||{}),pack:val,amount:pkg?pkg.price:(p[sid]?.amount||0)}}));
                     setChangedPacks(prev=>new Set([...prev,sid]));
                   }} style={{...iS,padding:"8px 10px",fontSize:12}}>
                     <option value="">Elegir...</option>
@@ -6562,38 +6562,95 @@ export default function App() {
     return ()=>document.removeEventListener("visibilitychange",handleVisChange);
   },[mode]);
 
-  useEffect(()=>{
-    supabase.auth.getSession().then(async({data:{session}})=>{
-      if(session?.user){
-        setUserWithRef(session.user);setCheckingProfile(true);
-        const {data}=await supabase.from("coaches").select("name,currency,sport,photo").eq("id",session.user.id).single();
-        if(data?.name){
-          setModeP("coach");setOnboardedP(true);if(data.currency)setCUR(data.currency);
-          setCoachProfileRaw({name:data.name,sport:data.sport||"",photo:data.photo||null,currency:data.currency||"₲"});
-          try{await loadData(session.user.id);}catch(e){console.error(e);}
-        } else {
-          const {data:sa}=await supabase.from("student_auth").select("*").eq("id",session.user.id).single();
-          if(sa){
-            lsSet("izi_student_coach_id", sa.coach_id);
-            localStorage.setItem("izi_student_id_raw", String(sa.student_id));
-            try{
-              const cd=await loadAllFromSupabase(sa.coach_id);
-              if(Object.keys(cd).length>0){
-                const s=cd.students||[];const cl=cd.classes||[];
-                if(s.length>0){setStudentsRaw(s);lsSet("izi_students",s);}
-                if(cl.length>0){setClassesRaw(cl);lsSet("izi_classes",cl);}
-              }
-            }catch(e){console.error("student load error:",e);}
-            setModeP("student_portal");
-            setCheckingProfile(false);
-          }
-          else{setModeP("coach_new");setOnboardedP(false);setCheckingProfile(false);}
-        }
+  // Single source of truth for turning a Supabase session into app state (user,
+  // coach/student/new, mode, onboarded, profile, loadData). Used by the auth-state
+  // listener below AND by the manual login callbacks (AuthFlow's onLogin), so there is
+  // exactly one place that decides what a session means.
+  // resolvedUserIdRef guards against re-running the full resolution (profile fetch +
+  // loadData) for a session we've already resolved — e.g. TOKEN_REFRESHED for the same
+  // user, or the SIGNED_IN event that follows a manual login we already resolved via
+  // onLogin. Only the user/token is refreshed in that case.
+  const resolvedUserIdRef=useRef(null);
+  // A profile lookup can transiently fail (401 while a fresh session's auth header is
+  // still propagating, a network hiccup, an unexpected REST error) — that must never be
+  // read as "no profile exists". PGRST116 ("0 or >1 rows" from .single()) is the only
+  // outcome that legitimately means "no match in this table, keep checking" — anything
+  // else gets exactly one delayed retry before being treated as a real failure.
+  const queryProfile=async(table,userId,selectCols)=>{
+    let result=await supabase.from(table).select(selectCols).eq("id",userId).single();
+    if(result.error&&result.error.code!=="PGRST116"){
+      await new Promise(r=>setTimeout(r,400));
+      result=await supabase.from(table).select(selectCols).eq("id",userId).single();
+    }
+    return result;
+  };
+  const resolveSession=async(session)=>{
+    if(!session?.user){
+      resolvedUserIdRef.current=null;
+      setUserWithRef(null);
+      setModeP(null);
+      setOnboardedP(false);
+      return;
+    }
+    const alreadyResolved=resolvedUserIdRef.current===session.user.id;
+    setUserWithRef(session.user);
+    if(alreadyResolved) return;
+    resolvedUserIdRef.current=session.user.id;
+    setCheckingProfile(true);
+    const {data,error}=await queryProfile("coaches",session.user.id,"name,currency,sport,photo");
+    if(error&&error.code!=="PGRST116"){
+      console.error("resolveSession: coach profile lookup failed after retry, not resolving as new user:",error);
+      resolvedUserIdRef.current=null;
+      setUserWithRef(null);
+      setCheckingProfile(false);
+      return;
+    }
+    if(data?.name){
+      setModeP("coach");setOnboardedP(true);if(data.currency)setCUR(data.currency);
+      setCoachProfileRaw({name:data.name,sport:data.sport||"",photo:data.photo||null,currency:data.currency||"₲"});
+      try{await loadData(session.user.id);}catch(e){console.error(e);}
+    } else {
+      const {data:sa,error:saErr}=await queryProfile("student_auth",session.user.id,"*");
+      if(saErr&&saErr.code!=="PGRST116"){
+        console.error("resolveSession: student profile lookup failed after retry, not resolving as new user:",saErr);
+        resolvedUserIdRef.current=null;
+        setUserWithRef(null);
         setCheckingProfile(false);
+        return;
       }
-      setLoadingAuth(false);
+      if(sa){
+        lsSet("izi_student_coach_id", sa.coach_id);
+        localStorage.setItem("izi_student_id_raw", String(sa.student_id));
+        try{
+          const cd=await loadAllFromSupabase(sa.coach_id);
+          if(Object.keys(cd).length>0){
+            const s=cd.students||[];const cl=cd.classes||[];const f=cd.families||[];
+            if(s.length>0){setStudentsRaw(s);lsSet("izi_students",s);}
+            if(cl.length>0){setClassesRaw(cl);lsSet("izi_classes",cl);}
+            if(f.length>0){setFamiliesRaw(f);lsSet("izi_families",f);}
+          }
+        }catch(e){console.error("student load error:",e);}
+        setModeP("student_portal");
+      } else {
+        setModeP("coach_new");setOnboardedP(false);
+      }
+    }
+    setCheckingProfile(false);
+  };
+
+  // Auth restoration relies solely on onAuthStateChange's INITIAL_SESSION event (fired
+  // once, right after the client loads the session from storage) instead of a separate
+  // getSession() call — calling both raced, and getSession() could resolve with a stale
+  // "no session" result before the client finished restoring, showing the login screen
+  // even though a valid session existed (fixed by a manual refresh, which re-ran the race
+  // and usually won it). loadingAuth now only clears after this listener's first event.
+  useEffect(()=>{
+    let firstEventHandled=false;
+    const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,session)=>{
+      resolveSession(session).finally(()=>{
+        if(!firstEventHandled){firstEventHandled=true;setLoadingAuth(false);}
+      });
     });
-    const {data:{subscription}}=supabase.auth.onAuthStateChange((_,session)=>{setUserWithRef(session?.user||null);});
     return ()=>subscription.unsubscribe();
   },[]);
 
@@ -6950,22 +7007,34 @@ export default function App() {
           (lastCombo.packType==="mensual") ||
           ((lastCombo.used||0)<(lastCombo.total||0))
         );
-        if(hasActiveCombo&&sp.paid===true&&lastCombo&&!lastCombo.paid){
+        // Same-structure re-template/re-price: identical packType="combo" and qty as the
+        // active combo, just a different catalog template/price. Correct packId/amount on
+        // the existing combo in place — no new combo, no dates/used/paid touched here.
+        // Structural changes (qty differs, or individual/mensual) are out of scope and fall
+        // through to the existing behavior below, unchanged.
+        const sameStructure=hasActiveCombo&&pkg&&pkg.type==="combo"&&(lastCombo.packType||"combo")==="combo"&&qty===lastCombo.total;
+        let workingCombo=sameStructure?{...lastCombo,packId:String(pkg.id),amount:pkg.price}:lastCombo;
+        if(hasActiveCombo&&sp.paid===true&&workingCombo&&!workingCombo.paid){
           const paymentRecord={
             id:Date.now(),
-            qty:lastCombo.total||0,
-            amount:lastCombo.amount||sp.amount||0,
+            qty:workingCombo.total||0,
+            amount:workingCombo.amount||sp.amount||0,
             method:"efectivo",
             date:TODAY_DATE,
-            dates:lastCombo.dates||[],
+            dates:workingCombo.dates||[],
           };
-          combos[combos.length-1]={...lastCombo,paid:true,paidCount:lastCombo.total||0,payments:[...(lastCombo.payments||[]),paymentRecord]};
+          workingCombo={...workingCombo,paid:true,paidCount:workingCombo.total||0,payments:[...(workingCombo.payments||[]),paymentRecord]};
+          combos[combos.length-1]=workingCombo;
           return {...s,combos};
         }
         if(hasActiveCombo){
-          if(cd.occurrences&&lastCombo.dates&&!cd._occOnly){
-            const newDates=calcUpdatedComboDates(lastCombo.dates,lastCombo.total||lastCombo.dates.length,cd.occurrences);
-            combos[combos.length-1]={...lastCombo,dates:newDates};
+          if(cd.occurrences&&workingCombo.dates&&!cd._occOnly){
+            const newDates=calcUpdatedComboDates(workingCombo.dates,workingCombo.total||workingCombo.dates.length,cd.occurrences);
+            combos[combos.length-1]={...workingCombo,dates:newDates};
+            return {...s,combos};
+          }
+          if(sameStructure){
+            combos[combos.length-1]=workingCombo;
             return {...s,combos};
           }
           return s;
@@ -7221,34 +7290,15 @@ export default function App() {
   if(!user&&!mode) return (
     <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column"}}>
       <AuthFlow onLogin={async(u)=>{
-        setUserWithRef(u);setCheckingProfile(true);
-        const {data}=await supabase.from("coaches").select("name,currency,sport,photo").eq("id",u.id).single();
-        if(data?.name){
-          setModeP("coach");setOnboardedP(true);if(data.currency)setCUR(data.currency);
-          setCoachProfileRaw({name:data.name,sport:data.sport||"",photo:data.photo||null,currency:data.currency||"₲"});
-          try{await loadData(u.id);}catch(e){console.error(e);}
-        } else {
-          // Check if student
-          const {data:sa}=await supabase.from("student_auth").select("*").eq("id",u.id).single();
-          if(sa){
-            lsSet("izi_student_coach_id", sa.coach_id);
-            localStorage.setItem("izi_student_id_raw", String(sa.student_id));
-            try{
-              const cd2=await loadAllFromSupabase(sa.coach_id);
-              if(Object.keys(cd2).length>0){
-                const s=cd2.students||[];const cl=cd2.classes||[];const f=cd2.families||[];
-                if(s.length>0){setStudentsRaw(s);lsSet("izi_students",s);}
-                if(cl.length>0){setClassesRaw(cl);lsSet("izi_classes",cl);}
-                if(f.length>0){setFamiliesRaw(f);lsSet("izi_families",f);}
-              }
-            }catch(e){}
-            setModeP("student_portal");
-          } else {
-            setModeP("coach_new");setOnboardedP(false);
-          }
-        }
-        setCheckingProfile(false);
+        // Delegates to the shared resolveSession — the SIGNED_IN event that
+        // onAuthStateChange fires right after this same login resolves is a no-op
+        // (resolvedUserIdRef already matches), so the profile isn't fetched twice.
+        await resolveSession({user:u});
       }} onStudentLogin={async(u,inviteInfo)=>{
+        // Special first-login/invite path (coach_id/student_id come from the invite,
+        // not a student_auth lookup) so it doesn't go through resolveSession — but mark
+        // this user resolved so the SIGNED_IN event that follows doesn't redo this work.
+        resolvedUserIdRef.current=u.id;
         setUserWithRef(u);setCheckingProfile(true);setLoadingAuth(false);
         lsSet("izi_student_coach_id", inviteInfo.coach_id);
         localStorage.setItem("izi_student_id_raw", String(inviteInfo.student_id));
