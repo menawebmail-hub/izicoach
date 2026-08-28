@@ -1,11 +1,6 @@
 import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from "react";
-import { createClient } from "@supabase/supabase-js";
-
-const supabase = createClient(
-  'https://eerocqdoawrciatvqnof.supabase.co',
-  'sb_publishable_DHrf_q9EoNFkYnhIaameuw_LVfnGXvG'
-);
-window.supabase=supabase;
+import { supabase } from "./services/supabaseClient.js";
+import { loadAllFromSupabase, syncToSupabase } from "./data/coachData.js";
 
 // Inject Inter font
 if(typeof document!=="undefined"){
@@ -36,51 +31,10 @@ const C = {
 
 
 
-// --- SUPABASE SYNC HELPERS ---
-const _syncQueue={};
-const _syncPrevLen={};
-function syncToSupabase(coachId, key, value) {
-  if(!coachId||typeof coachId!=="string"||coachId.length<10) return;
-  const doSync=async()=>{
-    try {
-      await supabase.from("coach_data").upsert({
-        coach_id: coachId,
-        data_key: key,
-        data_value: value,
-        updated_at: new Date().toISOString()
-      }, { onConflict: "coach_id,data_key" });
-    } catch(e) { console.warn("Sync error:", key, e); }
-  };
-  const prevLen=_syncPrevLen[key]||0;
-  const curLen=Array.isArray(value)?value.length:0;
-  _syncPrevLen[key]=curLen;
-  if(curLen<prevLen&&prevLen>0){if(_syncQueue[key])clearTimeout(_syncQueue[key]);doSync();return;}
-  if(_syncQueue[key]) clearTimeout(_syncQueue[key]);
-  _syncQueue[key]=setTimeout(doSync,500);
-}
-async function loadFromSupabase(coachId, key) {
-  if(!coachId) return null;
-  try {
-    const {data} = await supabase.from("coach_data")
-      .select("data_value")
-      .eq("coach_id", coachId)
-      .eq("data_key", key)
-      .single();
-    return data?.data_value || null;
-  } catch(e) { return null; }
-}
-async function loadAllFromSupabase(coachId) {
-  if(!coachId) return {};
-  try {
-    const {data} = await supabase.from("coach_data")
-      .select("data_key,data_value")
-      .eq("coach_id", coachId);
-    const result = {};
-    (data||[]).forEach(r => { result[r.data_key] = r.data_value; });
-    return result;
-  } catch(e) { return {}; }
-}
-// --- END SYNC HELPERS ---
+// syncToSupabase / loadFromSupabase / loadAllFromSupabase moved to
+// src/data/coachData.js (Fase B) — imported above. loadAllFromSupabase now
+// returns {ok,data|error} instead of a plain object; see that file for the
+// contract and rationale.
 const TODAY_DATE=(()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
 
 // --- MENSUAL HELPERS ---
@@ -6403,8 +6357,13 @@ export default function App() {
   const [inviteTarget,setInviteTarget]=useState(null);
   const [tab,setTab]=useState("dashboard");
   const [financeTab,setFinanceTab]=useState("payments");
-  const [students,setStudentsRaw]=useState(()=>ls("izi_students",[]));
-  const [classes,setClassesRaw]=useState(()=>ls("izi_classes",[]));
+  // Business data (students/classes/courts/packages/families/expenses) must never
+  // hydrate from localStorage at mount — that key is global per browser, not scoped
+  // to a coach, so a stale value here can belong to whoever was last signed in on
+  // this device. It only gets populated once resolveSession has confirmed a coachId
+  // and either loaded that coach's own data or established there is none yet.
+  const [students,setStudentsRaw]=useState([]);
+  const [classes,setClassesRaw]=useState([]);
   const [showNewClass,setShowNewClass]=useState(false);
   const [showNewStudent,setShowNewStudent]=useState(false);
   const [chatTarget,setChatTarget]=useState(null);
@@ -6438,9 +6397,24 @@ export default function App() {
   const [configInitialTab,setConfigInitialTab]=useState(null);
   const [courts,setCourtsRaw]=useState([]);
   const [packages,setPackagesRaw]=useState([]);
-  const [families,setFamiliesRaw]=useState(()=>ls("izi_families",[]));
+  const [families,setFamiliesRaw]=useState([]);
+  // PENDING ARCHITECTURE: this still hydrates from the same kind of global,
+  // non-coach-scoped localStorage key (izi_profile) that students/classes/etc.
+  // used to. Not fixed here — deliberately left out of this Paso's scope — but
+  // it's the same class of risk (a stale name/sport/photo from a previous coach
+  // in this browser could flash before loadData's real fetch overwrites it).
   const [coachProfile,setCoachProfileRaw]=useState(()=>ls("izi_profile",{name:"Coach",sport:"",photo:null}));
-  const [expenses,setExpensesRaw]=useState(()=>ls("izi_expenses",[]));
+  const [expenses,setExpensesRaw]=useState([]);
+  // True only once the active coachId's own data has been loaded (existing coach)
+  // or explicitly confirmed to not exist yet (coach_new) — gates the auto-sync
+  // effect below so it can never push data that hasn't been verified to belong
+  // to the currently authenticated coach.
+  const [dataReady,setDataReady]=useState(false);
+  // TEMPORARY (Fase B, P0) — distinguishes "loadData confirmed real failure"
+  // from "loadData confirmed a legitimately empty account", which dataReady
+  // alone can't express. Must disappear in Fase E, replaced by CoachDataProvider's
+  // idle|loading|ready|error. Do not build anything permanent on top of this.
+  const [dataLoadFailed,setDataLoadFailed]=useState(false);
 
   // Sync helpers - store all data as JSON blob per coach
   const syncAll=async(newStudents, newClasses, newExpenses, newCourts, newPackages)=>{
@@ -6506,56 +6480,88 @@ export default function App() {
   const setCoachProfile=(v)=>{const next=typeof v==="function"?v(coachProfile):v;setCoachProfileRaw(next);lsSet("izi_profile",next);if(window._iziUserId)supabase.from("coaches").upsert({id:window._iziUserId,...next}).then(res=>{if(res.error)console.error("Coach profile upsert error:",res.error.message);else console.log("Coach profile saved to Supabase");});};
   const setExpenses=(v)=>{if(typeof v==="function"){setExpensesRaw(prev=>{const next=v(prev);lsSet("izi_expenses",next);syncToSupabase(window._iziUserId,"expenses",next);return next;});}else{setExpensesRaw(v);lsSet("izi_expenses",v);syncToSupabase(window._iziUserId,"expenses",v);}};
 
+  // Returns true only for a real read of this coach's own business data (with
+  // rows, or legitimately zero rows) — false for a real failure (Supabase error,
+  // thrown exception, missing coachId). Callers must treat false as "unknown
+  // state, don't touch anything", never as "empty account".
+  //
+  // PENDING VERIFICATION (Fase B, not yet resolved): the "no remote data" branch
+  // below still reads raw localStorage and pushes it to Supabase as a legacy
+  // local→remote migration. This depends on localStorage as an active source,
+  // which this migration is meant to eliminate — but removing it needs confirming
+  // no real coach's only copy of their data currently lives in localStorage
+  // (RLS blocks checking this from a normal coach session; needs a query run
+  // from the Supabase SQL editor). Left untouched until that's confirmed.
   const loadData=async(userId)=>{
-    try {
-      const allData=await loadAllFromSupabase(userId);
-      const hasRemoteData=Object.keys(allData).length>0&&Object.values(allData).some(v=>Array.isArray(v)&&v.length>0);
-      if(hasRemoteData){
-        if(allData.students&&allData.students.length>0){setStudentsRaw(allData.students);lsSet("izi_students",allData.students);}
-        if(allData.classes&&allData.classes.length>0){setClassesRaw(allData.classes);lsSet("izi_classes",allData.classes);}
-        if(allData.expenses&&allData.expenses.length>0){setExpensesRaw(allData.expenses);lsSet("izi_expenses",allData.expenses);}
-        if(allData.courts&&allData.courts.length>0){setCourtsRaw(allData.courts);lsSet("izi_courts",allData.courts);}
-        if(allData.packages&&allData.packages.length>0){setPackagesRaw(allData.packages);lsSet("izi_packages",allData.packages);}
-        if(allData.families&&allData.families.length>0){setFamiliesRaw(allData.families);lsSet("izi_families",allData.families);}
-      } else {
-        const lS=ls("izi_students",[]),lC=ls("izi_classes",[]),lE=ls("izi_expenses",[]),lCo=ls("izi_courts",[]),lP=ls("izi_packages",[]),lF=ls("izi_families",[]);
-        if(lS.length>0||lC.length>0){syncToSupabase(userId,"students",lS);syncToSupabase(userId,"classes",lC);syncToSupabase(userId,"expenses",lE);syncToSupabase(userId,"courts",lCo);syncToSupabase(userId,"packages",lP);syncToSupabase(userId,"families",lF);}
-      }
-      // Also load coach profile (name, phone, email, sport, photo, currency)
+    const result=await loadAllFromSupabase(userId);
+    if(!result.ok){
+      console.error("loadData: remote read failed — leaving local state untouched, no push, not marking data as loaded:",result.error);
+      return false;
+    }
+    const allData=result.data;
+    const hasRemoteData=Object.keys(allData).length>0&&Object.values(allData).some(v=>Array.isArray(v)&&v.length>0);
+    if(hasRemoteData){
+      // No lsSet mirroring here (Fase B): localStorage is not an active data
+      // source or cache for business data during this migration.
+      if(allData.students&&allData.students.length>0){setStudentsRaw(allData.students);}
+      if(allData.classes&&allData.classes.length>0){setClassesRaw(allData.classes);}
+      if(allData.expenses&&allData.expenses.length>0){setExpensesRaw(allData.expenses);}
+      if(allData.courts&&allData.courts.length>0){setCourtsRaw(allData.courts);}
+      if(allData.packages&&allData.packages.length>0){setPackagesRaw(allData.packages);}
+      if(allData.families&&allData.families.length>0){setFamiliesRaw(allData.families);}
+    }
+    // else: confirmed zero rows for this coachId — stays empty. The legacy
+    // "read izi_* from localStorage and push it as this coach's data" fallback
+    // that used to live here has been removed entirely (not gated, not
+    // conditional — gone). izi_students/izi_classes/etc. are no longer read
+    // anywhere in this function, on any branch: they're not hydrated into
+    // state, not treated as this coach's data, and not written to Supabase
+    // automatically. The keys themselves are left untouched in localStorage
+    // (not cleared) as possible manual-recovery material only — nothing in
+    // the app reads them for that purpose either.
+    // Coach profile (name/phone/email/sport/photo/currency) is a separate
+    // table/query, out of this Paso's scope — kept non-fatal exactly as before:
+    // a failure here logs and is ignored, it never flips the business-data result.
+    try{
       const {data:profileData}=await supabase.from("coaches").select("*").eq("id",userId).single();
       if(profileData){
         const profile={name:profileData.name||"Coach",sport:profileData.sport||"",photo:profileData.photo||null,phone:profileData.phone||"",email:profileData.email||"",currency:profileData.currency||""};
         setCoachProfileRaw(profile);lsSet("izi_profile",profile);
         if(profile.currency) setCUR(profile.currency);
       }
-    } catch(e){ console.error("Load error:",e); }
+    }catch(e){ console.error("Coach profile load error (non-fatal):",e); }
+    return true;
   };
 
   const setModeP=(v)=>{setMode(v);lsSet("izi_mode",v);};
   const setOnboardedP=(v)=>{setOnboarded(v);lsSet("izi_onboarded",v);};
 
-  // Sync all data to Supabase when anything changes (debounced 1s)
+  // Sync all data to Supabase when anything changes (debounced 1s).
+  // dataReady gates this: it only becomes true once resolveSession has confirmed
+  // the active coachId's own data (loaded, or explicitly established as new/empty)
+  // — never syncs whatever happened to be in state before that confirmation.
+  // dataLoadFailed is a second, independent guard on the same invariant (belt
+  // and suspenders — a real load failure must never be able to trigger a push,
+  // even if dataReady were ever left stale by a bug elsewhere).
   useEffect(()=>{
-    if(!window._iziUserId||loadingAuth||checkingProfile) return;
+    if(!window._iziUserId||loadingAuth||checkingProfile||!dataReady||dataLoadFailed) return;
     if(mode==="student_portal") return;
     const timer=setTimeout(()=>{
       syncAll(students,classes,expenses,courts,packages);
     },1000);
     return ()=>clearTimeout(timer);
-  },[students,classes,expenses,courts,packages]);
+  },[students,classes,expenses,courts,packages,dataReady,dataLoadFailed]);
 
   // Force sync when user switches tabs or minimizes to prevent data loss
-  // AND reload from Supabase when returning to the tab (multi-device sync)
+  // AND reload from Supabase when returning to the tab (multi-device sync).
+  // Reads from React state (Fase B — localStorage is no longer written on a
+  // successful load, so reading it here would sync stale/empty arrays over
+  // real data). Depends on the same 5 arrays as the debounced-sync effect so
+  // this closure is never stale.
   useEffect(()=>{
     const handleVisChange=()=>{
-      if(document.visibilityState==="hidden"&&window._iziUserId&&mode!=="student_portal"){
-        syncAll(
-          JSON.parse(localStorage.getItem("izi_students")||"[]"),
-          JSON.parse(localStorage.getItem("izi_classes")||"[]"),
-          JSON.parse(localStorage.getItem("izi_expenses")||"[]"),
-          JSON.parse(localStorage.getItem("izi_courts")||"[]"),
-          JSON.parse(localStorage.getItem("izi_packages")||"[]")
-        );
+      if(document.visibilityState==="hidden"&&window._iziUserId&&mode!=="student_portal"&&dataReady&&!dataLoadFailed){
+        syncAll(students,classes,expenses,courts,packages);
       }
       if(document.visibilityState==="visible"&&window._iziUserId&&mode!=="student_portal"){
         loadData(window._iziUserId);
@@ -6563,7 +6569,7 @@ export default function App() {
     };
     document.addEventListener("visibilitychange",handleVisChange);
     return ()=>document.removeEventListener("visibilitychange",handleVisChange);
-  },[mode]);
+  },[mode,dataReady,dataLoadFailed,students,classes,expenses,courts,packages]);
 
   // Single source of truth for turning a Supabase session into app state (user,
   // coach/student/new, mode, onboarded, profile, loadData). Used by the auth-state
@@ -6593,6 +6599,8 @@ export default function App() {
       setUserWithRef(null);
       setModeP(null);
       setOnboardedP(false);
+      setDataReady(false);
+      setDataLoadFailed(false);
       return;
     }
     const alreadyResolved=resolvedUserIdRef.current===session.user.id;
@@ -6606,12 +6614,26 @@ export default function App() {
       resolvedUserIdRef.current=null;
       setUserWithRef(null);
       setCheckingProfile(false);
+      setDataReady(false);
+      setDataLoadFailed(false);
       return;
     }
     if(data?.name){
       setModeP("coach");setOnboardedP(true);if(data.currency)setCUR(data.currency);
       setCoachProfileRaw({name:data.name,sport:data.sport||"",photo:data.photo||null,currency:data.currency||"₲"});
-      try{await loadData(session.user.id);}catch(e){console.error(e);}
+      const loaded=await loadData(session.user.id);
+      if(loaded){
+        // A real read of this coach's own data completed (rows, or confirmed
+        // zero) — only now is it safe to let the auto-sync effect run.
+        setDataLoadFailed(false);
+        setDataReady(true);
+      } else {
+        // loadData couldn't get a real read — never treat that as "empty
+        // account". dataReady stays false (auto-sync stays blocked) and
+        // dataLoadFailed surfaces the retry screen instead of an empty dashboard.
+        setDataReady(false);
+        setDataLoadFailed(true);
+      }
     } else {
       const {data:sa,error:saErr}=await queryProfile("student_auth",session.user.id,"*");
       if(saErr&&saErr.code!=="PGRST116"){
@@ -6619,23 +6641,31 @@ export default function App() {
         resolvedUserIdRef.current=null;
         setUserWithRef(null);
         setCheckingProfile(false);
+        setDataReady(false);
+        setDataLoadFailed(false);
         return;
       }
       if(sa){
         lsSet("izi_student_coach_id", sa.coach_id);
         localStorage.setItem("izi_student_id_raw", String(sa.student_id));
         try{
-          const cd=await loadAllFromSupabase(sa.coach_id);
-          if(Object.keys(cd).length>0){
+          const cdResult=await loadAllFromSupabase(sa.coach_id);
+          if(!cdResult.ok){console.error("student load error:",cdResult.error);}
+          else{
+            const cd=cdResult.data;
             const s=cd.students||[];const cl=cd.classes||[];const f=cd.families||[];
-            if(s.length>0){setStudentsRaw(s);lsSet("izi_students",s);}
-            if(cl.length>0){setClassesRaw(cl);lsSet("izi_classes",cl);}
-            if(f.length>0){setFamiliesRaw(f);lsSet("izi_families",f);}
+            if(s.length>0){setStudentsRaw(s);}
+            if(cl.length>0){setClassesRaw(cl);}
+            if(f.length>0){setFamiliesRaw(f);}
           }
         }catch(e){console.error("student load error:",e);}
         setModeP("student_portal");
+        setDataReady(true);
+        setDataLoadFailed(false);
       } else {
-        setModeP("coach_new");setOnboardedP(false);
+        // Confirmed new coach: no profile, no data — the auto-sync effect can run
+        // safely because state is (and must stay) empty until they create something.
+        setModeP("coach_new");setOnboardedP(false);setDataReady(true);setDataLoadFailed(false);
       }
     }
     setCheckingProfile(false);
@@ -6686,6 +6716,20 @@ export default function App() {
     setStudentsRaw([]);setClassesRaw([]);setCourtsRaw([]);setPackagesRaw([]);setFamiliesRaw([]);
     setCoachProfileRaw({name:"Coach",sport:"",photo:null});setExpensesRaw([]);
     setMode(null);setModeP(null);setOnboarded(false);setOnboardedP(false);
+    setDataReady(false);
+    setDataLoadFailed(false);
+  };
+
+  // Re-attempts loadData for the currently authenticated coach after a failed
+  // read (see dataLoadFailed). Reuses checkingProfile for the in-progress
+  // spinner — no new loading UI needed.
+  const retryLoadData=async()=>{
+    if(!user?.id) return;
+    setCheckingProfile(true);
+    const loaded=await loadData(user.id);
+    if(loaded){setDataLoadFailed(false);setDataReady(true);}
+    else{setDataReady(false);setDataLoadFailed(true);}
+    setCheckingProfile(false);
   };
 
   // Listen for navigation events from child components
@@ -7290,6 +7334,21 @@ export default function App() {
   );
   }
 
+  if(dataLoadFailed){
+    return (
+      <div style={{width:"100vw",height:"100vh",position:"fixed",top:0,left:0,display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",zIndex:9999,padding:24}}>
+        <div style={{textAlign:"center",color:"#fff",maxWidth:320}}>
+          <div style={{fontSize:32,fontWeight:900,letterSpacing:-2,marginBottom:16}}>
+            izi<span style={{color:"#65CE5A"}}>coach</span>
+          </div>
+          <div style={{fontSize:15,fontWeight:700,marginBottom:8}}>No pudimos cargar tus datos</div>
+          <div style={{fontSize:13,color:"rgba(255,255,255,0.7)",marginBottom:24,lineHeight:1.5}}>Hubo un problema de conexión con el servidor. Nada se modificó — probá de nuevo.</div>
+          <button onClick={retryLoadData} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:"#fff",color:"#1A3DB5",fontSize:15,cursor:"pointer",fontWeight:800}}>Reintentar</button>
+        </div>
+      </div>
+    );
+  }
+
   if(!user&&!mode) return (
     <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column"}}>
       <AuthFlow onLogin={async(u)=>{
@@ -7306,15 +7365,19 @@ export default function App() {
         lsSet("izi_student_coach_id", inviteInfo.coach_id);
         localStorage.setItem("izi_student_id_raw", String(inviteInfo.student_id));
         try{
-          const cd3=await loadAllFromSupabase(inviteInfo.coach_id);
-          if(Object.keys(cd3).length>0){
+          const cd3Result=await loadAllFromSupabase(inviteInfo.coach_id);
+          if(!cd3Result.ok){console.error(cd3Result.error);}
+          else{
+            const cd3=cd3Result.data;
             const s=cd3.students||[];const cl=cd3.classes||[];const f=cd3.families||[];
-            if(s.length>0){setStudentsRaw(s);lsSet("izi_students",s);}
-            if(cl.length>0){setClassesRaw(cl);lsSet("izi_classes",cl);}
-            if(f.length>0){setFamiliesRaw(f);lsSet("izi_families",f);}
+            if(s.length>0){setStudentsRaw(s);}
+            if(cl.length>0){setClassesRaw(cl);}
+            if(f.length>0){setFamiliesRaw(f);}
           }
         }catch(e){console.error(e);}
         setModeP("student_portal");
+        setDataReady(true);
+        setDataLoadFailed(false);
         setCheckingProfile(false);
       }}/>
     </div>
