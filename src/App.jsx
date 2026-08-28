@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import { supabase } from "./services/supabaseClient.js";
 import { loadAllFromSupabase, syncToSupabase } from "./data/coachData.js";
+import { useAuth } from "./auth/useAuth.js";
 
 // Inject Inter font
 if(typeof document!=="undefined"){
@@ -6349,14 +6350,15 @@ function StudentRegisterScreen({ coachName, onComplete }) {
 export default function App() {
   const ls=(key,def)=>{try{const v=localStorage.getItem(key);return v?JSON.parse(v):def;}catch{return def;}};
   const lsSet=(key,val)=>{try{localStorage.setItem(key,JSON.stringify(val));}catch{}};
-  const [user,setUser]=useState(null);
-  const setUserWithRef=(u)=>{setUser(u);window._iziUserId=u?.id||null;if(u?.id)lsSet("izi_userId",u.id);};
-  if(!window._iziUserId){const savedId=ls("izi_userId",null);if(savedId)window._iziUserId=savedId;}
-  const [loadingAuth,setLoadingAuth]=useState(true);
-  const [checkingProfile,setCheckingProfile]=useState(false);
-
-  const [mode,setMode]=useState(null);
-  const [onboarded,setOnboarded]=useState(()=>ls("izi_onboarded",false));
+  // Identity (user/mode/onboarded/etc.) lives in AuthProvider (Fase D) — App only
+  // consumes it. Local names kept identical to the pre-Fase-D local state so the
+  // rest of this file (reads and writes alike) didn't need to change.
+  const {
+    user,mode,onboarded,loadingAuth,checkingProfile,onboardingSaveFailed,
+    setUser:setUserWithRef,setMode:setModeP,setOnboarded:setOnboardedP,
+    setCheckingProfile,setLoadingAuth,setOnboardingSaveFailed,
+    resolvedUserIdRef,resolveSession,logout:authLogout,
+  }=useAuth();
   const [showInvite,setShowInvite]=useState(false);
   const [inviteTarget,setInviteTarget]=useState(null);
   const [tab,setTab]=useState("dashboard");
@@ -6419,14 +6421,30 @@ export default function App() {
   // alone can't express. Must disappear in Fase E, replaced by CoachDataProvider's
   // idle|loading|ready|error. Do not build anything permanent on top of this.
   const [dataLoadFailed,setDataLoadFailed]=useState(false);
-  // TEMPORARY (Fase C) — true only when handleOnboardingComplete's coaches
+  // onboardingSaveFailed: true only when handleOnboardingComplete's coaches
   // upsert failed. Purely a display flag for OnboardingFlow's retry banner;
   // does not gate auth/data state the way dataReady/dataLoadFailed do.
-  const [onboardingSaveFailed,setOnboardingSaveFailed]=useState(false);
+  // Lives in AuthProvider (Fase D) — destructured above.
+
+  // activeIdentityRef always reflects the identity (user?.id) as of the most
+  // recent hydration-effect invocation, updated synchronously as its first line
+  // — so a loadData/loadAllFromSupabase call started for a superseded identity
+  // can tell, after its await, that it's no longer current and must not call
+  // any setter. hydratedIdentityRef records which identity dataReady/dataLoadFailed
+  // actually settled for. dataReady/dataLoadFailed alone say nothing about *whose*
+  // data they describe — reading them raw let a stale ready/error state from a
+  // previous identity leak into a newly-switched-to one (render, autosync, and
+  // visibility-sync could all act on it). dataReadyForCurrentIdentity/
+  // dataLoadFailedForCurrentIdentity are the only versions any render gate or
+  // effect should read; the raw booleans stay for setting, never for gating.
+  const activeIdentityRef=useRef(null);
+  const hydratedIdentityRef=useRef(null);
+  const dataReadyForCurrentIdentity=dataReady&&hydratedIdentityRef.current===user?.id;
+  const dataLoadFailedForCurrentIdentity=dataLoadFailed&&hydratedIdentityRef.current===user?.id;
 
   // Sync helpers - store all data as JSON blob per coach
   const syncAll=async(newStudents, newClasses, newExpenses, newCourts, newPackages)=>{
-    const userId=window._iziUserId;
+    const userId=user?.id;
     if(!userId) return;
     // Validate data before saving - must be arrays
     if(!Array.isArray(newStudents)||!Array.isArray(newClasses)) return;
@@ -6455,14 +6473,14 @@ export default function App() {
       setStudentsRaw(prev=>{
         const next=applyGuard(v(prev));
         lsSet("izi_students",next);
-        syncToSupabase(window._iziUserId,"students",next);
+        syncToSupabase(user?.id,"students",next);
         return next;
       });
     } else {
       const next=applyGuard(v);
       setStudentsRaw(next);
       lsSet("izi_students",next);
-      syncToSupabase(window._iziUserId,"students",next);
+      syncToSupabase(user?.id,"students",next);
     }
   };
   // IMPORTANT: keep functional updates. Do not replace prev with closure state.
@@ -6472,21 +6490,21 @@ export default function App() {
       setClassesRaw(prev=>{
         const next=v(prev);
         lsSet("izi_classes",next);
-        syncToSupabase(window._iziUserId,"classes",next);
+        syncToSupabase(user?.id,"classes",next);
         return next;
       });
     } else {
       setClassesRaw(v);
       lsSet("izi_classes",v);
-      syncToSupabase(window._iziUserId,"classes",v);
+      syncToSupabase(user?.id,"classes",v);
     }
   };
-  const setCourts=(v)=>{if(typeof v==="function"){setCourtsRaw(prev=>{const next=v(prev);lsSet("izi_courts",next);syncToSupabase(window._iziUserId,"courts",next);return next;});}else{setCourtsRaw(v);lsSet("izi_courts",v);syncToSupabase(window._iziUserId,"courts",v);}};
-  const setPackages=(v)=>{if(typeof v==="function"){setPackagesRaw(prev=>{const next=v(prev);lsSet("izi_packages",next);syncToSupabase(window._iziUserId,"packages",next);return next;});}else{setPackagesRaw(v);lsSet("izi_packages",v);syncToSupabase(window._iziUserId,"packages",v);}};
+  const setCourts=(v)=>{if(typeof v==="function"){setCourtsRaw(prev=>{const next=v(prev);lsSet("izi_courts",next);syncToSupabase(user?.id,"courts",next);return next;});}else{setCourtsRaw(v);lsSet("izi_courts",v);syncToSupabase(user?.id,"courts",v);}};
+  const setPackages=(v)=>{if(typeof v==="function"){setPackagesRaw(prev=>{const next=v(prev);lsSet("izi_packages",next);syncToSupabase(user?.id,"packages",next);return next;});}else{setPackagesRaw(v);lsSet("izi_packages",v);syncToSupabase(user?.id,"packages",v);}};
   // IMPORTANT: keep functional updates. Do not replace prev with closure state.
-  const setFamilies=(v)=>{if(typeof v==="function"){setFamiliesRaw(prev=>{const next=v(prev);lsSet("izi_families",next);syncToSupabase(window._iziUserId,"families",next);return next;});}else{setFamiliesRaw(v);lsSet("izi_families",v);syncToSupabase(window._iziUserId,"families",v);}};
-  const setCoachProfile=(v)=>{const next=typeof v==="function"?v(coachProfile):v;setCoachProfileRaw(next);lsSet("izi_profile",next);if(window._iziUserId)supabase.from("coaches").upsert({id:window._iziUserId,...next}).then(res=>{if(res.error)console.error("Coach profile upsert error:",res.error.message);else console.log("Coach profile saved to Supabase");});};
-  const setExpenses=(v)=>{if(typeof v==="function"){setExpensesRaw(prev=>{const next=v(prev);lsSet("izi_expenses",next);syncToSupabase(window._iziUserId,"expenses",next);return next;});}else{setExpensesRaw(v);lsSet("izi_expenses",v);syncToSupabase(window._iziUserId,"expenses",v);}};
+  const setFamilies=(v)=>{if(typeof v==="function"){setFamiliesRaw(prev=>{const next=v(prev);lsSet("izi_families",next);syncToSupabase(user?.id,"families",next);return next;});}else{setFamiliesRaw(v);lsSet("izi_families",v);syncToSupabase(user?.id,"families",v);}};
+  const setCoachProfile=(v)=>{const next=typeof v==="function"?v(coachProfile):v;setCoachProfileRaw(next);lsSet("izi_profile",next);if(user?.id)supabase.from("coaches").upsert({id:user?.id,...next}).then(res=>{if(res.error)console.error("Coach profile upsert error:",res.error.message);else console.log("Coach profile saved to Supabase");});};
+  const setExpenses=(v)=>{if(typeof v==="function"){setExpensesRaw(prev=>{const next=v(prev);lsSet("izi_expenses",next);syncToSupabase(user?.id,"expenses",next);return next;});}else{setExpensesRaw(v);lsSet("izi_expenses",v);syncToSupabase(user?.id,"expenses",v);}};
 
   // Returns true only for a real read of this coach's own business data (with
   // rows, or legitimately zero rows) — false for a real failure (Supabase error,
@@ -6502,6 +6520,12 @@ export default function App() {
   // from the Supabase SQL editor). Left untouched until that's confirmed.
   const loadData=async(userId)=>{
     const result=await loadAllFromSupabase(userId);
+    // Stale-identity guard: activeIdentityRef may have moved on to a different
+    // user (or null) while this read was in flight. Whoever called loadData for
+    // that superseded identity must not write its data into state — the caller
+    // re-checks independently too, but this call itself must never touch a
+    // setter for a userId that's no longer the active one.
+    if(activeIdentityRef.current!==userId) return false;
     if(!result.ok){
       console.error("loadData: remote read failed — leaving local state untouched, no push, not marking data as loaded:",result.error);
       return false;
@@ -6532,6 +6556,7 @@ export default function App() {
     // a failure here logs and is ignored, it never flips the business-data result.
     try{
       const {data:profileData}=await supabase.from("coaches").select("*").eq("id",userId).single();
+      if(activeIdentityRef.current!==userId) return true;
       if(profileData){
         const profile={name:profileData.name||"Coach",sport:profileData.sport||"",photo:profileData.photo||null,phone:profileData.phone||"",email:profileData.email||"",currency:profileData.currency||""};
         setCoachProfileRaw(profile);lsSet("izi_profile",profile);
@@ -6541,131 +6566,96 @@ export default function App() {
     return true;
   };
 
-  const setModeP=(v)=>{setMode(v);lsSet("izi_mode",v);};
-  const setOnboardedP=(v)=>{setOnboarded(v);lsSet("izi_onboarded",v);};
-
   // Sync all data to Supabase when anything changes (debounced 1s).
-  // dataReady gates this: it only becomes true once resolveSession has confirmed
-  // the active coachId's own data (loaded, or explicitly established as new/empty)
-  // — never syncs whatever happened to be in state before that confirmation.
-  // dataLoadFailed is a second, independent guard on the same invariant (belt
-  // and suspenders — a real load failure must never be able to trigger a push,
-  // even if dataReady were ever left stale by a bug elsewhere).
+  // Gated on dataReadyForCurrentIdentity/dataLoadFailedForCurrentIdentity, not
+  // the raw booleans — dataReady/dataLoadFailed alone don't say *whose* data
+  // they describe, and during an A→B identity switch they can stay true/false
+  // from A for one or more renders while B's own load is still in flight. The
+  // scoped versions read false in that window, so this can never push a
+  // superseded identity's data under the new one's coachId.
   useEffect(()=>{
-    if(!window._iziUserId||loadingAuth||checkingProfile||!dataReady||dataLoadFailed) return;
+    if(!user?.id||loadingAuth||checkingProfile||!dataReadyForCurrentIdentity||dataLoadFailedForCurrentIdentity) return;
     if(mode==="student_portal") return;
     const timer=setTimeout(()=>{
       syncAll(students,classes,expenses,courts,packages);
     },1000);
     return ()=>clearTimeout(timer);
-  },[students,classes,expenses,courts,packages,dataReady,dataLoadFailed]);
+  },[students,classes,expenses,courts,packages,dataReadyForCurrentIdentity,dataLoadFailedForCurrentIdentity]);
 
   // Force sync when user switches tabs or minimizes to prevent data loss
   // AND reload from Supabase when returning to the tab (multi-device sync).
   // Reads from React state (Fase B — localStorage is no longer written on a
   // successful load, so reading it here would sync stale/empty arrays over
   // real data). Depends on the same 5 arrays as the debounced-sync effect so
-  // this closure is never stale.
+  // this closure is never stale. Same identity-scoped gating as the effect
+  // above, and for the same reason — see comment there.
   useEffect(()=>{
     const handleVisChange=()=>{
-      if(document.visibilityState==="hidden"&&window._iziUserId&&mode!=="student_portal"&&dataReady&&!dataLoadFailed){
+      if(document.visibilityState==="hidden"&&user?.id&&mode!=="student_portal"&&dataReadyForCurrentIdentity&&!dataLoadFailedForCurrentIdentity){
         syncAll(students,classes,expenses,courts,packages);
       }
-      if(document.visibilityState==="visible"&&window._iziUserId&&mode!=="student_portal"){
-        loadData(window._iziUserId);
+      if(document.visibilityState==="visible"&&user?.id&&mode!=="student_portal"){
+        loadData(user?.id);
       }
     };
     document.addEventListener("visibilitychange",handleVisChange);
     return ()=>document.removeEventListener("visibilitychange",handleVisChange);
-  },[mode,dataReady,dataLoadFailed,students,classes,expenses,courts,packages]);
+  },[mode,dataReadyForCurrentIdentity,dataLoadFailedForCurrentIdentity,students,classes,expenses,courts,packages]);
 
-  // Single source of truth for turning a Supabase session into app state (user,
-  // coach/student/new, mode, onboarded, profile, loadData). Used by the auth-state
-  // listener below AND by the manual login callbacks (AuthFlow's onLogin), so there is
-  // exactly one place that decides what a session means.
-  // resolvedUserIdRef guards against re-running the full resolution (profile fetch +
-  // loadData) for a session we've already resolved — e.g. TOKEN_REFRESHED for the same
-  // user, or the SIGNED_IN event that follows a manual login we already resolved via
-  // onLogin. Only the user/token is refreshed in that case.
-  const resolvedUserIdRef=useRef(null);
-  // A profile lookup can transiently fail (401 while a fresh session's auth header is
-  // still propagating, a network hiccup, an unexpected REST error) — that must never be
-  // read as "no profile exists". PGRST116 ("0 or >1 rows" from .single()) is the only
-  // outcome that legitimately means "no match in this table, keep checking" — anything
-  // else gets exactly one delayed retry before being treated as a real failure.
-  const queryProfile=async(table,userId,selectCols)=>{
-    let result=await supabase.from(table).select(selectCols).eq("id",userId).single();
-    if(result.error&&result.error.code!=="PGRST116"){
-      await new Promise(r=>setTimeout(r,400));
-      result=await supabase.from(table).select(selectCols).eq("id",userId).single();
-    }
-    return result;
-  };
-  const resolveSession=async(session)=>{
-    if(!session?.user){
-      resolvedUserIdRef.current=null;
-      setUserWithRef(null);
-      setModeP(null);
-      setOnboardedP(false);
+  // Business-data hydration for a resolved identity (Fase D). resolveSession (now in
+  // auth/, owned by AuthProvider) only resolves identity — it has no access to these
+  // data-state closures, since AuthProvider is mounted above App in main.jsx. This
+  // effect is what used to run inline inside resolveSession for the coach and
+  // student_portal branches; moved here, same calls, same conditions, one render
+  // tick later. dataReady/dataLoadFailed stay owned here, not in AuthProvider —
+  // reused as-is, no new loading state introduced.
+  useEffect(()=>{
+    // First line, synchronous: this is the identity as of *this* invocation.
+    // Any loadData/loadAllFromSupabase call started by a previous invocation
+    // checks this after its await — if it no longer matches what it started
+    // with, that call is superseded and must not call any setter.
+    activeIdentityRef.current=user?.id||null;
+    if(!user){
       setDataReady(false);
       setDataLoadFailed(false);
       return;
     }
-    const alreadyResolved=resolvedUserIdRef.current===session.user.id;
-    setUserWithRef(session.user);
-    if(alreadyResolved) return;
-    resolvedUserIdRef.current=session.user.id;
-    setCheckingProfile(true);
-    // PGRST116 (0 rows) is a recoverable case, not an error: no coaches row yet
-    // (signup never creates one — Fase C) or a genuinely partial account from
-    // before onboarding completed. Either way it must fall through to coach_new,
-    // never be treated as a lookup failure. Any other error aborts below.
-    const {data,error}=await queryProfile("coaches",session.user.id,"name,currency,sport,photo,onboarded");
-    if(error&&error.code!=="PGRST116"){
-      console.error("resolveSession: coach profile lookup failed after retry, not resolving as new user:",error);
-      resolvedUserIdRef.current=null;
-      setUserWithRef(null);
-      setCheckingProfile(false);
-      setDataReady(false);
-      setDataLoadFailed(false);
-      return;
-    }
-    // onboarded===true (not just "row exists") is the only source of truth for
-    // "this coach can skip onboarding" — a row that exists with onboarded=false
-    // (or missing entirely) is a recoverable partial account, routed to
-    // coach_new below exactly like a brand-new signup.
-    if(data?.onboarded===true){
-      setModeP("coach");setOnboardedP(true);if(data.currency)setCUR(data.currency);
-      setCoachProfileRaw({name:data.name,sport:data.sport||"",photo:data.photo||null,currency:data.currency||"₲"});
-      const loaded=await loadData(session.user.id);
-      if(loaded){
-        // A real read of this coach's own data completed (rows, or confirmed
-        // zero) — only now is it safe to let the auto-sync effect run.
-        setDataLoadFailed(false);
-        setDataReady(true);
-      } else {
-        // loadData couldn't get a real read — never treat that as "empty
-        // account". dataReady stays false (auto-sync stays blocked) and
-        // dataLoadFailed surfaces the retry screen instead of an empty dashboard.
-        setDataReady(false);
-        setDataLoadFailed(true);
-      }
-    } else {
-      const {data:sa,error:saErr}=await queryProfile("student_auth",session.user.id,"*");
-      if(saErr&&saErr.code!=="PGRST116"){
-        console.error("resolveSession: student profile lookup failed after retry, not resolving as new user:",saErr);
-        resolvedUserIdRef.current=null;
-        setUserWithRef(null);
-        setCheckingProfile(false);
-        setDataReady(false);
-        setDataLoadFailed(false);
-        return;
-      }
-      if(sa){
-        lsSet("izi_student_coach_id", sa.coach_id);
-        localStorage.setItem("izi_student_id_raw", String(sa.student_id));
+    if(mode==="coach"){
+      if(dataReadyForCurrentIdentity||dataLoadFailedForCurrentIdentity) return;
+      const myUserId=user.id;
+      (async()=>{
+        const loaded=await loadData(myUserId);
+        if(activeIdentityRef.current!==myUserId) return;
+        if(loaded){
+          // A real read of this coach's own data completed (rows, or confirmed
+          // zero) — only now is it safe to let the auto-sync effect run.
+          setDataLoadFailed(false);
+          setDataReady(true);
+        } else {
+          // loadData couldn't get a real read — never treat that as "empty
+          // account". dataReady stays false (auto-sync stays blocked) and
+          // dataLoadFailed surfaces the retry screen instead of an empty dashboard.
+          setDataReady(false);
+          setDataLoadFailed(true);
+        }
+        // Whichever branch above ran, dataReady/dataLoadFailed now describe
+        // myUserId's outcome — record that so a later identity can never read
+        // this coach's ready/error state as its own.
+        hydratedIdentityRef.current=myUserId;
+      })();
+    } else if(mode==="coach_new"){
+      // Confirmed new coach: no profile, no data — the auto-sync effect can run
+      // safely because state is (and must stay) empty until they create something.
+      if(!dataReadyForCurrentIdentity){setDataReady(true);setDataLoadFailed(false);hydratedIdentityRef.current=user.id;}
+    } else if(mode==="student_portal"){
+      if(dataReadyForCurrentIdentity||dataLoadFailedForCurrentIdentity) return;
+      const myUserId=user.id;
+      const coachId=ls("izi_student_coach_id",null);
+      if(!coachId){setDataReady(true);hydratedIdentityRef.current=myUserId;return;}
+      (async()=>{
         try{
-          const cdResult=await loadAllFromSupabase(sa.coach_id);
+          const cdResult=await loadAllFromSupabase(coachId);
+          if(activeIdentityRef.current!==myUserId) return;
           if(!cdResult.ok){console.error("student load error:",cdResult.error);}
           else{
             const cd=cdResult.data;
@@ -6674,34 +6664,16 @@ export default function App() {
             if(cl.length>0){setClassesRaw(cl);}
             if(f.length>0){setFamiliesRaw(f);}
           }
-        }catch(e){console.error("student load error:",e);}
-        setModeP("student_portal");
+        }catch(e){
+          console.error("student load error:",e);
+          if(activeIdentityRef.current!==myUserId) return;
+        }
         setDataReady(true);
         setDataLoadFailed(false);
-      } else {
-        // Confirmed new coach: no profile, no data — the auto-sync effect can run
-        // safely because state is (and must stay) empty until they create something.
-        setModeP("coach_new");setOnboardedP(false);setDataReady(true);setDataLoadFailed(false);
-      }
+        hydratedIdentityRef.current=myUserId;
+      })();
     }
-    setCheckingProfile(false);
-  };
-
-  // Auth restoration relies solely on onAuthStateChange's INITIAL_SESSION event (fired
-  // once, right after the client loads the session from storage) instead of a separate
-  // getSession() call — calling both raced, and getSession() could resolve with a stale
-  // "no session" result before the client finished restoring, showing the login screen
-  // even though a valid session existed (fixed by a manual refresh, which re-ran the race
-  // and usually won it). loadingAuth now only clears after this listener's first event.
-  useEffect(()=>{
-    let firstEventHandled=false;
-    const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,session)=>{
-      resolveSession(session).finally(()=>{
-        if(!firstEventHandled){firstEventHandled=true;setLoadingAuth(false);}
-      });
-    });
-    return ()=>subscription.unsubscribe();
-  },[]);
+  },[mode,user?.id]);
 
   // Single write for the whole signup+onboarding flow (Fase C). Nothing local
   // (coachProfile, courts, packages, currency, onboarded, mode) is touched
@@ -6738,14 +6710,11 @@ export default function App() {
   },[]);
 
   const handleLogout=async()=>{
-    await supabase.auth.signOut();
+    await authLogout();
     // Clear all izi_ keys so next user gets fresh data from Supabase
     Object.keys(localStorage).filter(k=>k.startsWith("izi_")).forEach(k=>localStorage.removeItem(k));
-    setUserWithRef(null);
-    window._iziUserId=null;
     setStudentsRaw([]);setClassesRaw([]);setCourtsRaw([]);setPackagesRaw([]);setFamiliesRaw([]);
     setCoachProfileRaw({name:"Coach",sport:"",photo:null});setExpensesRaw([]);
-    setMode(null);setModeP(null);setOnboarded(false);setOnboardedP(false);
     setDataReady(false);
     setDataLoadFailed(false);
   };
@@ -6755,10 +6724,14 @@ export default function App() {
   // spinner — no new loading UI needed.
   const retryLoadData=async()=>{
     if(!user?.id) return;
+    const myUserId=user.id;
     setCheckingProfile(true);
-    const loaded=await loadData(user.id);
-    if(loaded){setDataLoadFailed(false);setDataReady(true);}
-    else{setDataReady(false);setDataLoadFailed(true);}
+    const loaded=await loadData(myUserId);
+    if(activeIdentityRef.current===myUserId){
+      if(loaded){setDataLoadFailed(false);setDataReady(true);}
+      else{setDataReady(false);setDataLoadFailed(true);}
+      hydratedIdentityRef.current=myUserId;
+    }
     setCheckingProfile(false);
   };
 
@@ -6857,10 +6830,10 @@ export default function App() {
     setClassesRaw(newClasses);lsSet("izi_classes",newClasses);
     setStudentsRaw(newStudents);lsSet("izi_students",newStudents);
     setExpensesRaw(newExpenses);lsSet("izi_expenses",newExpenses);
-    if(window._iziUserId){
-      syncToSupabase(window._iziUserId,"students",newStudents);
-      syncToSupabase(window._iziUserId,"classes",newClasses);
-      syncToSupabase(window._iziUserId,"expenses",newExpenses);
+    if(user?.id){
+      syncToSupabase(user?.id,"students",newStudents);
+      syncToSupabase(user?.id,"classes",newClasses);
+      syncToSupabase(user?.id,"expenses",newExpenses);
     }
   };
 
@@ -7031,7 +7004,7 @@ export default function App() {
   };
 
   const [pendingReprog,setPendingReprog]=useState(null);
-  const handleRefresh=async()=>{if(window._iziUserId)await loadData(window._iziUserId);};
+  const handleRefresh=async()=>{if(user?.id)await loadData(user?.id);};
 
   const handleNavigate=(section,params)=>{
     setTab(section);
@@ -7337,7 +7310,18 @@ export default function App() {
     {id:"cobros",label:"Cobros"},{id:"finanzas",label:"Finanzas"},
   ];
 
-  if(loadingAuth||checkingProfile){
+  // checkingProfile only covers identity resolution now (Fase D) — loadData for
+  // "coach" and the student data fetch for "student_portal" run afterward, in the
+  // effect above. Without this extra clause there'd be a render tick between
+  // identity resolving and dataReady flipping where the dashboard/student portal
+  // would flash with stale/empty state. Uses the identity-scoped versions, not
+  // raw dataReady/dataLoadFailed — during an A→B switch the raw booleans can
+  // still read as A's for one or more renders, which would let this fall through
+  // to A's dashboard/retry screen under B's identity. dataLoadFailedForCurrentIdentity
+  // is excluded from the loading condition so a real (current-identity) load
+  // failure falls through to its own retry screen below instead of spinning forever.
+  const awaitingBusinessData=(mode==="coach"||mode==="student_portal")&&!dataReadyForCurrentIdentity&&!dataLoadFailedForCurrentIdentity;
+  if(loadingAuth||checkingProfile||awaitingBusinessData){
     return (
     <div style={{width:"100vw",height:"100vh",position:"fixed",top:0,left:0,display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",zIndex:9999}}>
       <div style={{textAlign:"center",color:"#fff"}}>
@@ -7364,7 +7348,7 @@ export default function App() {
   );
   }
 
-  if(dataLoadFailed){
+  if(dataLoadFailedForCurrentIdentity){
     return (
       <div style={{width:"100vw",height:"100vh",position:"fixed",top:0,left:0,display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",zIndex:9999,padding:24}}>
         <div style={{textAlign:"center",color:"#fff",maxWidth:320}}>
@@ -7424,20 +7408,20 @@ export default function App() {
                       {id:0,name:user?.email||"Alumno",avatar:"A",sport:"",combos:[]};
     return (
       <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden"}}>
-        <StudentApp student={studentData||{id:0,name:"Alumno",avatar:"A",sport:"",combos:[]}} onExit={async()=>{await supabase.auth.signOut();setUserWithRef(null);setMode(null);localStorage.clear();}} classes={xClasses} notifications={notifications} sendNotification={sendNotification} coachId={(()=>{try{const v=localStorage.getItem("izi_student_coach_id");return v?JSON.parse(v):null;}catch{return localStorage.getItem("izi_student_coach_id");}})()} students={students} families={families}/>
+        <StudentApp student={studentData||{id:0,name:"Alumno",avatar:"A",sport:"",combos:[]}} onExit={async()=>{await authLogout();localStorage.clear();}} classes={xClasses} notifications={notifications} sendNotification={sendNotification} coachId={(()=>{try{const v=localStorage.getItem("izi_student_coach_id");return v?JSON.parse(v):null;}catch{return localStorage.getItem("izi_student_coach_id");}})()} students={students} families={families}/>
       </div>
     );
   }
 
   if(mode==="student_new") return (
     <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden"}}>
-      <StudentApp student={students[students.length-1]||{id:99,name:"Alumno",avatar:"AL",sport:"",combos:[]}} onExit={()=>setMode(null)} classes={xClasses} notifications={notifications} sendNotification={sendNotification}/>
+      <StudentApp student={students[students.length-1]||{id:99,name:"Alumno",avatar:"AL",sport:"",combos:[]}} onExit={()=>authLogout()} classes={xClasses} notifications={notifications} sendNotification={sendNotification}/>
     </div>
   );
 
   if(mode==="student") return (
     <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden"}}>
-      <StudentApp student={{id:99,name:"Martina López",avatar:"ML",sport:"Tenis",phone:"0981 123 456",email:"alumno@test.com",combos:[{id:1,total:8,used:6,paid:true,date:"2026-06-01",amount:400000}]}} onExit={()=>setMode(null)} classes={INIT_CLASSES} notifications={notifications} sendNotification={sendNotification}/>
+      <StudentApp student={{id:99,name:"Martina López",avatar:"ML",sport:"Tenis",phone:"0981 123 456",email:"alumno@test.com",combos:[{id:1,total:8,used:6,paid:true,date:"2026-06-01",amount:400000}]}} onExit={()=>authLogout()} classes={INIT_CLASSES} notifications={notifications} sendNotification={sendNotification}/>
     </div>
   );
 
