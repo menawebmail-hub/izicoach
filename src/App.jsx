@@ -1108,9 +1108,12 @@ function AuthFlow({ onLogin, onStudentLogin }) {
     setLoading(true);setErr("");
     const {data,error}=await supabase.auth.signUp({email,password:pass});
     if(error){setErr(error.message);setLoading(false);return;}
+    // No coaches row is created here (Fase C) — resolveSession treats a missing
+    // row as PGRST116 and routes to coach_new/onboarding on its own. The only
+    // write to `coaches` in the whole signup+onboarding flow is the single
+    // upsert in handleOnboardingComplete.
     if(data.user){
       localStorage.clear();
-      await supabase.from("coaches").insert({id:data.user.id,email,currency:"₲"});
     }
     onLogin(data.user);setLoading(false);
   };
@@ -6051,7 +6054,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
     </div>
   );
 }
-function OnboardingFlow({ onComplete }) {
+function OnboardingFlow({ onComplete, saveFailed }) {
   const [step,setStep]=useState(0);
   const [profName,setProfName]=useState("");
   const [profSport,setProfSport]=useState("");
@@ -6256,8 +6259,9 @@ function OnboardingFlow({ onComplete }) {
               <div key={i} style={{fontSize:14,color:"rgba(255,255,255,0.9)",padding:"6px 0",borderBottom:i<arr.length-1?"1px solid rgba(255,255,255,0.15)":"none",textAlign:"left"}}>{item}</div>
             ))}
           </div>
+          {saveFailed&&<div style={{background:"rgba(229,57,53,0.3)",borderRadius:10,padding:"10px 14px",fontSize:13,color:"#FFCDD2",marginBottom:16,width:"100%",boxSizing:"border-box"}}>No pudimos guardar tu perfil. Tus datos siguen acá — probá de nuevo.</div>}
           <button onClick={()=>onComplete({name:profName,sport:profSport==="Otras"?profSportCustom||"Otras":profSport,photo:profPhoto,courts,packages,country:profCountry,currency:selectedCountry?.currency||"₲"})} style={{width:"100%",padding:"18px",borderRadius:16,border:"none",background:"#fff",color:"#1565C0",fontSize:16,cursor:"pointer",fontWeight:900,marginBottom:12}}>
-            🚀 Crear mi primera clase
+            {saveFailed?"🔁 Reintentar":"🚀 Crear mi primera clase"}
           </button>
           <button onClick={()=>onComplete({name:profName,sport:profSport,photo:profPhoto,courts,packages,skipToHome:true,country:profCountry,currency:selectedCountry?.currency||"₲"})} style={{background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,0.6)",fontSize:13}}>
             Ir al dashboard →
@@ -6415,6 +6419,10 @@ export default function App() {
   // alone can't express. Must disappear in Fase E, replaced by CoachDataProvider's
   // idle|loading|ready|error. Do not build anything permanent on top of this.
   const [dataLoadFailed,setDataLoadFailed]=useState(false);
+  // TEMPORARY (Fase C) — true only when handleOnboardingComplete's coaches
+  // upsert failed. Purely a display flag for OnboardingFlow's retry banner;
+  // does not gate auth/data state the way dataReady/dataLoadFailed do.
+  const [onboardingSaveFailed,setOnboardingSaveFailed]=useState(false);
 
   // Sync helpers - store all data as JSON blob per coach
   const syncAll=async(newStudents, newClasses, newExpenses, newCourts, newPackages)=>{
@@ -6608,7 +6616,11 @@ export default function App() {
     if(alreadyResolved) return;
     resolvedUserIdRef.current=session.user.id;
     setCheckingProfile(true);
-    const {data,error}=await queryProfile("coaches",session.user.id,"name,currency,sport,photo");
+    // PGRST116 (0 rows) is a recoverable case, not an error: no coaches row yet
+    // (signup never creates one — Fase C) or a genuinely partial account from
+    // before onboarding completed. Either way it must fall through to coach_new,
+    // never be treated as a lookup failure. Any other error aborts below.
+    const {data,error}=await queryProfile("coaches",session.user.id,"name,currency,sport,photo,onboarded");
     if(error&&error.code!=="PGRST116"){
       console.error("resolveSession: coach profile lookup failed after retry, not resolving as new user:",error);
       resolvedUserIdRef.current=null;
@@ -6618,7 +6630,11 @@ export default function App() {
       setDataLoadFailed(false);
       return;
     }
-    if(data?.name){
+    // onboarded===true (not just "row exists") is the only source of truth for
+    // "this coach can skip onboarding" — a row that exists with onboarded=false
+    // (or missing entirely) is a recoverable partial account, routed to
+    // coach_new below exactly like a brand-new signup.
+    if(data?.onboarded===true){
       setModeP("coach");setOnboardedP(true);if(data.currency)setCUR(data.currency);
       setCoachProfileRaw({name:data.name,sport:data.sport||"",photo:data.photo||null,currency:data.currency||"₲"});
       const loaded=await loadData(session.user.id);
@@ -6687,16 +6703,30 @@ export default function App() {
     return ()=>subscription.unsubscribe();
   },[]);
 
+  // Single write for the whole signup+onboarding flow (Fase C). Nothing local
+  // (coachProfile, courts, packages, currency, onboarded, mode) is touched
+  // until Supabase confirms the upsert — on failure the wizard (OnboardingFlow)
+  // stays mounted with all its local state intact (mode/onboarded didn't
+  // change, so App keeps rendering the same OnboardingFlow instance) and shows
+  // a minimal error/retry instead.
   const handleOnboardingComplete=async(data)=>{
+    const profile={name:data.name||"Coach",sport:data.sport||"",photo:data.photo||null,currency:data.currency||"₲",country:data.country||""};
+    if(!user){
+      console.error("handleOnboardingComplete: no authenticated user, cannot save profile.");
+      setOnboardingSaveFailed(true);
+      return;
+    }
+    const {error}=await supabase.from("coaches").upsert({id:user.id,...profile,email:user.email,onboarded:true});
+    if(error){
+      console.error("handleOnboardingComplete: coaches upsert failed, not marking onboarded:",error);
+      setOnboardingSaveFailed(true);
+      return;
+    }
+    setOnboardingSaveFailed(false);
     if(data.courts?.length) setCourts(data.courts);
     if(data.packages?.length) setPackages(data.packages);
     setCUR(data.currency||"₲"); setCurrency(data.currency||"₲");
-    const profile={name:data.name||"Coach",sport:data.sport||"",photo:data.photo||null,currency:data.currency||"₲",country:data.country||""};
-    setCoachProfile(profile);
-    // Save profile to Supabase so next login goes to dashboard
-    if(user){
-      await supabase.from("coaches").upsert({id:user.id,...profile,email:user.email});
-    }
+    setCoachProfileRaw(profile);
     setOnboardedP(true);
     setModeP("coach");
     if(!data.skipToHome) setShowNewClass(true);
@@ -7413,7 +7443,7 @@ export default function App() {
 
   if((mode==="coach_new"||mode==="coach")&&!onboarded) return (
     <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column"}}>
-      <OnboardingFlow onComplete={handleOnboardingComplete}/>
+      <OnboardingFlow onComplete={handleOnboardingComplete} saveFailed={onboardingSaveFailed}/>
     </div>
   );
 
