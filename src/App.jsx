@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import { supabase } from "./services/supabaseClient.js";
-import { loadAllFromSupabase, syncToSupabase } from "./data/coachData.js";
+import { loadAllFromSupabase, syncToSupabase, cancelPendingSync } from "./data/coachData.js";
 import { useAuth } from "./auth/useAuth.js";
 
 // Inject Inter font
@@ -6446,6 +6446,11 @@ export default function App() {
   const syncAll=async(newStudents, newClasses, newExpenses, newCourts, newPackages)=>{
     const userId=user?.id;
     if(!userId) return;
+    // E1: userId comes from this closure's `user`, which can be stale if this
+    // function instance was captured before the active identity changed —
+    // activeIdentityRef is always current, so this catches that case before
+    // scheduling any write under a coachId that's no longer active.
+    if(activeIdentityRef.current!==userId) return;
     // Validate data before saving - must be arrays
     if(!Array.isArray(newStudents)||!Array.isArray(newClasses)) return;
     try {
@@ -6473,14 +6478,14 @@ export default function App() {
       setStudentsRaw(prev=>{
         const next=applyGuard(v(prev));
         lsSet("izi_students",next);
-        syncToSupabase(user?.id,"students",next);
+        if(activeIdentityRef.current===user?.id) syncToSupabase(user?.id,"students",next);
         return next;
       });
     } else {
       const next=applyGuard(v);
       setStudentsRaw(next);
       lsSet("izi_students",next);
-      syncToSupabase(user?.id,"students",next);
+      if(activeIdentityRef.current===user?.id) syncToSupabase(user?.id,"students",next);
     }
   };
   // IMPORTANT: keep functional updates. Do not replace prev with closure state.
@@ -6490,21 +6495,21 @@ export default function App() {
       setClassesRaw(prev=>{
         const next=v(prev);
         lsSet("izi_classes",next);
-        syncToSupabase(user?.id,"classes",next);
+        if(activeIdentityRef.current===user?.id) syncToSupabase(user?.id,"classes",next);
         return next;
       });
     } else {
       setClassesRaw(v);
       lsSet("izi_classes",v);
-      syncToSupabase(user?.id,"classes",v);
+      if(activeIdentityRef.current===user?.id) syncToSupabase(user?.id,"classes",v);
     }
   };
-  const setCourts=(v)=>{if(typeof v==="function"){setCourtsRaw(prev=>{const next=v(prev);lsSet("izi_courts",next);syncToSupabase(user?.id,"courts",next);return next;});}else{setCourtsRaw(v);lsSet("izi_courts",v);syncToSupabase(user?.id,"courts",v);}};
-  const setPackages=(v)=>{if(typeof v==="function"){setPackagesRaw(prev=>{const next=v(prev);lsSet("izi_packages",next);syncToSupabase(user?.id,"packages",next);return next;});}else{setPackagesRaw(v);lsSet("izi_packages",v);syncToSupabase(user?.id,"packages",v);}};
+  const setCourts=(v)=>{if(typeof v==="function"){setCourtsRaw(prev=>{const next=v(prev);lsSet("izi_courts",next);if(activeIdentityRef.current===user?.id)syncToSupabase(user?.id,"courts",next);return next;});}else{setCourtsRaw(v);lsSet("izi_courts",v);if(activeIdentityRef.current===user?.id)syncToSupabase(user?.id,"courts",v);}};
+  const setPackages=(v)=>{if(typeof v==="function"){setPackagesRaw(prev=>{const next=v(prev);lsSet("izi_packages",next);if(activeIdentityRef.current===user?.id)syncToSupabase(user?.id,"packages",next);return next;});}else{setPackagesRaw(v);lsSet("izi_packages",v);if(activeIdentityRef.current===user?.id)syncToSupabase(user?.id,"packages",v);}};
   // IMPORTANT: keep functional updates. Do not replace prev with closure state.
-  const setFamilies=(v)=>{if(typeof v==="function"){setFamiliesRaw(prev=>{const next=v(prev);lsSet("izi_families",next);syncToSupabase(user?.id,"families",next);return next;});}else{setFamiliesRaw(v);lsSet("izi_families",v);syncToSupabase(user?.id,"families",v);}};
+  const setFamilies=(v)=>{if(typeof v==="function"){setFamiliesRaw(prev=>{const next=v(prev);lsSet("izi_families",next);if(activeIdentityRef.current===user?.id)syncToSupabase(user?.id,"families",next);return next;});}else{setFamiliesRaw(v);lsSet("izi_families",v);if(activeIdentityRef.current===user?.id)syncToSupabase(user?.id,"families",v);}};
   const setCoachProfile=(v)=>{const next=typeof v==="function"?v(coachProfile):v;setCoachProfileRaw(next);lsSet("izi_profile",next);if(user?.id)supabase.from("coaches").upsert({id:user?.id,...next}).then(res=>{if(res.error)console.error("Coach profile upsert error:",res.error.message);else console.log("Coach profile saved to Supabase");});};
-  const setExpenses=(v)=>{if(typeof v==="function"){setExpensesRaw(prev=>{const next=v(prev);lsSet("izi_expenses",next);syncToSupabase(user?.id,"expenses",next);return next;});}else{setExpensesRaw(v);lsSet("izi_expenses",v);syncToSupabase(user?.id,"expenses",v);}};
+  const setExpenses=(v)=>{if(typeof v==="function"){setExpensesRaw(prev=>{const next=v(prev);lsSet("izi_expenses",next);if(activeIdentityRef.current===user?.id)syncToSupabase(user?.id,"expenses",next);return next;});}else{setExpensesRaw(v);lsSet("izi_expenses",v);if(activeIdentityRef.current===user?.id)syncToSupabase(user?.id,"expenses",v);}};
 
   // Returns true only for a real read of this coach's own business data (with
   // rows, or legitimately zero rows) — false for a real failure (Supabase error,
@@ -6614,7 +6619,15 @@ export default function App() {
     // Any loadData/loadAllFromSupabase call started by a previous invocation
     // checks this after its await — if it no longer matches what it started
     // with, that call is superseded and must not call any setter.
-    activeIdentityRef.current=user?.id||null;
+    // E1: whoever was active a moment ago (if anyone, and if it actually
+    // changed) may have writes still waiting on syncToSupabase's debounce —
+    // cancel those before moving on, so they never fire under a coachId
+    // that's no longer current. Only cancels what hasn't run yet; a write
+    // already in flight keeps going (correct coach_id, nothing to invalidate).
+    const previousIdentity=activeIdentityRef.current;
+    const nextIdentity=user?.id||null;
+    if(previousIdentity&&previousIdentity!==nextIdentity) cancelPendingSync(previousIdentity);
+    activeIdentityRef.current=nextIdentity;
     if(!user){
       setDataReady(false);
       setDataLoadFailed(false);
