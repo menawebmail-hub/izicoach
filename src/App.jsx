@@ -7392,6 +7392,13 @@ export default function App() {
         setModeP("student_portal");
         setDataReady(true);
         setDataLoadFailed(false);
+        // E0 (post-Fase-D fix): this is the one path that settles dataReady
+        // without going through the hydration effect, so it must also record
+        // hydratedIdentityRef itself — otherwise dataReadyForCurrentIdentity
+        // reads false on the next render (hydratedIdentityRef still doesn't
+        // match u.id) and the hydration effect's student_portal branch redoes
+        // this exact loadAllFromSupabase call a second time, redundantly.
+        hydratedIdentityRef.current=u.id;
         setCheckingProfile(false);
       }}/>
     </div>
