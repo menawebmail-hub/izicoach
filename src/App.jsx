@@ -6839,15 +6839,14 @@ export default function App() {
     // Remove expenses related to this class's students
     const studentNames=(cls.students||[]).map(sid=>students.find(s=>s.id===sid)?.name).filter(Boolean);
     const newExpenses=expenses.filter(e=>!(e.category==="Cobros clases"&&studentNames.includes(e.note)&&allDatesInSeries.has(e.date)));
-    // Update state and sync both together
-    setClassesRaw(newClasses);lsSet("izi_classes",newClasses);
-    setStudentsRaw(newStudents);lsSet("izi_students",newStudents);
-    setExpensesRaw(newExpenses);lsSet("izi_expenses",newExpenses);
-    if(user?.id){
-      syncToSupabase(user?.id,"students",newStudents);
-      syncToSupabase(user?.id,"classes",newClasses);
-      syncToSupabase(user?.id,"expenses",newExpenses);
-    }
+    // E2a: routed through the wrapped setters instead of hand-rolling
+    // setXRaw+lsSet+syncToSupabase for each — same net effect (React batches
+    // these into one render regardless), but now goes through applyGuard
+    // (setStudents) and picks up the E1 activeIdentityRef guard that this
+    // path didn't have before.
+    setClasses(newClasses);
+    setStudents(newStudents);
+    setExpenses(newExpenses);
   };
 
   // --- Pure helper: calculate updated combo dates after occurrence change ---
