@@ -75,6 +75,11 @@ export function syncToSupabase(coachId, key, value) {
 
 // Unused elsewhere in the app today (confirmed by grep during the original
 // audit) — moved as-is for completeness, not wired into anything new.
+// KNOWN ISSUE, not fixed here (audited for E2b): missing coachId, "no row for
+// this key" (PGRST116), and a real Supabase/network error all return the
+// same `null` — the `error` half of the destructure is discarded. Callers
+// that need to tell those apart should use loadAllFromSupabase, whose
+// {ok,data|error} contract already distinguishes them.
 export async function loadFromSupabase(coachId, key) {
   if (!coachId) return null;
   try {

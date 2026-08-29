@@ -5552,6 +5552,7 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
 function StudentApp({ student: initialStudent, onExit, classes=[], notifications=[], sendNotification, coachId, students=[], families=[] }) {
   const [tab,setTab]=useState("home");
   const [student,setStudent]=useState(initialStudent);
+  const [saveError,setSaveError]=useState(null); // null | "error"
   // Family account view: only visible if this student is the family's payment representative.
   // student.familyId remains the sole membership source; nothing here writes payment data.
   const myFamily=(families||[]).find(f=>f.responsible?.studentId===student.id);
@@ -5599,21 +5600,27 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
     supabase.from("messages").update({read:true}).eq("coach_id",coachId).eq("student_id",student.id).eq("from_coach",true).eq("read",false)
       .then(({error})=>{if(error)console.error("mark read error:",error);});
   },[tab,coachId,student?.id]);
+  // E2b: routed through the update_my_student_profile RPC (SECURITY DEFINER,
+  // resolves coach_id/student_id server-side from auth.uid() via
+  // student_auth, locks and patches the matching student atomically) —
+  // replaces the earlier client-side optimistic-concurrency version, whose
+  // CAS reads/writes were themselves blocked by RLS for a student session
+  // (coach_data has no UPDATE policy for students; the RPC is the only
+  // sanctioned write path). No coachId/studentId sent — the RPC doesn't
+  // accept them. Only navigates away once the RPC confirms success; any
+  // failure keeps the edit screen up with the typed fields untouched.
   const saveProfile=async()=>{
-    try{
-      const cId=coachId||(localStorage.getItem("izi_student_coach_id")?.replace(/"/g,""));
-      const studentIdRaw=localStorage.getItem("izi_student_id_raw");
-      if(cId&&studentIdRaw){
-        const {data:rows}=await supabase.from("coach_data").select("data_value").eq("coach_id",cId).eq("data_key","students");
-        const studData=rows&&rows[0]?rows[0].data_value:null;
-        if(studData){
-          const studs=Array.isArray(studData)?studData:JSON.parse(studData);
-          const updated=studs.map(s=>String(s.id)===studentIdRaw?{...s,name:student.name,phone:student.phone||"",email:student.email||""}:s);
-          await supabase.from("coach_data").upsert({coach_id:cId,data_key:"students",data_value:updated,updated_at:new Date().toISOString()},{onConflict:"coach_id,data_key"});
-          localStorage.setItem("izi_students",JSON.stringify(updated));
-        }
-      }
-    }catch(e){console.error("saveProfile error:",e);}
+    setSaveError(null);
+    const {error}=await supabase.rpc("update_my_student_profile",{
+      p_name:student.name,
+      p_phone:student.phone||"",
+      p_email:student.email||"",
+    });
+    if(error){
+      console.error("saveProfile error:",error);
+      setSaveError("error");
+      return;
+    }
     setTab("home");
   };
   const attLogs=[];
@@ -6017,6 +6024,11 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                 </div>
               ))}
               <button onClick={saveProfile} style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:700}}>Guardar cambios</button>
+              {saveError==="error"&&(
+                <div style={{marginTop:10,padding:10,borderRadius:10,background:"#FFEBEE",border:"1px solid #FFCDD2"}}>
+                  <div style={{fontSize:12,color:"#C62828"}}>No pudimos guardar los cambios. Revisá tu conexión e intentá de nuevo.</div>
+                </div>
+              )}
             </WhiteCard>
 
             {/* Password */}
