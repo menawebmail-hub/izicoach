@@ -836,7 +836,7 @@ const FamilyManager = forwardRef(function FamilyManager({ families, setFamilies,
 });
 
 
-function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, families, setFamilies, students, onUpdateStudent, onAddStudent, coachProfile, setCoachProfile, initialTab }) {
+function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, families, setFamilies, students, onUpdateStudent, onAddStudent, coachProfile, onSaveProfile, initialTab }) {
   const [section,setSection]=useState(initialTab||"general");
   const [showNewCourt,setShowNewCourt]=useState(false);
   const [showNewPack,setShowNewPack]=useState(false);
@@ -852,6 +852,8 @@ function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, famil
   const [profSport,setProfSport]=useState(coachProfile?.sport||"");
   const [profPhoto,setProfPhoto]=useState(coachProfile?.photo||null);
   const [profSaved,setProfSaved]=useState(false);
+  const [profSaving,setProfSaving]=useState(false);
+  const [profError,setProfError]=useState(false);
   const [oldPass,setOldPass]=useState(""); const [newPass,setNewPass]=useState(""); const [newPass2,setNewPass2]=useState("");
   const [notifClases,setNotifClases]=useState(true); const [notifPagos,setNotifPagos]=useState(true); const [notifMensajes,setNotifMensajes]=useState(false);
   const iS={width:"100%",padding:"10px 12px",borderRadius:12,border:"1.5px solid "+C.border,fontSize:13,boxSizing:"border-box",background:C.white,color:C.text,outline:"none"};
@@ -867,10 +869,16 @@ function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, famil
     reader.readAsDataURL(file);
   };
 
-  const handleSaveProfile=()=>{
-    setCoachProfile(p=>({...p,name:profName,email:profEmail,phone:profPhone,sport:profSport,photo:profPhoto}));
-    setProfSaved(true);
-    setTimeout(()=>setProfSaved(false),2000);
+  const handleSaveProfile=async()=>{
+    setProfSaving(true);setProfError(false);
+    const result=await onSaveProfile({...coachProfile,name:profName,email:profEmail,phone:profPhone,sport:profSport,photo:profPhoto});
+    setProfSaving(false);
+    if(result.ok){
+      setProfSaved(true);
+      setTimeout(()=>setProfSaved(false),2000);
+    } else {
+      setProfError(true);
+    }
   };
   return (
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:299,display:"flex",flexDirection:"column",background:C.bg}}>
@@ -916,9 +924,14 @@ function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, famil
                 <input value={f.v} onChange={e=>f.s(e.target.value)} placeholder={f.p} style={iS}/>
               </div>
             ))}
-            <button onClick={handleSaveProfile} style={{width:"100%",padding:"14px",borderRadius:12,border:"none",background:profSaved?"linear-gradient(135deg,#2E7D32,#65CE5A)":"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:700,marginBottom:20,transition:"background 0.3s"}}>
-              {profSaved?"✓ Guardado!":"Guardar cambios"}
+            <button onClick={handleSaveProfile} disabled={profSaving} style={{width:"100%",padding:"14px",borderRadius:12,border:"none",background:profSaved?"linear-gradient(135deg,#2E7D32,#65CE5A)":"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:14,cursor:profSaving?"default":"pointer",fontWeight:700,marginBottom:profError?8:20,transition:"background 0.3s",opacity:profSaving?0.7:1}}>
+              {profSaving?"Guardando...":profSaved?"✓ Guardado!":"Guardar cambios"}
             </button>
+            {profError&&(
+              <div style={{marginBottom:20,padding:10,borderRadius:10,background:"#FFEBEE",border:"1px solid #FFCDD2"}}>
+                <div style={{fontSize:12,color:"#C62828"}}>No pudimos guardar los cambios. Revisá tu conexión e intentá de nuevo.</div>
+              </div>
+            )}
             {profPhoto&&(
               <button onClick={()=>setProfPhoto(null)} style={{width:"100%",padding:"12px",borderRadius:12,border:"1.5px solid #FFEBEE",background:"#FFEBEE",color:"#C62828",fontSize:13,cursor:"pointer",fontWeight:700,marginBottom:20}}>
                 🗑 Eliminar foto
@@ -2063,7 +2076,7 @@ function Students({ students, onAdd, onUpdate, onAddStudentDirect, onDelete, onC
   );
 }
 
-function InviteModal({ student, userId, onClose }) {
+function InviteModal({ student, userId, coachName, onClose }) {
   const [code,setCode]=useState("");
   const [loading,setLoading]=useState(true);
   const [copied,setCopied]=useState(false);
@@ -2073,8 +2086,7 @@ function InviteModal({ student, userId, onClose }) {
       .then((res)=>{
         if(res.data&&res.data.code){setCode(res.data.code);setLoading(false);return;}
         const c=Math.random().toString(36).slice(2,10).toUpperCase();
-        const coachName=(JSON.parse(localStorage.getItem("izi_profile")||"{}")).name||"";
-        supabase.from("invites").insert({code:c,coach_id:userId,student_id:student.id,used:false,coach_name:coachName})
+        supabase.from("invites").insert({code:c,coach_id:userId,student_id:student.id,used:false,coach_name:coachName||""})
           .then(()=>{setCode(c);setLoading(false);});
       });
   },[]);
@@ -6416,12 +6428,10 @@ export default function App() {
   const [courts,setCourtsRaw]=useState([]);
   const [packages,setPackagesRaw]=useState([]);
   const [families,setFamiliesRaw]=useState([]);
-  // PENDING ARCHITECTURE: this still hydrates from the same kind of global,
-  // non-coach-scoped localStorage key (izi_profile) that students/classes/etc.
-  // used to. Not fixed here — deliberately left out of this Paso's scope — but
-  // it's the same class of risk (a stale name/sport/photo from a previous coach
-  // in this browser could flash before loadData's real fetch overwrites it).
-  const [coachProfile,setCoachProfileRaw]=useState(()=>ls("izi_profile",{name:"Coach",sport:"",photo:null}));
+  // E3: arranca vacío, igual que students/classes/etc — izi_profile deja de
+  // ser fuente de hidratación (era global al navegador, no scoped por coach).
+  // Supabase (loadData / handleOnboardingComplete) es la única fuente real.
+  const [coachProfile,setCoachProfileRaw]=useState({name:"Coach",sport:"",photo:null});
   const [expenses,setExpensesRaw]=useState([]);
   // True only once the active coachId's own data has been loaded (existing coach)
   // or explicitly confirmed to not exist yet (coach_new) — gates the auto-sync
@@ -6520,7 +6530,18 @@ export default function App() {
   const setPackages=(v)=>{if(typeof v==="function"){setPackagesRaw(prev=>{const next=v(prev);lsSet("izi_packages",next);if(activeIdentityRef.current===user?.id)syncToSupabase(user?.id,"packages",next);return next;});}else{setPackagesRaw(v);lsSet("izi_packages",v);if(activeIdentityRef.current===user?.id)syncToSupabase(user?.id,"packages",v);}};
   // IMPORTANT: keep functional updates. Do not replace prev with closure state.
   const setFamilies=(v)=>{if(typeof v==="function"){setFamiliesRaw(prev=>{const next=v(prev);lsSet("izi_families",next);if(activeIdentityRef.current===user?.id)syncToSupabase(user?.id,"families",next);return next;});}else{setFamiliesRaw(v);lsSet("izi_families",v);if(activeIdentityRef.current===user?.id)syncToSupabase(user?.id,"families",v);}};
-  const setCoachProfile=(v)=>{const next=typeof v==="function"?v(coachProfile):v;setCoachProfileRaw(next);lsSet("izi_profile",next);if(user?.id)supabase.from("coaches").upsert({id:user?.id,...next}).then(res=>{if(res.error)console.error("Coach profile upsert error:",res.error.message);else console.log("Coach profile saved to Supabase");});};
+  // E3: explicit, awaited write — replaces the old setCoachProfile, which
+  // upserted to `coaches` as a fire-and-forget side effect of a generic
+  // state setter (error only logged, never surfaced; local state and "saved"
+  // UI updated before the write even resolved). Local state now only
+  // changes after Supabase confirms the write.
+  const saveCoachProfile=async(profile)=>{
+    if(!user?.id) return {ok:false,error:new Error("saveCoachProfile: no authenticated user")};
+    const {error}=await supabase.from("coaches").upsert({id:user.id,...profile});
+    if(error){console.error("saveCoachProfile error:",error);return {ok:false,error};}
+    setCoachProfileRaw(profile);
+    return {ok:true};
+  };
   const setExpenses=(v)=>{if(typeof v==="function"){setExpensesRaw(prev=>{const next=v(prev);lsSet("izi_expenses",next);if(activeIdentityRef.current===user?.id)syncToSupabase(user?.id,"expenses",next);return next;});}else{setExpensesRaw(v);lsSet("izi_expenses",v);if(activeIdentityRef.current===user?.id)syncToSupabase(user?.id,"expenses",v);}};
 
   // Returns true only for a real read of this coach's own business data (with
@@ -6576,8 +6597,15 @@ export default function App() {
       if(activeIdentityRef.current!==userId) return true;
       if(profileData){
         const profile={name:profileData.name||"Coach",sport:profileData.sport||"",photo:profileData.photo||null,phone:profileData.phone||"",email:profileData.email||"",currency:profileData.currency||""};
-        setCoachProfileRaw(profile);lsSet("izi_profile",profile);
-        if(profile.currency) setCUR(profile.currency);
+        setCoachProfileRaw(profile);
+        // E3: previously only _cur.v (setCUR) was kept in sync here; `currency`
+        // (the separate useState used as a remount key, line ~7468) was never
+        // updated by loadData at all — it only got a real value once, at
+        // onboarding, and relied on izi_profile's leftover snapshot to look
+        // right on later logins. That's gone now, so it needs the same sync
+        // _cur.v already gets, or a coach with a non-₲ currency would see the
+        // wrong one after every logout→login.
+        if(profile.currency){setCUR(profile.currency);setCurrency(profile.currency);}
       }
     }catch(e){ console.error("Coach profile load error (non-fatal):",e); }
     return true;
@@ -6729,11 +6757,6 @@ export default function App() {
     if(!data.skipToHome) setShowNewClass(true);
   };
 
-  // Set currency from saved profile on load
-  useEffect(()=>{
-    try{const p=JSON.parse(localStorage.getItem("izi_profile")||"{}");if(p.currency) setCUR(p.currency);}catch{}
-  },[]);
-
   const handleLogout=async()=>{
     await authLogout();
     // Clear all izi_ keys so next user gets fresh data from Supabase
@@ -6804,7 +6827,7 @@ export default function App() {
       ]);
       setExpenses(EXPENSES);
       setCUR("₲"); setCurrency("₲");
-      setCoachProfile({name:"Coach Carlos",sport:"Tenis",photo:null,currency:"₲"});
+      setCoachProfileRaw({name:"Coach Carlos",sport:"Tenis",photo:null,currency:"₲"});
       setOnboardedP(true);
     } else {
       setStudents([]);
@@ -6812,16 +6835,17 @@ export default function App() {
       setCourts([]);
       setPackages([]);
       setExpenses([]);
-      setCoachProfile({name:"Coach",sport:"",photo:null});
+      setCoachProfileRaw({name:"Coach",sport:"",photo:null});
     }
     setModeP(role);
   };
 
 
 
-  const [currency,setCurrency]=useState(()=>{
-    try{const p=JSON.parse(localStorage.getItem("izi_profile")||"{}");return p.currency||"₲";}catch{return "₲";}
-  });
+  // E3: no longer seeded from izi_profile — loadData now keeps this synced
+  // via setCurrency (see loadData's coach-profile fetch) instead of relying
+  // on a leftover localStorage snapshot.
+  const [currency,setCurrency]=useState("₲");
 
   const updateCurrency=(cur)=>{
     setCurrency(cur);
@@ -7469,14 +7493,14 @@ export default function App() {
         {tab==="dashboard"&&isFirstTime&&<EmptyDashboard onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)}/>}
         {tab==="dashboard"&&!isFirstTime&&<Dashboard students={students} classes={xClasses} onNavigate={handleNavigate} onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)} expenses={expenses} coachProfile={coachProfile} onRefresh={handleRefresh}/>}
         {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onAddStudentDirect={(s)=>setStudents(p=>[...p,s])} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={xClasses} onInvite={()=>setShowInvite(true)} userId={user?.id} onInviteStudent={(s)=>setInviteTarget(s)} onRefresh={handleRefresh} families={families} setFamilies={setFamilies}/>}
-        {inviteTarget&&<InviteModal student={inviteTarget} userId={user?.id} onClose={()=>setInviteTarget(null)}/>}
+        {inviteTarget&&<InviteModal student={inviteTarget} userId={user?.id} coachName={coachProfile.name} onClose={()=>setInviteTarget(null)}/>}
         {tab==="agenda"&&<Agenda students={students} classes={xClasses} rawClasses={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])} onRefresh={handleRefresh}/>}
         {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification} userId={user?.id} unreadChats={unreadChats} onMarkRead={(sid)=>setUnreadChats(p=>{const n={...p};delete n[String(sid)];return n;})}/>}
         {tab==="cobros"&&<Finances students={students} classes={xClasses} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance} families={families}/>}
         {tab==="finanzas"&&<Finances students={students} classes={xClasses} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages}/>}
         {showNewClass&&<NewClassModal onClose={()=>{setShowNewClass(false);if(classes.length===0)setTab("agenda");}} onSave={handleSaveClass} existingClasses={xClasses} students={students} dateLabel="Nueva clase" onCreateStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])}/>}
         {showNewStudent&&<NewStudentModal onClose={()=>setShowNewStudent(false)} onSave={(d)=>setStudents(p=>[...p,{id:Date.now(),...d}])}/>}
-        {showConfig&&<ConfigScreen onClose={()=>{setShowConfig(false);setConfigInitialTab(null);}} courts={courts} setCourts={setCourts} packages={packages} setPackages={setPackages} families={families} setFamilies={setFamilies} students={students} onUpdateStudent={updateStudent} onAddStudent={(s)=>setStudents(p=>[...p,s])} coachProfile={coachProfile} setCoachProfile={setCoachProfile} initialTab={configInitialTab}/>}
+        {showConfig&&<ConfigScreen onClose={()=>{setShowConfig(false);setConfigInitialTab(null);}} courts={courts} setCourts={setCourts} packages={packages} setPackages={setPackages} families={families} setFamilies={setFamilies} students={students} onUpdateStudent={updateStudent} onAddStudent={(s)=>setStudents(p=>[...p,s])} coachProfile={coachProfile} onSaveProfile={saveCoachProfile} initialTab={configInitialTab}/>}
         {showInvite&&(
           <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
             <div style={{background:C.white,borderRadius:"24px 24px 0 0",width:"100%",maxHeight:"90%",overflowY:"auto",boxSizing:"border-box",padding:"28px 20px 36px"}}>
