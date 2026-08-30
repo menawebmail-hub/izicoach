@@ -26,6 +26,13 @@ export const queryProfile = async (table, userId, selectCols) => {
 // a session already resolved — e.g. TOKEN_REFRESHED for the same user, or the
 // SIGNED_IN event that follows a manual login already resolved via onLogin. Only the
 // user/token is refreshed in that case.
+// Returns the mode it resolved to ("coach" | "student_portal" | "coach_new"),
+// or null when it didn't determine one (no session, already-resolved
+// shortcut, or an aborted lookup). Purely additive — every existing caller
+// already ignores this function's return value, so this doesn't change any
+// existing behavior. Added so a caller that needs to know the real outcome
+// (AuthProvider's registerStudentFromInvite, via reresolve) doesn't have to
+// assume success just because the awaited call didn't throw.
 export const makeResolveSession = ({ resolvedUserIdRef, setUser, setMode, setOnboarded, setCheckingProfile }) => {
   return async (session) => {
     if (!session?.user) {
@@ -33,11 +40,11 @@ export const makeResolveSession = ({ resolvedUserIdRef, setUser, setMode, setOnb
       setUser(null);
       setMode(null);
       setOnboarded(false);
-      return;
+      return null;
     }
     const alreadyResolved = resolvedUserIdRef.current === session.user.id;
     setUser(session.user);
-    if (alreadyResolved) return;
+    if (alreadyResolved) return null;
     resolvedUserIdRef.current = session.user.id;
     setCheckingProfile(true);
     // PGRST116 (0 rows) is a recoverable case, not an error: no coaches row yet
@@ -50,14 +57,16 @@ export const makeResolveSession = ({ resolvedUserIdRef, setUser, setMode, setOnb
       resolvedUserIdRef.current = null;
       setUser(null);
       setCheckingProfile(false);
-      return;
+      return null;
     }
     // onboarded===true (not just "row exists") is the only source of truth for
     // "this coach can skip onboarding" — a row that exists with onboarded=false
     // (or missing entirely) is a recoverable partial account, routed to
     // coach_new below exactly like a brand-new signup.
+    let resolvedMode;
     if (data?.onboarded === true) {
       setMode("coach"); setOnboarded(true);
+      resolvedMode = "coach";
     } else {
       const { data: sa, error: saErr } = await queryProfile("student_auth", session.user.id, "*");
       if (saErr && saErr.code !== "PGRST116") {
@@ -65,17 +74,20 @@ export const makeResolveSession = ({ resolvedUserIdRef, setUser, setMode, setOnb
         resolvedUserIdRef.current = null;
         setUser(null);
         setCheckingProfile(false);
-        return;
+        return null;
       }
       if (sa) {
         lsSet("izi_student_coach_id", sa.coach_id);
         localStorage.setItem("izi_student_id_raw", String(sa.student_id));
         setMode("student_portal");
+        resolvedMode = "student_portal";
       } else {
         // Confirmed new coach: no profile, no data.
         setMode("coach_new"); setOnboarded(false);
+        resolvedMode = "coach_new";
       }
     }
     setCheckingProfile(false);
+    return resolvedMode;
   };
 };

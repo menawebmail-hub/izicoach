@@ -1090,21 +1090,31 @@ function TimePicker({value, onChange, style}) {
   );
 }
 
-function AuthFlow({ onLogin, onStudentLogin }) {
+function AuthFlow({ onLogin, registerStudentFromInvite, loginStudentFromInvite }) {
   const inviteCode=new URLSearchParams(window.location.search).get("invite")||"";
   const [screen,setScreen]=useState(inviteCode?"register_student":"login");
   const [email,setEmail]=useState(""); const [pass,setPass]=useState(""); const [name,setName]=useState("");
   const [err,setErr]=useState(""); const [loading,setLoading]=useState(false);
   const [inviteInfo,setInviteInfo]=useState(null);
+  // Only meaningful while screen==="register_student" (toggles "Crear cuenta"
+  // vs "Ya tengo una cuenta" there) — declared at top level with the other
+  // hooks per Rules of Hooks, not inside that conditional branch.
+  const [inviteMode,setInviteMode]=useState("create");
   const iS={width:"100%",padding:"13px 16px",borderRadius:12,border:"1.5px solid rgba(255,255,255,0.3)",fontSize:14,boxSizing:"border-box",background:"rgba(255,255,255,0.15)",color:"#fff",outline:"none",marginBottom:12};
   const lS={fontSize:12,color:"rgba(255,255,255,0.7)",fontWeight:700,display:"block",marginBottom:6};
 
   useEffect(()=>{
     if(!inviteCode) return;
-    supabase.from("invites").select("*,coaches(name)").eq("code",inviteCode).eq("used",false).single()
-      .then((res)=>{
-        if(res.data) setInviteInfo(res.data);
-        else setErr("El link de invitación no es válido o ya fue usado.");
+    // Preview is anonymous and only ever learns {valid, coach_name} —
+    // coach_id/student_id are not recoverable from the client via the invite
+    // code. handleStudentRegister below never touches student_auth/the RPC/
+    // reresolve directly — it delegates the entire transaction to
+    // registerStudentFromInvite (AuthProvider), which gets the real identity
+    // from accept_student_invite's own student_auth row.
+    supabase.rpc("get_student_invite_preview",{p_code:inviteCode})
+      .then(({data,error})=>{
+        if(error||!data?.valid){setErr("El link de invitación no es válido o ya fue usado.");return;}
+        setInviteInfo({coach_name:data.coach_name});
       });
   },[]);
 
@@ -1137,25 +1147,34 @@ function AuthFlow({ onLogin, onStudentLogin }) {
     if(pass.length<6){setErr("La contraseña debe tener al menos 6 caracteres.");return;}
     if(!inviteInfo){setErr("Link de invitación inválido.");return;}
     setLoading(true);setErr("");
-    const {data,error}=await supabase.auth.signUp({email,password:pass});
-    console.log("signUp result:", data, error);
-    if(error){setErr(error.message);setLoading(false);return;}
-    if(data.user){
-      console.log("user id:", data.user.id, "inviteInfo:", inviteInfo);
-      const {error:saError}=await supabase.from("student_auth").insert({
-        id:data.user.id,
-        coach_id:inviteInfo.coach_id,
-        student_id:inviteInfo.student_id,
-        email
-      });
-      console.log("student_auth insert error:", saError);
-      if(saError){setErr("Error al vincular: "+saError.message);setLoading(false);return;}
-      await supabase.from("invites").update({used:true}).eq("code",inviteCode);
-      window.history.replaceState({},"",window.location.pathname);
-      onStudentLogin&&onStudentLogin(data.user, inviteInfo);
-    } else {
-      setErr("No se pudo crear la cuenta. Verificá que el email no esté en uso.");
+    // registerStudentFromInvite (AuthProvider) owns the whole transaction —
+    // signUp, verifying a real session, accept_student_invite, and
+    // reresolve — behind a guard that keeps the auth listener from resolving
+    // this account prematurely as coach_new mid-flow. Only {ok} comes back.
+    const result=await registerStudentFromInvite({email,password:pass,code:inviteCode});
+    if(!result.ok){
+      setErr(result.message||"No pudimos vincular tu cuenta con la invitación. Contactá a tu entrenador.");
+      setLoading(false);
+      return;
     }
+    window.history.replaceState({},"",window.location.pathname);
+    setLoading(false);
+  };
+
+  const handleStudentLoginWithInvite=async()=>{
+    if(!email||!pass){setErr("Completá todos los campos.");return;}
+    if(!inviteInfo){setErr("Link de invitación inválido.");return;}
+    setLoading(true);setErr("");
+    // Same shared transaction as handleStudentRegister, just authenticating
+    // an existing account instead of creating one — loginStudentFromInvite
+    // (AuthProvider) owns signInWithPassword, the RPC, and reresolve.
+    const result=await loginStudentFromInvite({email,password:pass,code:inviteCode});
+    if(!result.ok){
+      setErr(result.message||"No pudimos vincular esta cuenta con la invitación. Verificá que estés usando la cuenta correcta o contactá a tu entrenador.");
+      setLoading(false);
+      return;
+    }
+    window.history.replaceState({},"",window.location.pathname);
     setLoading(false);
   };
   return (
@@ -1173,14 +1192,22 @@ function AuthFlow({ onLogin, onStudentLogin }) {
               <div style={{fontSize:12,color:"rgba(255,255,255,0.7)"}}>Invitado por</div>
               <div style={{fontSize:16,fontWeight:800,color:"#fff"}}>{inviteInfo.coach_name||inviteInfo.coaches?.name||"tu entrenador"}</div>
             </div>}
+            {inviteInfo&&<div style={{display:"flex",gap:8,marginBottom:20}}>
+              <button onClick={()=>{setInviteMode("create");setErr("");}} style={{flex:1,padding:"10px",borderRadius:10,border:"none",cursor:"pointer",fontSize:13,fontWeight:800,background:inviteMode==="create"?"#65CE5A":"rgba(255,255,255,0.15)",color:"#fff"}}>Crear cuenta</button>
+              <button onClick={()=>{setInviteMode("login");setErr("");}} style={{flex:1,padding:"10px",borderRadius:10,border:"none",cursor:"pointer",fontSize:13,fontWeight:800,background:inviteMode==="login"?"#65CE5A":"rgba(255,255,255,0.15)",color:"#fff"}}>Ya tengo una cuenta</button>
+            </div>}
             {err&&<div style={{background:"rgba(229,57,53,0.3)",borderRadius:10,padding:"10px 14px",fontSize:13,color:"#FFCDD2",marginBottom:16}}>{err}</div>}
-            {!err&&<>
+            {!err&&inviteMode==="create"&&<>
               <div><label style={lS}>TU NOMBRE</label><input value={name} onChange={e=>setName(e.target.value)} placeholder="Ej: Ana García" style={iS}/></div>
               <div><label style={lS}>CORREO</label><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="tu@correo.com" style={iS}/></div>
               <div><label style={lS}>CONTRASEÑA</label><input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="Mínimo 6 caracteres" style={iS}/></div>
               <button onClick={handleStudentRegister} disabled={loading} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:"#65CE5A",color:"#fff",fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:16,opacity:loading?0.7:1}}>{loading?"Registrando...":"Crear cuenta de alumno"}</button>
             </>}
-            <div style={{textAlign:"center",fontSize:13,color:"rgba(255,255,255,0.7)"}}>¿Ya tenés cuenta?{" "}<button onClick={()=>{setScreen("login");setErr("");}} style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:"#fff",fontWeight:800}}>Iniciar sesión</button></div>
+            {!err&&inviteMode==="login"&&<>
+              <div><label style={lS}>CORREO</label><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="tu@correo.com" style={iS} onKeyDown={e=>e.key==="Enter"&&handleStudentLoginWithInvite()}/></div>
+              <div><label style={lS}>CONTRASEÑA</label><input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="••••••••" style={iS} onKeyDown={e=>e.key==="Enter"&&handleStudentLoginWithInvite()}/></div>
+              <button onClick={handleStudentLoginWithInvite} disabled={loading} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:"#65CE5A",color:"#fff",fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:16,opacity:loading?0.7:1}}>{loading?"Entrando...":"Iniciar sesión"}</button>
+            </>}
           </>
         ):screen==="login"?(
           <>
@@ -2076,20 +2103,30 @@ function Students({ students, onAdd, onUpdate, onAddStudentDirect, onDelete, onC
   );
 }
 
-function InviteModal({ student, userId, coachName, onClose }) {
+function InviteModal({ student, onClose }) {
   const [code,setCode]=useState("");
-  const [loading,setLoading]=useState(true);
+  const [status,setStatus]=useState("loading"); // "loading" | "success" | "error"
+  const [errKind,setErrKind]=useState(null); // "no_email" | "generic"
   const [copied,setCopied]=useState(false);
   useEffect(()=>{
-    if(!student||!userId) return;
-    supabase.from("invites").select("code").eq("coach_id",userId).eq("student_id",student.id).eq("used",false).single()
-      .then((res)=>{
-        if(res.data&&res.data.code){setCode(res.data.code);setLoading(false);return;}
-        const c=Math.random().toString(36).slice(2,10).toUpperCase();
-        supabase.from("invites").insert({code:c,coach_id:userId,student_id:student.id,used:false,coach_name:coachName||""})
-          .then(()=>{setCode(c);setLoading(false);});
+    if(!student) return;
+    let cancelled=false;
+    setStatus("loading");
+    setCode("");
+    setErrKind(null);
+    supabase.rpc("create_student_invite",{p_student_id:student.id})
+      .then(({data,error})=>{
+        if(cancelled) return;
+        if(error||!data?.ok){
+          setErrKind(error?.message?.includes("has no email on file")?"no_email":"generic");
+          setStatus("error");
+          return;
+        }
+        setCode(data.code);
+        setStatus("success");
       });
-  },[]);
+    return ()=>{cancelled=true;};
+  },[student?.id]);
   const url="https://izicoach.vercel.app?invite="+code;
   return (
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.5)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
@@ -2097,7 +2134,13 @@ function InviteModal({ student, userId, coachName, onClose }) {
         <div style={{width:40,height:4,borderRadius:2,background:"#DDE3F0",margin:"0 auto 20px"}}></div>
         <div style={{fontWeight:900,fontSize:18,color:C.text,marginBottom:4}}>Invitar a {student.name}</div>
         <div style={{fontSize:13,color:C.mutedDark,marginBottom:20}}>Compartí este link para que el alumno se registre.</div>
-        {loading?<div style={{textAlign:"center",padding:20,color:C.mutedDark}}>Generando...</div>:(
+        {status==="loading"&&<div style={{textAlign:"center",padding:20,color:C.mutedDark}}>Generando...</div>}
+        {status==="error"&&(
+          <div style={{marginBottom:20,padding:10,borderRadius:10,background:"#FFEBEE",border:"1px solid #FFCDD2"}}>
+            <div style={{fontSize:12,color:"#C62828"}}>{errKind==="no_email"?"Este alumno no tiene un email cargado. Agregá un email a su ficha antes de generar la invitación.":"No pudimos generar la invitación. Intentá de nuevo."}</div>
+          </div>
+        )}
+        {status==="success"&&(
           <div>
             <div style={{background:C.blueL,borderRadius:12,padding:"14px 16px",marginBottom:12}}>
               <div style={{fontSize:11,fontWeight:700,color:C.mutedDark,marginBottom:6}}>LINK</div>
@@ -6379,9 +6422,9 @@ export default function App() {
   // rest of this file (reads and writes alike) didn't need to change.
   const {
     user,mode,onboarded,loadingAuth,checkingProfile,onboardingSaveFailed,
-    setUser:setUserWithRef,setMode:setModeP,setOnboarded:setOnboardedP,
-    setCheckingProfile,setLoadingAuth,setOnboardingSaveFailed,
-    resolvedUserIdRef,resolveSession,logout:authLogout,
+    setMode:setModeP,setOnboarded:setOnboardedP,
+    setCheckingProfile,setOnboardingSaveFailed,
+    resolveSession,registerStudentFromInvite,loginStudentFromInvite,logout:authLogout,
   }=useAuth();
   const [showInvite,setShowInvite]=useState(false);
   const [inviteTarget,setInviteTarget]=useState(null);
@@ -6620,12 +6663,17 @@ export default function App() {
   // superseded identity's data under the new one's coachId.
   useEffect(()=>{
     if(!user?.id||loadingAuth||checkingProfile||!dataReadyForCurrentIdentity||dataLoadFailedForCurrentIdentity) return;
-    if(mode==="student_portal") return;
+    // Positive rule: only an authenticated + resolved + hydrated coach can
+    // sync coach_data. Was `if(mode==="student_portal") return;` — excluded
+    // student_portal but let coach_new (no coaches row yet) through, which
+    // RLS then rejected on every key (students/classes/expenses/courts/
+    // packages) the moment dataReady flipped true for that identity.
+    if(mode!=="coach") return;
     const timer=setTimeout(()=>{
       syncAll(students,classes,expenses,courts,packages);
     },1000);
     return ()=>clearTimeout(timer);
-  },[students,classes,expenses,courts,packages,dataReadyForCurrentIdentity,dataLoadFailedForCurrentIdentity]);
+  },[students,classes,expenses,courts,packages,dataReadyForCurrentIdentity,dataLoadFailedForCurrentIdentity,user?.id,loadingAuth,checkingProfile,mode]);
 
   // Force sync when user switches tabs or minimizes to prevent data loss
   // AND reload from Supabase when returning to the tab (multi-device sync).
@@ -6636,16 +6684,19 @@ export default function App() {
   // above, and for the same reason — see comment there.
   useEffect(()=>{
     const handleVisChange=()=>{
-      if(document.visibilityState==="hidden"&&user?.id&&mode!=="student_portal"&&dataReadyForCurrentIdentity&&!dataLoadFailedForCurrentIdentity){
+      // Same positive rule as the debounced-sync effect above — proceed only
+      // for an onboarded coach, not just "not student_portal" (was letting
+      // coach_new through, same RLS rejection risk on tab switch/return).
+      if(document.visibilityState==="hidden"&&user?.id&&mode==="coach"&&dataReadyForCurrentIdentity&&!dataLoadFailedForCurrentIdentity){
         syncAll(students,classes,expenses,courts,packages);
       }
-      if(document.visibilityState==="visible"&&user?.id&&mode!=="student_portal"){
+      if(document.visibilityState==="visible"&&user?.id&&mode==="coach"){
         loadData(user?.id);
       }
     };
     document.addEventListener("visibilitychange",handleVisChange);
     return ()=>document.removeEventListener("visibilitychange",handleVisChange);
-  },[mode,dataReadyForCurrentIdentity,dataLoadFailedForCurrentIdentity,students,classes,expenses,courts,packages]);
+  },[mode,dataReadyForCurrentIdentity,dataLoadFailedForCurrentIdentity,students,classes,expenses,courts,packages,user?.id]);
 
   // Business-data hydration for a resolved identity (Fase D). resolveSession (now in
   // auth/, owned by AuthProvider) only resolves identity — it has no access to these
@@ -7418,37 +7469,7 @@ export default function App() {
         // onAuthStateChange fires right after this same login resolves is a no-op
         // (resolvedUserIdRef already matches), so the profile isn't fetched twice.
         await resolveSession({user:u});
-      }} onStudentLogin={async(u,inviteInfo)=>{
-        // Special first-login/invite path (coach_id/student_id come from the invite,
-        // not a student_auth lookup) so it doesn't go through resolveSession — but mark
-        // this user resolved so the SIGNED_IN event that follows doesn't redo this work.
-        resolvedUserIdRef.current=u.id;
-        setUserWithRef(u);setCheckingProfile(true);setLoadingAuth(false);
-        lsSet("izi_student_coach_id", inviteInfo.coach_id);
-        localStorage.setItem("izi_student_id_raw", String(inviteInfo.student_id));
-        try{
-          const cd3Result=await loadAllFromSupabase(inviteInfo.coach_id);
-          if(!cd3Result.ok){console.error(cd3Result.error);}
-          else{
-            const cd3=cd3Result.data;
-            const s=cd3.students||[];const cl=cd3.classes||[];const f=cd3.families||[];
-            if(s.length>0){setStudentsRaw(s);}
-            if(cl.length>0){setClassesRaw(cl);}
-            if(f.length>0){setFamiliesRaw(f);}
-          }
-        }catch(e){console.error(e);}
-        setModeP("student_portal");
-        setDataReady(true);
-        setDataLoadFailed(false);
-        // E0 (post-Fase-D fix): this is the one path that settles dataReady
-        // without going through the hydration effect, so it must also record
-        // hydratedIdentityRef itself — otherwise dataReadyForCurrentIdentity
-        // reads false on the next render (hydratedIdentityRef still doesn't
-        // match u.id) and the hydration effect's student_portal branch redoes
-        // this exact loadAllFromSupabase call a second time, redundantly.
-        hydratedIdentityRef.current=u.id;
-        setCheckingProfile(false);
-      }}/>
+      }} registerStudentFromInvite={registerStudentFromInvite} loginStudentFromInvite={loginStudentFromInvite}/>
     </div>
   );
 
@@ -7456,14 +7477,30 @@ export default function App() {
   const xClasses=expandClasses(classes);
 
   if(mode==="student_portal"){
-    const storedStudentIdRaw=localStorage.getItem("izi_student_id_raw")||localStorage.getItem("izi_student_id")||"0";
-    const studentData=students.find(s=>String(s.id)===storedStudentIdRaw)||
-                      students.find(s=>s.email&&s.email===user?.email)||
-                      students[0]||
-                      {id:0,name:user?.email||"Alumno",avatar:"A",sport:"",combos:[]};
+    // Authority is exclusively the student_id resolveSession wrote from the
+    // authenticated user's own student_auth row (see resolveSession.js) —
+    // izi_student_id_raw is just its localStorage transport, never a fallback
+    // source of identity. No email match, no students[0], no default/invented
+    // student: if it doesn't match exactly, fail closed below.
+    const storedStudentIdRaw=localStorage.getItem("izi_student_id_raw");
+    const studentData=storedStudentIdRaw?students.find(s=>String(s.id)===storedStudentIdRaw):null;
+    if(!studentData){
+      return (
+        <div style={{width:"100vw",height:"100vh",position:"fixed",top:0,left:0,display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",zIndex:9999,padding:24}}>
+          <div style={{textAlign:"center",color:"#fff",maxWidth:320}}>
+            <div style={{fontSize:32,fontWeight:900,letterSpacing:-2,marginBottom:16}}>
+              izi<span style={{color:"#65CE5A"}}>coach</span>
+            </div>
+            <div style={{fontSize:15,fontWeight:700,marginBottom:8}}>No pudimos cargar tu perfil de alumno</div>
+            <div style={{fontSize:13,color:"rgba(255,255,255,0.7)",marginBottom:24,lineHeight:1.5}}>Contactá a tu entrenador.</div>
+            <button onClick={async()=>{await authLogout();localStorage.clear();}} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:"#fff",color:"#1A3DB5",fontSize:15,cursor:"pointer",fontWeight:800}}>Cerrar sesión</button>
+          </div>
+        </div>
+      );
+    }
     return (
       <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden"}}>
-        <StudentApp student={studentData||{id:0,name:"Alumno",avatar:"A",sport:"",combos:[]}} onExit={async()=>{await authLogout();localStorage.clear();}} classes={xClasses} notifications={notifications} sendNotification={sendNotification} coachId={(()=>{try{const v=localStorage.getItem("izi_student_coach_id");return v?JSON.parse(v):null;}catch{return localStorage.getItem("izi_student_coach_id");}})()} students={students} families={families}/>
+        <StudentApp student={studentData} onExit={async()=>{await authLogout();localStorage.clear();}} classes={xClasses} notifications={notifications} sendNotification={sendNotification} coachId={(()=>{try{const v=localStorage.getItem("izi_student_coach_id");return v?JSON.parse(v):null;}catch{return localStorage.getItem("izi_student_coach_id");}})()} students={students} families={families}/>
       </div>
     );
   }
