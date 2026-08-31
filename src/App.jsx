@@ -1100,6 +1100,18 @@ function AuthFlow({ onLogin, registerStudentFromInvite, loginStudentFromInvite }
   // vs "Ya tengo una cuenta" there) — declared at top level with the other
   // hooks per Rules of Hooks, not inside that conditional branch.
   const [inviteMode,setInviteMode]=useState("create");
+  // True only after registerStudentFromInvite reports pendingEmailConfirmation
+  // (Frontend-6b) — signUp succeeded but there's no session yet (Confirm
+  // Email). Not reachable today (Confirm Email OFF), kept at top level per
+  // Rules of Hooks like inviteMode above.
+  const [pendingConfirmation,setPendingConfirmation]=useState(false);
+  // Frontend-6d: separate state for the coach signup's own "check your
+  // email" outcome — deliberately not reusing pendingConfirmation above.
+  // Both signUp calls can independently land on session===null, and
+  // conflating them would make it ambiguous which flow (and which redirect/
+  // resume path) a given screen belongs to. May share visual presentation,
+  // never the underlying state.
+  const [pendingCoachConfirmation,setPendingCoachConfirmation]=useState(false);
   const iS={width:"100%",padding:"13px 16px",borderRadius:12,border:"1.5px solid rgba(255,255,255,0.3)",fontSize:14,boxSizing:"border-box",background:"rgba(255,255,255,0.15)",color:"#fff",outline:"none",marginBottom:12};
   const lS={fontSize:12,color:"rgba(255,255,255,0.7)",fontWeight:700,display:"block",marginBottom:6};
 
@@ -1130,15 +1142,32 @@ function AuthFlow({ onLogin, registerStudentFromInvite, loginStudentFromInvite }
     if(!email||!pass||!name){setErr("Completá todos los campos.");return;}
     if(pass.length<6){setErr("La contraseña debe tener al menos 6 caracteres.");return;}
     setLoading(true);setErr("");
-    const {data,error}=await supabase.auth.signUp({email,password:pass});
+    // Mirrors the student invite signup's emailRedirectTo (Frontend-6b) but
+    // without ?invite= — this is a coach signup, not a student invitation.
+    // Built the same way: browser URL APIs from the current origin/path,
+    // never hardcoded to localhost or production.
+    const redirectUrl=new URL(window.location.pathname,window.location.origin);
+    const {data,error}=await supabase.auth.signUp({email,password:pass,options:{emailRedirectTo:redirectUrl.toString()}});
     if(error){setErr(error.message);setLoading(false);return;}
+    if(!data.user){setErr("No se pudo crear la cuenta. Verificá que el email no esté en uso.");setLoading(false);return;}
+    if(!data.session){
+      // Confirm Email ON: the account exists but there's no session yet —
+      // not onLogin-able (that would hand resolveSession an identity with no
+      // real session behind it). Nothing more happens in this tab; the real
+      // coach_new resolution runs later, for real, once Supabase's own
+      // callback delivers an actual session — that's the normal listener
+      // path in AuthProvider, no new code needed for it (no ?invite= in this
+      // URL, so pendingCallbackInviteRef stays inert and resolveSession runs
+      // as usual).
+      setPendingCoachConfirmation(true);
+      setLoading(false);
+      return;
+    }
     // No coaches row is created here (Fase C) — resolveSession treats a missing
     // row as PGRST116 and routes to coach_new/onboarding on its own. The only
     // write to `coaches` in the whole signup+onboarding flow is the single
     // upsert in handleOnboardingComplete.
-    if(data.user){
-      localStorage.clear();
-    }
+    localStorage.clear();
     onLogin(data.user);setLoading(false);
   };
 
@@ -1153,6 +1182,15 @@ function AuthFlow({ onLogin, registerStudentFromInvite, loginStudentFromInvite }
     // this account prematurely as coach_new mid-flow. Only {ok} comes back.
     const result=await registerStudentFromInvite({email,password:pass,code:inviteCode});
     if(!result.ok){
+      if(result.pendingEmailConfirmation){
+        // Not an error — signUp succeeded, just waiting on Confirm Email.
+        // Keep ?invite=CODE in the URL (don't clear it here): the real
+        // preservation mechanism is emailRedirectTo, but there's no reason
+        // to drop it from this tab either while nothing else has happened.
+        setPendingConfirmation(true);
+        setLoading(false);
+        return;
+      }
       setErr(result.message||"No pudimos vincular tu cuenta con la invitación. Contactá a tu entrenador.");
       setLoading(false);
       return;
@@ -1192,22 +1230,29 @@ function AuthFlow({ onLogin, registerStudentFromInvite, loginStudentFromInvite }
               <div style={{fontSize:12,color:"rgba(255,255,255,0.7)"}}>Invitado por</div>
               <div style={{fontSize:16,fontWeight:800,color:"#fff"}}>{inviteInfo.coach_name||inviteInfo.coaches?.name||"tu entrenador"}</div>
             </div>}
-            {inviteInfo&&<div style={{display:"flex",gap:8,marginBottom:20}}>
-              <button onClick={()=>{setInviteMode("create");setErr("");}} style={{flex:1,padding:"10px",borderRadius:10,border:"none",cursor:"pointer",fontSize:13,fontWeight:800,background:inviteMode==="create"?"#65CE5A":"rgba(255,255,255,0.15)",color:"#fff"}}>Crear cuenta</button>
-              <button onClick={()=>{setInviteMode("login");setErr("");}} style={{flex:1,padding:"10px",borderRadius:10,border:"none",cursor:"pointer",fontSize:13,fontWeight:800,background:inviteMode==="login"?"#65CE5A":"rgba(255,255,255,0.15)",color:"#fff"}}>Ya tengo una cuenta</button>
-            </div>}
-            {err&&<div style={{background:"rgba(229,57,53,0.3)",borderRadius:10,padding:"10px 14px",fontSize:13,color:"#FFCDD2",marginBottom:16}}>{err}</div>}
-            {!err&&inviteMode==="create"&&<>
-              <div><label style={lS}>TU NOMBRE</label><input value={name} onChange={e=>setName(e.target.value)} placeholder="Ej: Ana García" style={iS}/></div>
-              <div><label style={lS}>CORREO</label><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="tu@correo.com" style={iS}/></div>
-              <div><label style={lS}>CONTRASEÑA</label><input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="Mínimo 6 caracteres" style={iS}/></div>
-              <button onClick={handleStudentRegister} disabled={loading} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:"#65CE5A",color:"#fff",fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:16,opacity:loading?0.7:1}}>{loading?"Registrando...":"Crear cuenta de alumno"}</button>
-            </>}
-            {!err&&inviteMode==="login"&&<>
-              <div><label style={lS}>CORREO</label><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="tu@correo.com" style={iS} onKeyDown={e=>e.key==="Enter"&&handleStudentLoginWithInvite()}/></div>
-              <div><label style={lS}>CONTRASEÑA</label><input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="••••••••" style={iS} onKeyDown={e=>e.key==="Enter"&&handleStudentLoginWithInvite()}/></div>
-              <button onClick={handleStudentLoginWithInvite} disabled={loading} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:"#65CE5A",color:"#fff",fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:16,opacity:loading?0.7:1}}>{loading?"Entrando...":"Iniciar sesión"}</button>
-            </>}
+            {pendingConfirmation?(
+              <div style={{background:"rgba(255,255,255,0.15)",borderRadius:12,padding:"16px",textAlign:"center"}}>
+                <div style={{fontSize:16,fontWeight:800,color:"#fff",marginBottom:8}}>Revisá tu correo</div>
+                <div style={{fontSize:13,color:"rgba(255,255,255,0.8)",lineHeight:1.5}}>Te enviamos un enlace de confirmación a <strong>{email}</strong>. Después de confirmar tu cuenta, vas a continuar con la vinculación a tu entrenador.</div>
+              </div>
+            ):(<>
+              {inviteInfo&&<div style={{display:"flex",gap:8,marginBottom:20}}>
+                <button onClick={()=>{setInviteMode("create");setErr("");}} style={{flex:1,padding:"10px",borderRadius:10,border:"none",cursor:"pointer",fontSize:13,fontWeight:800,background:inviteMode==="create"?"#65CE5A":"rgba(255,255,255,0.15)",color:"#fff"}}>Crear cuenta</button>
+                <button onClick={()=>{setInviteMode("login");setErr("");}} style={{flex:1,padding:"10px",borderRadius:10,border:"none",cursor:"pointer",fontSize:13,fontWeight:800,background:inviteMode==="login"?"#65CE5A":"rgba(255,255,255,0.15)",color:"#fff"}}>Ya tengo una cuenta</button>
+              </div>}
+              {err&&<div style={{background:"rgba(229,57,53,0.3)",borderRadius:10,padding:"10px 14px",fontSize:13,color:"#FFCDD2",marginBottom:16}}>{err}</div>}
+              {!err&&inviteMode==="create"&&<>
+                <div><label style={lS}>TU NOMBRE</label><input value={name} onChange={e=>setName(e.target.value)} placeholder="Ej: Ana García" style={iS}/></div>
+                <div><label style={lS}>CORREO</label><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="tu@correo.com" style={iS}/></div>
+                <div><label style={lS}>CONTRASEÑA</label><input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="Mínimo 6 caracteres" style={iS}/></div>
+                <button onClick={handleStudentRegister} disabled={loading} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:"#65CE5A",color:"#fff",fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:16,opacity:loading?0.7:1}}>{loading?"Registrando...":"Crear cuenta de alumno"}</button>
+              </>}
+              {!err&&inviteMode==="login"&&<>
+                <div><label style={lS}>CORREO</label><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="tu@correo.com" style={iS} onKeyDown={e=>e.key==="Enter"&&handleStudentLoginWithInvite()}/></div>
+                <div><label style={lS}>CONTRASEÑA</label><input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="••••••••" style={iS} onKeyDown={e=>e.key==="Enter"&&handleStudentLoginWithInvite()}/></div>
+                <button onClick={handleStudentLoginWithInvite} disabled={loading} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:"#65CE5A",color:"#fff",fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:16,opacity:loading?0.7:1}}>{loading?"Entrando...":"Iniciar sesión"}</button>
+              </>}
+            </>)}
           </>
         ):screen==="login"?(
           <>
@@ -1217,6 +1262,11 @@ function AuthFlow({ onLogin, registerStudentFromInvite, loginStudentFromInvite }
             <button onClick={handleLogin} disabled={loading} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:"#fff",color:"#1A3DB5",fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:16,opacity:loading?0.7:1}}>{loading?"Entrando...":"Iniciar sesión"}</button>
             <div style={{textAlign:"center",fontSize:13,color:"rgba(255,255,255,0.7)"}}>¿No tenés cuenta?{" "}<button onClick={()=>{setScreen("register");setErr("");}} style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:"#fff",fontWeight:800}}>Registrarse</button></div>
           </>
+        ):pendingCoachConfirmation?(
+          <div style={{background:"rgba(255,255,255,0.15)",borderRadius:12,padding:"16px",textAlign:"center"}}>
+            <div style={{fontSize:16,fontWeight:800,color:"#fff",marginBottom:8}}>Revisá tu correo</div>
+            <div style={{fontSize:13,color:"rgba(255,255,255,0.8)",lineHeight:1.5}}>Te enviamos un enlace de confirmación a <strong>{email}</strong>. Después de confirmar tu cuenta, vas a poder completar la configuración de IziCoach.</div>
+          </div>
         ):(
           <>
             <div><label style={lS}>TU NOMBRE</label><input value={name} onChange={e=>setName(e.target.value)} placeholder="Ej: Carlos García" style={iS}/></div>
