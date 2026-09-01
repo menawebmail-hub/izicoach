@@ -3692,7 +3692,7 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
     setLoading(true);
     const studentId=active.id;
     // Mark as read
-    supabase.from("messages").update({read:true}).eq("coach_id",userId).eq("student_id",studentId).eq("from_coach",false)
+    supabase.rpc("mark_coach_messages_read",{p_student_id:studentId})
       .then(({error})=>{if(error)console.error("mark read error:",error);});
     onMarkRead&&onMarkRead(String(studentId));
     supabase.from("messages").select("*").eq("coach_id",userId).eq("student_id",studentId).order("created_at",{ascending:true})
@@ -5702,7 +5702,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
   useEffect(()=>{
     if(tab!=="chat"||!coachId||!student?.id) return;
     setUnreadChatCount(0);
-    supabase.from("messages").update({read:true}).eq("coach_id",coachId).eq("student_id",student.id).eq("from_coach",true).eq("read",false)
+    supabase.rpc("mark_student_messages_read")
       .then(({error})=>{if(error)console.error("mark read error:",error);});
   },[tab,coachId,student?.id]);
   // E2b: routed through the update_my_student_profile RPC (SECURITY DEFINER,
