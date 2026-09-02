@@ -1,0 +1,389 @@
+/* Admin-only styles. Isolated from src/index.css and from App.jsx's
+   inline-style convention — everything here is prefixed .admin- and only
+   loaded from src/admin/ (AdminShell, AdminAuthGate), never on the
+   coach/student app. */
+
+.admin-shell {
+  display: flex;
+  min-height: 100vh;
+  background: #e0e6f5;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.admin-sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: #0D1B4B;
+  color: #fff;
+  padding: 24px 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-sidebar-brand {
+  padding: 0 24px 24px;
+  font-size: 18px;
+  font-weight: 800;
+  color: #fff;
+}
+
+.admin-nav-item {
+  padding: 12px 24px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+  border-left: 3px solid transparent;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-nav-item:hover {
+  color: #fff;
+}
+
+.admin-nav-item.active {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+  border-left-color: #65CE5A;
+}
+
+.admin-nav-item.placeholder {
+  opacity: 0.6;
+}
+
+.admin-nav-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.15);
+  white-space: nowrap;
+}
+
+.admin-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.admin-header {
+  height: 64px;
+  flex-shrink: 0;
+  background: #fff;
+  border-bottom: 1px solid rgba(13, 27, 75, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0D1B4B;
+}
+
+.admin-content {
+  flex: 1;
+  padding: 24px;
+  overflow: auto;
+}
+
+.admin-btn-logout {
+  background: none;
+  border: 1px solid rgba(13, 27, 75, 0.2);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #0D1B4B;
+  cursor: pointer;
+}
+
+.admin-btn-logout:hover {
+  background: rgba(13, 27, 75, 0.05);
+}
+
+.admin-card {
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid rgba(13, 27, 75, 0.1);
+  padding: 20px;
+}
+
+.admin-toolbar {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.admin-input,
+.admin-select {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(13, 27, 75, 0.15);
+  font-size: 14px;
+  color: #0D1B4B;
+  background: #fff;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.admin-table th {
+  text-align: left;
+  padding: 10px 12px;
+  color: #6B7BAD;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid rgba(13, 27, 75, 0.1);
+}
+
+.admin-table td {
+  padding: 12px;
+  border-bottom: 1px solid rgba(13, 27, 75, 0.06);
+  color: #0D1B4B;
+}
+
+.admin-table tr.clickable {
+  cursor: pointer;
+}
+
+.admin-table tr.clickable:hover {
+  background: #EEF2FF;
+}
+
+.admin-badge-onboarded {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.admin-badge-onboarded.yes {
+  background: #EDFBEC;
+  color: #2E7D32;
+}
+
+.admin-badge-onboarded.no {
+  background: rgba(13, 27, 75, 0.06);
+  color: #6B7BAD;
+}
+
+.admin-pagination {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  font-size: 13px;
+  color: #6B7BAD;
+}
+
+.admin-pagination button {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(13, 27, 75, 0.15);
+  background: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  color: #0D1B4B;
+}
+
+.admin-pagination button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.admin-state-message {
+  padding: 40px 20px;
+  text-align: center;
+  color: #6B7BAD;
+  font-size: 14px;
+}
+
+.admin-error-message {
+  color: #C62828;
+}
+
+.admin-back-link {
+  display: inline-block;
+  margin-bottom: 16px;
+  color: #1A3DB5;
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.admin-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.admin-detail-field-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: #6B7BAD;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.admin-detail-field-value {
+  font-size: 15px;
+  color: #0D1B4B;
+  font-weight: 600;
+}
+
+.admin-counters-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 16px;
+}
+
+.admin-counter-card {
+  background: #EEF2FF;
+  border-radius: 12px;
+  padding: 16px;
+  text-align: center;
+}
+
+.admin-counter-value {
+  font-size: 28px;
+  font-weight: 800;
+  color: #1A3DB5;
+}
+
+.admin-counter-label {
+  font-size: 12px;
+  color: #6B7BAD;
+  margin-top: 4px;
+}
+
+/* Responsive: sidebar collapses to a horizontal top bar below 768px —
+   pure CSS, no JS media-query listener. */
+@media (max-width: 768px) {
+  .admin-shell {
+    flex-direction: column;
+  }
+
+  .admin-sidebar {
+    width: 100%;
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 8px 0;
+  }
+
+  .admin-sidebar-brand {
+    display: none;
+  }
+
+  .admin-nav-item {
+    padding: 8px 16px;
+    white-space: nowrap;
+    border-left: none;
+    border-bottom: 3px solid transparent;
+  }
+
+  .admin-nav-item.active {
+    border-left-color: transparent;
+    border-bottom-color: #65CE5A;
+  }
+
+  .admin-header {
+    padding: 0 16px;
+  }
+
+  .admin-content {
+    padding: 16px;
+  }
+}
+
+/* Auth screens (AdminAuthGate: loading / login / unauthorized) — a single
+   centered card, no sidebar/header, since none of these states have a
+   shell to sit inside yet. */
+
+.admin-auth-wrap {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0D1B4B;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.admin-auth-card {
+  background: #fff;
+  border-radius: 16px;
+  padding: 32px;
+  width: 100%;
+  max-width: 360px;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.admin-auth-brand {
+  font-size: 20px;
+  font-weight: 800;
+  color: #0D1B4B;
+  margin-bottom: 24px;
+}
+
+.admin-auth-title {
+  font-size: 18px;
+  font-weight: 800;
+  color: #1A3DB5;
+  margin-bottom: 8px;
+}
+
+.admin-auth-text {
+  font-size: 14px;
+  color: #555;
+  margin-bottom: 16px;
+}
+
+.admin-auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  text-align: left;
+}
+
+.admin-auth-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #6B7BAD;
+  margin-bottom: 4px;
+  display: block;
+}
+
+.admin-btn-primary {
+  background: #1A3DB5;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  width: 100%;
+  margin-top: 4px;
+  box-sizing: border-box;
+}
+
+.admin-btn-primary:hover {
+  background: #16359E;
+}
+
+.admin-btn-primary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

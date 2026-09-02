@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "../services/supabaseClient.js";
 import { getAdminSession } from "./adminApi.js";
 import { AdminAuthGate } from "./AdminAuthGate.jsx";
+import { AdminShell } from "./AdminShell.jsx";
 
 // Lifecycle deliberately relies solely on onAuthStateChange's first event
 // (INITIAL_SESSION, fired once after the client finishes restoring the
@@ -46,16 +47,7 @@ export function AdminApp() {
 
   return (
     <AdminAuthGate loading={loading} sessionInfo={sessionInfo}>
-      <AdminShellPlaceholder admin={sessionInfo?.admin} />
+      <AdminShell admin={sessionInfo?.admin} />
     </AdminAuthGate>
-  );
-}
-
-function AdminShellPlaceholder({ admin }) {
-  return (
-    <div style={{ padding: 24, fontFamily: "sans-serif" }}>
-      <h1>IziCoach Admin</h1>
-      <p>{admin?.name ? `Hola, ${admin.name}.` : "Autenticado como admin."} Admin-1: solo el gate está implementado todavía.</p>
-    </div>
   );
 }
