@@ -30,7 +30,12 @@ const C = {
   greenL:"#EDFBEC",    // light green
 };
 
-
+// Shared by the 3 "create package" forms (NewPackageModal, ConfigScreen,
+// OnboardingFlow) so their combo-qty validation can't drift out of sync
+// again — that exact divergence (one copy defaulting pQty to "" while the
+// other two defaulted to "8") was the root cause of a real production bug:
+// a combo package silently saved with qty:null.
+const isValidComboQty=(v)=>{const n=Number(v);return Number.isInteger(n)&&n>0;};
 
 // syncToSupabase / loadFromSupabase / loadAllFromSupabase moved to
 // src/data/coachData.js (Fase B) — imported above. loadAllFromSupabase now
@@ -542,7 +547,8 @@ function NewPackageModal({ onSave, onClose, currency }) {
           <button onClick={onClose} style={{flex:1,padding:"13px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:14,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
           <button onClick={()=>{
             if(!pName.trim()||!pPrice) return;
-            const pkg={id:Date.now(),name:pName.trim(),type:pType,qty:pType==="combo"?parseInt(pQty)||null:null,price:parseInt(pPrice)};
+            if(pType==="combo"&&!isValidComboQty(pQty)){alert("Ingresá la cantidad de clases del combo");return;}
+            const pkg={id:Date.now(),name:pName.trim(),type:pType,qty:pType==="combo"?parseInt(pQty):null,price:parseInt(pPrice)};
             onSave(pkg);
           }} style={{flex:1,padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:14,fontWeight:800}}>Guardar</button>
         </div>
@@ -844,7 +850,7 @@ function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, famil
   const [fName,setFName]=useState(""); const [fRespName,setFRespName]=useState(""); const [fRespPhone,setFRespPhone]=useState(""); const [fRespEmail,setFRespEmail]=useState("");
   const [editFamilyId,setEditFamilyId]=useState(null);
   const [cName,setCName]=useState(""); const [cAddr,setCAddr]=useState(""); const [cCity,setCCity]=useState("");
-  const [pName,setPName]=useState(""); const [pType,setPType]=useState("combo"); const [pQty,setPQty]=useState(""); const [pPrice,setPPrice]=useState("");
+  const [pName,setPName]=useState(""); const [pType,setPType]=useState("combo"); const [pQty,setPQty]=useState("8"); const [pPrice,setPPrice]=useState("");
   // Profile fields — init from coachProfile
   const [profName,setProfName]=useState(coachProfile?.name||"");
   const [profEmail,setProfEmail]=useState(coachProfile?.email||"");
@@ -1048,8 +1054,8 @@ function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, famil
                 {pType==="combo"&&<div style={{marginBottom:10}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>CANTIDAD DE CLASES</label><input type="text" inputMode="numeric" pattern="[0-9]*" value={pQty} onChange={e=>setPQty(e.target.value)} placeholder="8" style={iS}/></div>}
                 <div style={{marginBottom:14}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>PRECIO (₲) *</label><MoneyInput value={parseInt(pPrice)||0} onChange={v=>setPPrice(v)} placeholder="400000" style={iS}/></div>
                 <div style={{display:"flex",gap:8}}>
-                  <button onClick={()=>{setShowNewPack(false);setPName("");setPQty("");setPPrice("");}} style={{flex:1,padding:"11px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:13,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
-                  <button onClick={()=>{if(!pName.trim()||!pPrice)return;setPackages(prev=>[...prev,{id:Date.now(),name:pName.trim(),type:pType,qty:pType==="combo"?parseInt(pQty)||null:null,price:parseInt(pPrice)}]);setPName("");setPQty("");setPPrice("");setShowNewPack(false);}} style={{flex:1,padding:"11px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:13,fontWeight:800}}>Guardar</button>
+                  <button onClick={()=>{setShowNewPack(false);setPName("");setPQty("8");setPPrice("");}} style={{flex:1,padding:"11px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:13,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
+                  <button onClick={()=>{if(!pName.trim()||!pPrice)return;if(pType==="combo"&&!isValidComboQty(pQty)){alert("Ingresá la cantidad de clases del combo");return;}setPackages(prev=>[...prev,{id:Date.now(),name:pName.trim(),type:pType,qty:pType==="combo"?parseInt(pQty):null,price:parseInt(pPrice)}]);setPName("");setPQty("8");setPPrice("");setShowNewPack(false);}} style={{flex:1,padding:"11px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:13,fontWeight:800}}>Guardar</button>
                 </div>
               </WhiteCard>
             ):(
@@ -6349,6 +6355,7 @@ function OnboardingFlow({ onComplete, saveFailed }) {
             <button onClick={()=>{
               if(!pNameOnboard||!pNameOnboard.trim()){setPNameOnboard(null);return;}
               if(!pPrice)return;
+              if(pType==="combo"&&!isValidComboQty(pQty)){alert("Ingresá la cantidad de clases del combo");return;}
               const qty=pType==="combo"?parseInt(pQty):null;
               setPackages(p=>[...p,{id:Date.now(),name:pNameOnboard.trim(),type:pType,qty,price:parseInt(pPrice)}]);
               setPPrice("");setPQty("8");setPNameOnboard("");
@@ -6996,6 +7003,28 @@ export default function App() {
 
   // --- Extracted from handleSaveClass (B: CreateNewClass) ---
   const createNewClass=(cd)=>{
+    // Fail-fast pre-validation: every selected package must resolve to
+    // something valid BEFORE any mutation (setClasses/setStudents/
+    // addIncome) runs. A late guard inside setStudents's .map() caught this
+    // too late — the class and the student's assignment to it had already
+    // been created by then, and addIncome doesn't even look at
+    // setStudents's result, so an invalid package could still get a real
+    // income entry recorded.
+    // NewClassModal (the only caller that builds cd.studentData) encodes a
+    // combo selection as sd.pack=String(package.qty) — the real package id
+    // lives in sd.packId, a separate field — so packages.find keyed on
+    // sd.pack never matches here; validate the qty value sd.pack actually
+    // carries instead of looking up a package by it.
+    const invalidSd=(cd.studentData||[]).find(sd=>{
+      if(sd.pack==="individual"||sd.pack==="mensual") return false;
+      const n=parseInt(sd.pack);
+      return !(Number.isInteger(n)&&n>0);
+    });
+    if(invalidSd){
+      const invalidStudent=students.find(x=>x.id===invalidSd.id);
+      alert("El paquete de "+(invalidStudent?.name||"un alumno")+" no tiene una cantidad de clases válida. Revisá el paquete en Configuración.");
+      return;
+    }
     // Store a single class definition with occurrences array
     const dates=cd.occurrences&&cd.occurrences.length>0?cd.occurrences:[cd.date||TODAY_DATE];
     const newClass={
@@ -7012,11 +7041,16 @@ export default function App() {
       setStudents(p=>p.map(s=>{
         const sd=cd.studentData.find(x=>x.id===s.id);
         if(!sd) return s;
-        const pkg=packages.find(p=>String(p.id)===String(sd.pack));
-        const isIndividual=sd.pack==="individual"||pkg?.type==="individual";
-        const isMensual=sd.pack==="mensual"||pkg?.type==="mensual";
+        const isIndividual=sd.pack==="individual";
+        const isMensual=sd.pack==="mensual";
+        // Combo qty comes straight from sd.pack (see the pre-validation
+        // comment above for why — sd.pack IS the qty string for combos,
+        // not a package id) and is already guaranteed to be a valid
+        // positive integer by createNewClass's pre-validation above, which
+        // runs before setClasses/setStudents/addIncome and bails out with
+        // an alert if any selected package is invalid.
         // For individual: total = number of occurrences, dates = all occurrence dates
-        const pn=isMensual?null:isIndividual?dates.length:pkg?.qty||parseInt(sd.pack)||null;
+        const pn=isMensual?null:isIndividual?dates.length:parseInt(sd.pack);
         const packType=isMensual?"mensual":isIndividual?"individual":"combo";
         // For individual: use all occurrence dates directly
         const projectedClassDates=isIndividual?[...dates]:(()=>{
