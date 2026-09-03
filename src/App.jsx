@@ -1331,7 +1331,6 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
   const [title,setTitle]=useState(""); const [court,setCourt]=useState("");
   const [sel,setSel]=useState([]);
   const [startDate,setStartDate]=useState(prefill?.date||"");
-  const [endDate,setEndDate]=useState("");
   const [days,setDays]=useState([]);
   const [t1,setT1]=useState(prefill?.time||"08:00"); const [t2,setT2]=useState(prefill?.timeEnd||"09:00");
   const [showCreateStudent,setShowCreateStudent]=useState(false);
@@ -1344,30 +1343,6 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
   const mNShort=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
   const wDShort=["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
 
-  // Generate all class occurrences between startDate and endDate
-  const generateOccurrences=()=>{
-    if(!startDate) return [];
-    // No days selected = single class
-    if(days.length===0) return [];
-    // No end date = single class (individual or one-time)
-    if(!endDate) return [];
-    // With days and end date: generate occurrences
-    const dowSet=new Set(days.map(d=>DAY_MAP[d]));
-    const result=[];
-    let cur=new Date(startDate+"T12:00:00");
-    const end=new Date(endDate+"T12:00:00");
-    while(cur<=end&&result.length<200){
-      if(dowSet.has(cur.getDay())){
-        const ds=cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0");
-        result.push(ds);
-      }
-      cur.setDate(cur.getDate()+1);
-    }
-    return result;
-  };
-
-  const occurrences=generateOccurrences();
-
   const handleSave=()=>{
     if(!title||sel.length===0){alert("Agregá título y al menos un alumno.");return;}
     if(!startDate){alert("Agregá una fecha de inicio.");return;}
@@ -1376,12 +1351,18 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
       const pkg=packages.find(p=>String(p.id)===String(x.pack));
       return x.pack!=="individual"&&pkg?.type!=="individual"&&x.pack!=="";
     });
-    if(hasCombo&&days.length===0&&!endDate){
-      alert("Para clases con combo, seleccioná al menos un día de la semana o una fecha de expiración.");return;
+    if(hasCombo&&days.length===0){
+      alert("Para clases con combo, seleccioná al menos un día de la semana.");return;
     }
-    // If combo/mensual without endDate, generate 6 months of occurrences
-    let finalOccurrences=occurrences;
-    if(hasCombo&&!endDate&&days.length>0&&occurrences.length===0){
+    // No Expiration input anymore: individual/one-time classes get a
+    // single occurrence on startDate (finalOccurrences stays empty,
+    // same as when the removed field was left blank). Combo/mensual
+    // with days selected still gets ~6 months of recurring occurrences
+    // for the class itself (Agenda) — unchanged from before. Each
+    // student's own package dates (projectedClassDates in
+    // createNewClass) never depended on this and are unaffected.
+    let finalOccurrences=[];
+    if(hasCombo&&days.length>0){
       const dowSet=new Set(days.map(d=>DAY_MAP[d]));
       const result=[];
       let cur=new Date(startDate+"T12:00:00");
@@ -1395,8 +1376,8 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
       finalOccurrences=result;
     }
     const firstDate=finalOccurrences.length>0?finalOccurrences[0]:startDate||TODAY_DATE;
-    onSave({title,court,studentData:sel,students:sel.map(x=>x.id),date:firstDate,time:t1,timeEnd:t2,days,startDate,endDate,occurrences:finalOccurrences});
-    onClose();
+    const ok=onSave({title,court,studentData:sel,students:sel.map(x=>x.id),date:firstDate,time:t1,timeEnd:t2,days,startDate,occurrences:finalOccurrences});
+    if(ok!==false) onClose();
   };
 
   const upd=(id,f,v)=>setSel(prev=>prev.map(x=>x.id===id?{...x,[f]:v}:x));
@@ -1410,12 +1391,13 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
 
   return (
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:500,display:"flex",alignItems:"flex-end"}}>
-      <div style={{background:C.white,borderRadius:"24px 24px 0 0",padding:"24px 20px 32px",width:"100%",maxHeight:"92%",overflowY:"auto",boxSizing:"border-box"}}>
+      <div style={{background:C.white,borderRadius:"24px 24px 0 0",width:"100%",maxHeight:"92%",boxSizing:"border-box",display:"flex",flexDirection:"column"}}>
+      <div style={{padding:"24px 20px 20px",overflowY:"auto",minHeight:0,flex:"1 1 auto"}}>
         <div style={{fontWeight:900,fontSize:22,color:C.text,marginBottom:4}}>Nueva clase</div>
         <div style={{fontSize:14,color:C.mutedDark,marginBottom:20}}>{dateLabel}</div>
 
         <div style={{marginBottom:14,position:"relative"}}>
-          <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Título</label>
+          <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Dale un nombre a la clase</label>
           <input value={title} onChange={e=>{setTitle(e.target.value);}} placeholder="Ej: Tenis - Mañana" style={iS} autoComplete="off"/>
           {title.length>=2&&(()=>{
             const suggestions=[...new Set((existingClasses||[]).map(c=>c.title))].filter(t=>t.toLowerCase().includes(title.toLowerCase())&&t.toLowerCase()!==title.toLowerCase());
@@ -1432,20 +1414,13 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
           })()}
         </div>
 
-        <div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:14}}>
-          <div>
-            <label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Fecha de inicio</label>
-            <input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} style={iS}/>
-          </div>
-          <div>
-            <label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Expiración <span style={{fontSize:10,color:C.mutedDark,fontWeight:400}}>(opcional)</span></label>
-            <input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} style={iS}/>
-            {!endDate&&<div style={{fontSize:10,color:C.mutedDark,marginTop:4}}>♾ Sin límite</div>}
-          </div>
+        <div style={{marginBottom:14}}>
+          <label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Selecciona la fecha de inicio</label>
+          <input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} style={iS}/>
         </div>
 
         <div style={{marginBottom:14}}>
-          <label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:8}}>Días</label>
+          <label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:8}}>Selecciona los días</label>
           <DayPicker value={days} onChange={setDays}/>
         </div>
 
@@ -1456,7 +1431,7 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
 
         {/* Cancha */}
         <div style={{marginBottom:14}}>
-          <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Cancha</label>
+          <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Selecciona la cancha</label>
           <input value={court} onChange={e=>setCourt(e.target.value)} placeholder="Ej: Cancha A" style={iS}/>
           {courts.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:8}}>
             {courts.map(c=><button key={c.id} onClick={()=>setCourt(c.name)} style={{padding:"4px 12px",borderRadius:20,border:"1.5px solid "+(court===c.name?C.blue2:C.border),background:court===c.name?C.blueL:C.white,color:court===c.name?C.blue2:C.mutedDark,fontSize:12,cursor:"pointer",fontWeight:600}}>{c.name}{c.city?" · "+c.city:""}</button>)}
@@ -1464,10 +1439,8 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
         </div>
 
         <div style={{marginBottom:14}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-            <label style={{fontSize:13,color:C.blue,fontWeight:700}}>Alumnos</label>
-            <button onClick={()=>setShowCreateStudent(true)} style={{padding:"6px 12px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:11,cursor:"pointer",fontWeight:800,letterSpacing:0.3}}>+ CREAR ALUMNO</button>
-          </div>
+          <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:8}}>Agrega alumnos a tu clase</label>
+          <button onClick={()=>setShowCreateStudent(true)} style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:14,cursor:"pointer",fontWeight:800,letterSpacing:0.3,marginBottom:10}}>+ Agregar alumno nuevo</button>
           <StudentSearch students={allStudents} selected={sel} onAdd={(s)=>setSel(prev=>[...prev,{id:s.id,pack:"",packId:"",amount:"",paid:false}])}/>
           {sel.map(sd=>{
             const s=allStudents.find(x=>x.id===sd.id); if(!s) return null;
@@ -1536,10 +1509,11 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
             );
           })}
         </div>
-        <div style={{display:"flex",gap:12}}>
-          <button onClick={onClose} style={{flex:1,padding:"15px",borderRadius:14,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:15,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
-          <button onClick={handleSave} style={{flex:1,padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:15,fontWeight:800}}>Crear clase</button>
-        </div>
+      </div>
+      <div style={{flexShrink:0,display:"flex",gap:12,padding:"16px 20px calc(16px + env(safe-area-inset-bottom,0px))",borderTop:"1px solid "+C.border,background:C.white}}>
+        <button onClick={onClose} style={{flex:1,padding:"15px",borderRadius:14,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:15,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
+        <button onClick={handleSave} style={{flex:1,padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:15,fontWeight:800}}>Crear clase</button>
+      </div>
       </div>
       {showCreateStudent&&<NewStudentModal onClose={()=>setShowCreateStudent(false)} onSave={handleCreateStudent}/>}
       {showNewPackModal&&<NewPackageModal onClose={()=>{setShowNewPackModal(false);setPendingPackStudent(null);}} onSave={(pkg)=>{
@@ -7023,7 +6997,7 @@ export default function App() {
     if(invalidSd){
       const invalidStudent=students.find(x=>x.id===invalidSd.id);
       alert("El paquete de "+(invalidStudent?.name||"un alumno")+" no tiene una cantidad de clases válida. Revisá el paquete en Configuración.");
-      return;
+      return false;
     }
     // Store a single class definition with occurrences array
     const dates=cd.occurrences&&cd.occurrences.length>0?cd.occurrences:[cd.date||TODAY_DATE];
@@ -7139,6 +7113,7 @@ export default function App() {
         }
       });
     }
+    return true;
   };
 
   const handleAttendance=(cls)=>{
@@ -7554,7 +7529,7 @@ export default function App() {
       updateStudentPacks(cd);
       return;
     }
-    createNewClass(cd);
+    return createNewClass(cd);
   };
 
   const coachTabs=[
