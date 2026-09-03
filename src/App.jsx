@@ -7240,6 +7240,76 @@ export default function App() {
           (lastCombo.packType==="mensual") ||
           ((lastCombo.used||0)<(lastCombo.total||0))
         );
+        // Explicit structural-change detection (BUG 2 fix) — replaces relying on
+        // sameStructure (below) as an implicit proxy for "package unchanged". Before
+        // this, any real structural change (individual<->combo, combo qty A->B) that
+        // wasn't the narrow sameStructure case fell through to the date-sync branch
+        // with the OLD combo's total, silently discarding the newly selected
+        // package's qty/type — e.g. Individual->Combo 8 kept total:1.
+        if(hasActiveCombo&&lastCombo){
+          const oldPackType=lastCombo.packType||"combo";
+          const structureChanged=packType!==oldPackType||(packType==="combo"&&qty!==lastCombo.total);
+          if(structureChanged&&(oldPackType==="mensual"||packType==="mensual")){
+            // Mensual<->combo/individual is out of scope for this fix — mensual carries
+            // its own fields (cobroDia, mensualidades, currency) that this branch does
+            // not build, so falling through would either silently drop the mensual
+            // structure or silently drop the combo/individual selection. Block instead
+            // of corrupting either shape.
+            alert("El cambio entre paquete mensual y combo/individual todavía no puede hacerse desde la edición de clase.");
+            return s;
+          }
+          if(structureChanged){
+            let newTotal;
+            if(packType==="individual"){
+              newTotal=1;
+            } else if(pkg&&Number.isInteger(pkg.qty)&&pkg.qty>0){
+              newTotal=pkg.qty;
+            } else if(!pkg){
+              // Legacy fallback: EditClassScreen offers a bare "8 clases" option
+              // (sp.pack="8", no real package behind it) when packages.length===0.
+              // Accept sp.pack as a literal qty ONLY when there's no pkg at all —
+              // never as a general parseInt(sp.pack) fallback that could swallow
+              // an unmatched real package id.
+              const bareQty=Number(sp.pack);
+              if(Number.isInteger(bareQty)&&bareQty>0&&bareQty<100){
+                newTotal=bareQty;
+              } else {
+                alert("El paquete de "+s.name+" no tiene una cantidad de clases válida. Revisá el paquete en Configuración.");
+                return s;
+              }
+            } else {
+              alert("El paquete de "+s.name+" no tiene una cantidad de clases válida. Revisá el paquete en Configuración.");
+              return s;
+            }
+            // Never truncate history: a downgrade (or individual with more than 1
+            // class already given/paid) must be rejected outright, not silently
+            // clamped — clamping would misrepresent classes the student already
+            // received or paid for.
+            const consumed=Number(lastCombo.used||0);
+            const existingPaidCount=Number(lastCombo.paidCount||0);
+            if(newTotal<consumed||newTotal<existingPaidCount){
+              alert("No se puede cambiar el paquete de "+s.name+": ya hay "+Math.max(consumed,existingPaidCount)+" clases dadas o pagadas, más que el nuevo total ("+newTotal+"). Elegí un paquete con más clases.");
+              return s;
+            }
+            const pastDates=(lastCombo.dates||[]).filter(d=>d<TODAY_DATE);
+            const futureSlots=Math.max(0,newTotal-pastDates.length);
+            const newFutureDates=(cd.occurrences||[]).filter(d=>d>=TODAY_DATE).slice(0,futureSlots);
+            const newDates=[...pastDates,...newFutureDates].sort();
+            // payments/paidCount/paid/used are intentionally carried over untouched —
+            // a structural change never invents or truncates payment history, and
+            // used is re-derived from attendance elsewhere (handleAttendance), which
+            // stays valid as long as the historical dates remain in combo.dates.
+            combos[combos.length-1]={
+              ...lastCombo,
+              packType,
+              packId:String(sp.pack),
+              amount:parseInt(sp.amount)||lastCombo.amount||0,
+              total:newTotal,
+              dates:newDates,
+            };
+            return {...s,combos};
+          }
+        }
         // Same-structure re-template/re-price: identical packType="combo" and qty as the
         // active combo, just a different catalog template/price. Correct packId/amount on
         // the existing combo in place — no new combo, no dates/used/paid touched here.
