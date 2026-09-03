@@ -15,8 +15,11 @@ export function parseAdminRoute(pathname) {
     if (parts[1]) return { page: "coach-detail", params: { id: parts[1] } };
     return { page: "coaches" };
   }
+  if (parts[0] === "students") {
+    if (parts[1] && parts[2]) return { page: "student-detail", params: { coachId: parts[1], studentId: parts[2] } };
+    return { page: "students" };
+  }
   // Prepared for future modules — no page implements these yet.
-  if (parts[0] === "students") return { page: "students" };
   if (parts[0] === "invites") return { page: "invites" };
   if (parts[0] === "logs") return { page: "logs" };
 

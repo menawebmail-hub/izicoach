@@ -3,13 +3,15 @@ import { supabase } from "../services/supabaseClient.js";
 import { useAdminRoute } from "./adminRouter.js";
 import { CoachesList } from "./pages/CoachesList.jsx";
 import { CoachDetail } from "./pages/CoachDetail.jsx";
+import { StudentsList } from "./pages/StudentsList.jsx";
+import { StudentDetail } from "./pages/StudentDetail.jsx";
 import { PlaceholderPage } from "./pages/PlaceholderPage.jsx";
 import "./admin.css";
 
 const NAV_ITEMS = [
   { key: "dashboard", label: "Dashboard", path: "/admin", implemented: false },
   { key: "coaches", label: "Coaches", path: "/admin/coaches", implemented: true },
-  { key: "students", label: "Alumnos", path: "/admin/students", implemented: false },
+  { key: "students", label: "Alumnos", path: "/admin/students", implemented: true },
   { key: "invites", label: "Invitaciones", path: "/admin/invites", implemented: false },
   { key: "logs", label: "Logs / Diagnóstico", path: "/admin/logs", implemented: false },
 ];
@@ -48,7 +50,9 @@ export function AdminShell({ admin }) {
   } else if (route.page === "coach-detail") {
     content = <CoachDetail coachId={route.params.id} navigate={navigate} />;
   } else if (route.page === "students") {
-    content = <PlaceholderPage title="Alumnos" />;
+    content = <StudentsList navigate={navigate} />;
+  } else if (route.page === "student-detail") {
+    content = <StudentDetail coachId={route.params.coachId} studentId={route.params.studentId} navigate={navigate} />;
   } else if (route.page === "invites") {
     content = <PlaceholderPage title="Invitaciones" />;
   } else if (route.page === "logs") {
@@ -67,7 +71,9 @@ export function AdminShell({ admin }) {
         </div>
         <nav>
           {NAV_ITEMS.map((item) => {
-            const active = route.page === item.key || (item.key === "coaches" && route.page === "coach-detail");
+            const active = route.page === item.key
+              || (item.key === "coaches" && route.page === "coach-detail")
+              || (item.key === "students" && route.page === "student-detail");
             return (
               <div
                 key={item.key}
