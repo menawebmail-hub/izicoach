@@ -2268,8 +2268,13 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
       const st=initialStudents.find(s=>s.id===sid);
       if(!st){init[sid]={pack:"",amount:0,paid:false};return;}
       const combos=st?.combos||[];
-      // Find combo that covers this class date, or fall back to last combo
-      const combo=combos.find(c=>(c.dates||[]).includes(cls.date))||combos[combos.length-1];
+      // Prefer the combo whose sourceClassId is this class; otherwise fall
+      // back to the legacy date heuristic; otherwise the last combo.
+      // Display-only — never writes anything.
+      const clsRealId=cls._seriesId||cls.id;
+      const combo=combos.find(c=>c.sourceClassId===clsRealId)
+        ||combos.find(c=>(c.dates||[]).includes(cls.date))
+        ||combos[combos.length-1];
       if(!combo){init[sid]={pack:"",amount:0,paid:false};return;}
       // Find matching package - first try packId, then qty+amount, then qty
       let packVal="";
@@ -7051,29 +7056,13 @@ export default function App() {
         })();
         const amount=parseInt(sd.amount)||0;
         const paymentEntry=sd.paid&&amount>0?[{id:Date.now(),qty:pn||0,amount,method:"efectivo",date:cd.date||TODAY_DATE,dates:projectedClassDates}]:[];
-        // For individual classes: merge into existing active individual combo if exists
-        const existingIndividualIdx=s.combos.findIndex(c=>
-          (c.packType==="individual"||c.total===1)&&
-          c.paid===sd.paid&&
-          c.amount===(parseInt(sd.amount)||0)&&
-          !(c.dates&&c.dates.some(d=>d<TODAY_DATE&&(c.used||0)>=(c.total||1))) // not fully consumed
-        );
-        if(isIndividual&&existingIndividualIdx>=0){
-          // Add this class date to existing combo
-          const existing=s.combos[existingIndividualIdx];
-          const newDates=[...new Set([...(existing.dates||[]),...projectedClassDates])].sort();
-          const newTotal=(existing.total||1)+1;
-          const newPaidCount=sd.paid?(existing.paidCount||0)+1:(existing.paidCount||0);
-          const updatedCombos=s.combos.map((c,idx)=>idx===existingIndividualIdx?{
-            ...c,total:newTotal,paidCount:newPaidCount,dates:newDates,
-            payments:sd.paid&&amount>0?[...(c.payments||[]),{id:Date.now(),qty:1,amount,method:"efectivo",date:cd.date||TODAY_DATE,dates:projectedClassDates}]:(c.payments||[])
-          }:c);
-          return {...s,combos:updatedCombos};
-        }
+        // Every createNewClass call is its own class, identified by sourceClassId —
+        // two individual classes never merge, even with identical student/amount/paid/date.
         return {...s,combos:[...s.combos,{
           id:s.combos.length+1,
           total:pn,
           packType,
+          sourceClassId:newClass.id,
           packId:sd.packId||sd.pack||"",
           used:0,
           paid:packType==="mensual"?undefined:sd.paid,
@@ -7137,13 +7126,22 @@ export default function App() {
       if(!allClassStudents.includes(s.id)) return s;
       const combos=[...s.combos];
       if(combos.length===0) return s;
-      // Target the combo that actually contains classDate (supports legacy single c.date).
-      // Search from the end so the most recent matching combo wins if more than one unexpectedly matches.
-      // Fall back to the last combo when none contains it, preserving prior behavior for that case.
+      // Target the combo for this attendance save, in layers: (1) sourceClassId
+      // match — a class with known identity can never bump 'used' on another
+      // class's combo; (2) legacy date heuristic (contains classDate, supports
+      // legacy single c.date) — search from the end so the most recent
+      // matching combo wins if more than one unexpectedly matches; (3) fall
+      // back to the last combo when none contains it, preserving prior
+      // behavior for that case.
       let targetIdx=-1;
       for(let i=combos.length-1;i>=0;i--){
-        const c=combos[i];
-        if((c.dates||[]).includes(classDate)||c.date===classDate){targetIdx=i;break;}
+        if(combos[i].sourceClassId===realId){targetIdx=i;break;}
+      }
+      if(targetIdx===-1){
+        for(let i=combos.length-1;i>=0;i--){
+          const c=combos[i];
+          if((c.dates||[]).includes(classDate)||c.date===classDate){targetIdx=i;break;}
+        }
       }
       const lastIdx=targetIdx>=0?targetIdx:combos.length-1;
       const target=combos[lastIdx];
@@ -7181,6 +7179,12 @@ export default function App() {
         setStudents(p=>p.map(s=>{
           if(!removedStudentIds.includes(s.id)) return s;
           const cleanedCombos=(s.combos||[]).map(combo=>{
+            // A combo with a known sourceClassId is only ever touched when it's
+            // THIS class — never stripped by date coincidence once we know for
+            // certain which class it belongs to. Legacy combos (no
+            // sourceClassId) keep the existing date-set heuristic exactly as
+            // before — the only signal available for data that predates this.
+            if(combo.sourceClassId!==undefined&&combo.sourceClassId!==realId) return combo;
             const comboDates=combo.dates||[combo.date].filter(Boolean);
             const filteredDates=comboDates.filter(d=>!classDates.has(d));
             if(filteredDates.length===0) return null;
@@ -7196,7 +7200,8 @@ export default function App() {
   const updateStudentPacks=(cd)=>{
     if(cd.studentPacks){
       try {
-      const editedClass=classes.find(c=>c.id===cd.id)||cd;
+      const realId=cd._seriesId||cd.id;
+      const editedClass=classes.find(c=>c.id===realId)||cd;
       setStudents(p=>p.map(s=>{
         const sp=cd.studentPacks[s.id]||cd.studentPacks[String(s.id)];
         if(!sp||!sp.pack) return s;
@@ -7206,7 +7211,37 @@ export default function App() {
         const qty=isMensual?null:isIndividual?1:pkg?.qty||(!isNaN(parseInt(sp.pack))&&parseInt(sp.pack)<100?parseInt(sp.pack):null)||8;
         const packType=isMensual?"mensual":isIndividual?"individual":"combo";
         const combos=[...s.combos];
-        const lastCombo=combos.length>0?combos[combos.length-1]:null;
+        // Select the combo this edit should act on, in three layers — never
+        // silently touch another class's combo:
+        //  1) sourceClassId===realId (search newest-first — a class could
+        //     have more than one combo over its lifetime, e.g. after a
+        //     structural change).
+        //  2) Legacy date heuristic (combo.dates/combo.date matches this
+        //     class's date) — ONLY among combos with no sourceClassId at
+        //     all; a combo that already has an explicit sourceClassId
+        //     pointing elsewhere is never reconsidered here just because a
+        //     date happens to coincide.
+        //  3) Legacy fallback: last combo in the array — identical to the
+        //     behavior before this fix.
+        // Matching via layer 2/3 never writes sourceClassId onto that combo
+        // — none of the write sites below set it, so a legacy combo found
+        // this way stays exactly as legacy as it was.
+        let targetIdx=-1;
+        for(let i=combos.length-1;i>=0;i--){
+          if(combos[i].sourceClassId===realId){targetIdx=i;break;}
+        }
+        if(targetIdx===-1){
+          const relevantDate=cd.date||editedClass?.date;
+          if(relevantDate){
+            for(let i=combos.length-1;i>=0;i--){
+              const c=combos[i];
+              if(c.sourceClassId!==undefined) continue;
+              if((c.dates||[]).includes(relevantDate)||c.date===relevantDate){targetIdx=i;break;}
+            }
+          }
+        }
+        if(targetIdx===-1) targetIdx=combos.length-1;
+        const lastCombo=targetIdx>=0?combos[targetIdx]:null;
         const lastDate=lastCombo?.dates?.slice(-1)[0]||"";
         const today=new Date().toISOString().slice(0,10);
         const lastComboFullyUsed=!lastDate||((lastDate<today)&&(lastCombo?.used||0)>=(lastCombo?.total||0));
@@ -7274,7 +7309,7 @@ export default function App() {
             // a structural change never invents or truncates payment history, and
             // used is re-derived from attendance elsewhere (handleAttendance), which
             // stays valid as long as the historical dates remain in combo.dates.
-            combos[combos.length-1]={
+            combos[targetIdx]={
               ...lastCombo,
               packType,
               packId:String(sp.pack),
@@ -7302,24 +7337,24 @@ export default function App() {
             dates:workingCombo.dates||[],
           };
           workingCombo={...workingCombo,paid:true,paidCount:workingCombo.total||0,payments:[...(workingCombo.payments||[]),paymentRecord]};
-          combos[combos.length-1]=workingCombo;
+          combos[targetIdx]=workingCombo;
           return {...s,combos};
         }
         if(hasActiveCombo){
           if(cd.occurrences&&workingCombo.dates&&!cd._occOnly){
             const newDates=calcUpdatedComboDates(workingCombo.dates,workingCombo.total||workingCombo.dates.length,cd.occurrences);
-            combos[combos.length-1]={...workingCombo,dates:newDates};
+            combos[targetIdx]={...workingCombo,dates:newDates};
             return {...s,combos};
           }
           if(sameStructure){
-            combos[combos.length-1]=workingCombo;
+            combos[targetIdx]=workingCombo;
             return {...s,combos};
           }
           return s;
         }
         if(!lastDate||lastComboFullyUsed){
           const startDate=cd.date||today;
-          const editedClassFull=classes.find(c=>c.id===(cd._seriesId||cd.id));
+          const editedClassFull=classes.find(c=>c.id===realId);
           const realOcc=(editedClassFull?.occurrences||[]).filter(d=>d>=startDate);
           const total=qty||8;
           const newDates=realOcc.slice(0,total);
@@ -7338,6 +7373,7 @@ export default function App() {
             id:combos.length+1,
             total:qty,
             packType,
+            sourceClassId:realId,
             used:0,
             paid:sp.paid===true,
             paidCount:sp.paid===true?(qty||0):0,
@@ -7347,8 +7383,8 @@ export default function App() {
             payments:sp.paid===true?[{id:Date.now(),qty:qty||0,amount:parseInt(sp.amount)||0,method:"efectivo",date:today,dates:newDates}]:[],
           });
         } else {
-          if(combos.length>0){
-            combos[combos.length-1]={...combos[combos.length-1],total:qty,amount:parseInt(sp.amount)||combos[combos.length-1].amount};
+          if(targetIdx>=0){
+            combos[targetIdx]={...combos[targetIdx],total:qty,amount:parseInt(sp.amount)||combos[targetIdx].amount};
           }
         }
         return {...s,combos};
