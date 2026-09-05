@@ -267,13 +267,13 @@ function getCombo(s) {
   if(mensual.length>0) return mensual[mensual.length-1];
   return combos[combos.length-1]||null;
 }
-function getEffectiveTotal(s, c, classes=[]) {
-  if(!c||!c.total) return c?.total||0;
-  const myClasses=classes.filter(cls=>cls.students&&cls.students.includes(s.id));
-  const comboDates=c.dates||[];
-  // Only subtract cancelled dates that are NOT rescheduled
-  const cancelledCount=comboDates.filter(ds=>myClasses.some(cls=>cls.date===ds&&cls.cancelled&&!cls.rescheduled)).length;
-  return Math.max(1, c.total - cancelledCount);
+// combo.total is the contractual economic universe of a Combo — a definitive
+// cancellation or a pending/assigned reprogram never reduces it (product rule).
+// Kept as its own helper (rather than inlined at the one call site) so a future
+// legitimate reduction has one place to live, and every getClaseRem call site
+// doesn't need touching.
+function getEffectiveTotal(_s, c, _classes=[]) {
+  return c?.total||0;
 }
 // Check if a class date is beyond the active combo (combo done, next unpaid)
 function isNextComboPending(cls, students) {
@@ -427,9 +427,21 @@ function getClaseRem(s, classes=[]) {
     const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?effectiveTotal:0);
     const unpaid=Math.max(0,effectiveTotal-paidCount);
     const studentClasses=classes.filter(cls=>cls.students&&cls.students.includes(s.id));
+    // Resolve each original date's real fulfillment date via the canonical
+    // getSlotFulfillmentDate (same definition getAccountCounters uses) instead of
+    // assuming the original date itself — a pending/future recovery must NOT count
+    // here just because the original date already passed. A definitive Combo
+    // cancellation is billed and consumes the slot regardless of date/attendance
+    // (product rule, not extended to Individual — matches getAccountCounters).
     const pastGiven=(c.dates||[c.date]).filter(d=>{
-      if(!d||d>=TODAY_DATE) return false;
-      const attEntry=studentClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===d);
+      if(!d) return false;
+      const clsForDate=studentClasses.find(cls=>cls.date===d);
+      const cancelled=clsForDate?.cancelled;
+      const cancelType=clsForDate?.cancelType;
+      if(c.packType==="combo"&&cancelled&&cancelType==="cancelled") return true;
+      const fulfillmentDate=getSlotFulfillmentDate(d,cancelled,cancelType,clsForDate?.rescheduledTo);
+      if(!fulfillmentDate||fulfillmentDate>=TODAY_DATE) return false;
+      const attEntry=studentClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===fulfillmentDate);
       if(attEntry&&(attEntry.ausente_reprog||[]).includes(s.id)) return false;
       return true;
     }).length;
