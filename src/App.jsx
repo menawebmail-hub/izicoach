@@ -503,6 +503,17 @@ function getAccountCounters(s, classes=[]) {
         dates=[...dates,..._ex2];
       }
     }
+    // Economic budget for definitively-cancelled slots: a cancellation doesn't erase
+    // the payment obligation, but it must never double-count against the same
+    // paidCount a non-cancelled slot already claimed (nonPausedBefore, below, already
+    // excludes cancelled dates when positioning every OTHER date — untouched). Any
+    // paidCount left over past the N non-cancelled/non-paused slots is what a
+    // cancelled slot can draw on, first-cancelled-first-paid.
+    const _nonCancelledNonPausedCount=dates.filter(dd=>{
+      const cl3=myClasses.find(cls=>cls.date===dd);
+      return !(cl3&&(cl3.paused||cl3.cancelType==="paused"))&&!(cl3&&cl3.cancelled&&cl3.cancelType==="cancelled");
+    }).length;
+    const _cancelledLeftoverBudget=Math.max(0,paidCount-_nonCancelledNonPausedCount);
     return dates.map((d,idx)=>{
       const clsForDate=myClasses.find(cls=>cls.date===d);
       const cancelInfo=clsForDate?{cancelled:clsForDate.cancelled,cancelType:clsForDate.cancelType,rescheduledTo:clsForDate.rescheduledTo,paused:clsForDate.paused}:{};
@@ -515,7 +526,14 @@ function getAccountCounters(s, classes=[]) {
         const cl2=myClasses.find(cls=>cls.date===dd);
         return !(cl2&&(cl2.paused||cl2.cancelType==="paused"))&&!(cl2&&cl2.cancelled&&cl2.cancelType==="cancelled");
       }).length;
-      const isPaid=(isPaused||isCancelled)?false:nonPausedBefore<paidCount;
+      // A cancelled slot's own paid status draws only on the leftover budget past the
+      // non-cancelled slots (first-cancelled-first-paid) — never the same paidCount
+      // unit nonPausedBefore already assigned to a non-cancelled slot above.
+      const cancelledBefore=isCancelled?dates.slice(0,idx).filter(dd=>{
+        const cl2=myClasses.find(cls=>cls.date===dd);
+        return cl2&&cl2.cancelled&&cl2.cancelType==="cancelled";
+      }).length:0;
+      const isPaid=isPaused?false:isCancelled?cancelledBefore<_cancelledLeftoverBudget:nonPausedBefore<paidCount;
       const isDone=isClassDone(d,timeEnd);
       // Fulfillment (isGiven) is evaluated on the effective date — rescheduledTo for a
       // reprogrammed slot, the original date otherwise — never on both, so a slot always
@@ -524,7 +542,12 @@ function getAccountCounters(s, classes=[]) {
       const fulfillAttEntry=fulfillmentDate?myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===fulfillmentDate):null;
       const wasPresent=fulfillAttEntry?(fulfillAttEntry.present||[]).includes(s.id):false;
       const wasAusenteDada=fulfillAttEntry?(fulfillAttEntry.ausente_dada||[]).includes(s.id):false;
-      const isGiven=isPaused?false:isCancelled?false:!fulfillmentDate?false:fulfillAttEntry?(wasPresent||wasAusenteDada):isClassDone(fulfillmentDate,timeEnd);
+      // A definitively-cancelled Combo slot is billed and consumed exactly like a given
+      // one — it counts as Realizada (isGiven=true) even though its own operative label
+      // stays "Cancelada" elsewhere. Individual is deliberately NOT extended (product
+      // decision: cancellation isn't a normal Individual flow) — its cancelled slots
+      // keep the prior behavior of never counting as given.
+      const isGiven=isPaused?false:isCancelled?c.packType==="combo":!fulfillmentDate?false:fulfillAttEntry?(wasPresent||wasAusenteDada):isClassDone(fulfillmentDate,timeEnd);
       return {date:d,isPaid,isGiven,isPast:isDone,isCancelled,isReprogWithDate,isReprogNoDate,isPaused,packType:c.packType,sourceComboIndex,comboId:c.id,sourceClassId:c.sourceClassId};
     });
   });
@@ -539,9 +562,15 @@ function getAccountCounters(s, classes=[]) {
     seenKeys.add(key);
     return true;
   });
-  const noPagadas=allDates.filter(d=>!d.isPaid&&!d.isCancelled&&!d.isPaused).length;
-  const pagadas=allDates.filter(d=>d.isPaid&&!d.isCancelled&&!d.isPaused).length;
-  const realizadas=allDates.filter(d=>d.isGiven&&!d.isCancelled&&!d.isPaused).length;
+  // A definitively-cancelled Combo slot keeps its economic obligation (still Pagada or
+  // No Pagada, see isPaid above) AND counts toward Realizadas (see isGiven above) — a
+  // cancellation is billed and consumes the slot exactly like a given class. Individual
+  // is deliberately NOT extended (cancellation isn't a normal Individual flow) — its
+  // cancelled slots keep the prior behavior of never appearing in either counter, and
+  // never counting as given.
+  const noPagadas=allDates.filter(d=>!d.isPaid&&!d.isPaused&&(!d.isCancelled||d.packType==="combo")).length;
+  const pagadas=allDates.filter(d=>d.isPaid&&!d.isPaused&&(!d.isCancelled||d.packType==="combo")).length;
+  const realizadas=allDates.filter(d=>d.isGiven&&!d.isPaused).length;
   const canceladas=allDates.filter(d=>d.isCancelled).length;
   const reprogramadas=allDates.filter(d=>d.isReprogWithDate).length;
   const aReprogramar=allDates.filter(d=>d.isReprogNoDate).length;
@@ -550,9 +579,11 @@ function getAccountCounters(s, classes=[]) {
   // Restantes represents ONLY Combo entitlement — an Individual (any state: programada,
   // realizada, pagada o no) never contributes, by construction (scoped to packType==="combo").
   const totalEntitlementCombo=activeCombosForCount.filter(({combo:c})=>c.packType==="combo").reduce((sum,{combo:c})=>sum+(c.total||0),0);
-  const canceladasCombo=allDates.filter(d=>d.isCancelled&&d.packType==="combo").length;
-  const realizadasCombo=allDates.filter(d=>d.isGiven&&!d.isCancelled&&!d.isPaused&&d.packType==="combo").length;
-  const restantes=Math.max(0,totalEntitlementCombo-canceladasCombo-realizadasCombo);
+  // realizadasCombo already includes definitively-cancelled Combo slots (isGiven=true
+  // for those) — restantes must NOT subtract canceladasCombo separately, or a cancelled
+  // slot would be discounted twice (once as "cancelled", once as "realized").
+  const realizadasCombo=allDates.filter(d=>d.isGiven&&!d.isPaused&&d.packType==="combo").length;
+  const restantes=Math.max(0,totalEntitlementCombo-realizadasCombo);
   return {noPagadas,pagadas,realizadas,restantes,canceladas,reprogramadas,aReprogramar,pausadas,totalEntitlement,totalEntitlementCombo,realizadasCombo};
 }
 
@@ -2131,14 +2162,11 @@ function Students({ students, onAdd, onUpdate, onAddStudentDirect, onDelete, onC
                 const noData=!combo||(!combo.total&&!combo.paidCount&&!combo.paid);
                 const statusColor=noData?"#9BACCB":rem===null?C.blue2:isRed?"#C62828":rem===0?"#43A047":C.blue2;
                 const statusLabel=noData?"Sin registro":rem===null?"Mensual":isRed?"A cobrar":rem===0?"Al día":"Programadas";
-                // Mini 4-column summary
-                const allDatesSRaw=(s.combos||[]).filter(c=>c.total>0||(c.packType&&c.packType!=="mensual")).flatMap(c=>(c.dates||[]).map((d,i)=>({
-                  date:d,
-                  isPaid:(c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0))>i,
-                  isGiven:(()=>{const att=myClasses.flatMap(cl=>cl.attendanceLog||[]).find(e=>e.date===d);return att?(att.present||[]).includes(s.id)||(att.ausente_dada||[]).includes(s.id):d<TODAY_DATE;})(),
-                })));
-                const seenDS=new Set();
-                const allDatesS=allDatesSRaw.filter(d=>{if(seenDS.has(d.date))return false;seenDS.add(d.date);return true;});
+                // Mini 4-column summary — canonical counters, same source as Cobros
+                // (getAccountCounters). Visibility gate preserves the original rule
+                // (at least one scheduled date, not just an entitlement record) via
+                // getClassEntitlements, without recomputing isPaid/isGiven.
+                const hasAccountDates=getClassEntitlements(s).some(c=>(c.dates||[]).length>0);
                 return (
                   <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid "+C.border}}>
                     {/* Classes */}
@@ -2157,13 +2185,10 @@ function Students({ students, onAdd, onUpdate, onAddStudentDirect, onDelete, onC
                       </div>
                     )}
                     {myClasses.length===0&&<div style={{fontSize:12,color:C.mutedDark,marginBottom:10}}>Sin clases asignadas</div>}
-                    {/* Estado de Cuenta - 4 columns */}
-                    {allDatesS.length>0&&(()=>{
-                      const nP=allDatesS.filter(d=>!d.isPaid).length;
-                      const pg=allDatesS.filter(d=>d.isPaid).length;
-                      const pr=allDatesS.filter(d=>!d.isGiven&&d.date>=TODAY_DATE).length;
-                      const re=allDatesS.filter(d=>d.isGiven).length;
-                      const miniCols=[{n:nP,c:"#C62828",bg:"#FFEBEE",l:"No Pag."},{n:pg,c:"#2E7D32",bg:"#EDFBEC",l:"Pagada"},{n:pr,c:C.blue2,bg:C.blueL,l:"Progr."},{n:re,c:"#555",bg:"#F5F5F5",l:"Realiz."}];
+                    {/* Estado de Cuenta - 4 columns — canonical getAccountCounters */}
+                    {hasAccountDates&&(()=>{
+                      const counters=getAccountCounters(s,classes);
+                      const miniCols=[{n:counters.noPagadas,c:"#C62828",bg:"#FFEBEE",l:"No Pag."},{n:counters.pagadas,c:"#2E7D32",bg:"#EDFBEC",l:"Pagada"},{n:counters.restantes,c:C.blue2,bg:C.blueL,l:"Restantes"},{n:counters.realizadas,c:"#555",bg:"#F5F5F5",l:"Realiz."}];
                       return (
                         <>
                           <div style={{fontSize:11,fontWeight:700,color:C.mutedDark,marginBottom:6}}>ESTADO DE CUENTA</div>
@@ -4007,6 +4032,17 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
       const _pi=dates.map(d=>{const cl=myClasses.find(x=>x.date===d);return{date:d,paused:!!(cl&&(cl.paused||cl.cancelType==="paused"))};});
       const _pCount=_pi.filter(x=>x.paused).length;
       const _npCount=_pi.filter(x=>!x.paused).length;
+      // Economic budget for definitively-cancelled Combo slots — same criterion as
+      // getAccountCounters (never touch that other function, just reuse its logic here
+      // so PagoModal's rows can't diverge from its own summary): any paidCount left
+      // over past the non-cancelled/non-paused slots is what a cancelled slot can draw
+      // on, first-cancelled-first-paid — never double-claims a unit nonPausedBeforeThis
+      // already assigned to a non-cancelled slot.
+      const _nonCancelledNonPausedCount=dates.filter(dd=>{
+        const cl3=myClasses.find(cls=>cls.date===dd);
+        return !(cl3&&(cl3.paused||cl3.cancelType==="paused"))&&!(cl3&&cl3.cancelled&&cl3.cancelType==="cancelled");
+      }).length;
+      const _cancelledLeftoverBudget=Math.max(0,paidCount-_nonCancelledNonPausedCount);
       // Show all dates in the combo, no dynamic extension needed
       // The ResumeModal already adds the replacement dates to combo.dates
       dates.forEach((ds,i)=>{
@@ -4021,14 +4057,21 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
           const cl2=myClasses.find(cl=>cl.date===dd);
           return !(cl2&&(cl2.paused||cl2.cancelType==="paused"))&&!(cl2&&cl2.cancelled&&cl2.cancelType==="cancelled");
         }).length;
-        const isPaidDate=(isPaused||isCancelled)?false:nonPausedBeforeThis<paidCount;
+        const cancelledBeforeThis=isCancelled?dates.slice(0,i).filter(dd=>{
+          const cl2=myClasses.find(cl=>cl.date===dd);
+          return cl2&&cl2.cancelled&&cl2.cancelType==="cancelled";
+        }).length:0;
+        const isPaidDate=isPaused?false:isCancelled?cancelledBeforeThis<_cancelledLeftoverBudget:nonPausedBeforeThis<paidCount;
         const attEntry=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===ds);
         const wasAusenteDada=attEntry?(attEntry.ausente_dada||[]).includes(s.id):false;
         const wasAusenteReprog=attEntry?(attEntry.ausente_reprog||[]).includes(s.id):false;
         const wasPresent=attEntry?(attEntry.present||[]).includes(s.id):false;
         const wasAbsent=attEntry?(!wasPresent&&!wasAusenteDada&&!wasAusenteReprog):false;
-        // Cancelled classes count as "given" for billing, paused classes DON'T count
-        const isGiven=isPaused?false:isCancelled?false:isReprogWithDate?true:isReprogNoDate?false:wasAusenteReprog?false:attEntry?(wasPresent||wasAusenteDada):isClassDone(ds,classOnDate?.timeEnd);
+        // A definitively-cancelled Combo slot is billed and consumed like a given one —
+        // isGiven=true (its row still shows "Cancelada", not "Realizada": the leftLabel
+        // below checks isCancelled before isGiven). Individual is NOT extended (not a
+        // normal Individual flow) — stays isGiven=false, matching getAccountCounters.
+        const isGiven=isPaused?false:isCancelled?(c.packType==="combo"):isReprogWithDate?true:isReprogNoDate?false:wasAusenteReprog?false:attEntry?(wasPresent||wasAusenteDada):isClassDone(ds,classOnDate?.timeEnd);
         let status;
         if(isPaidDate){status=isGiven?"dada":"adar";}
         else{status=isGiven?"dada_unpaid":"pendiente";}
@@ -5868,45 +5911,32 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
   // Student's classes schedule
   const myClasses=classes.filter(c=>c.students&&c.students.includes(student.id));
 
-  // Shared "Estado de Cuenta" computation — same logic used for the own account and for family members (read-only, no shared state)
-  const computeAccountStats=(memberStudent,memberClasses)=>{
-    const allDates=(memberStudent.combos||[]).filter(c=>c.total>0&&c.packType!=="mensual").flatMap(c=>{
-      const seen=new Set();
-      return (c.dates||[]).filter(d=>{if(seen.has(d))return false;seen.add(d);return true;}).map((d,i)=>{
-        const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
-        const clsChk=memberClasses.find(cl=>cl.date===d);
-        const isPausedChk=!!(clsChk&&(clsChk.paused||clsChk.cancelType==="paused"));
-        const isCancelledClass=!!(clsChk&&clsChk.cancelled&&clsChk.cancelType==="cancelled");
-        const npBefore=(c.dates||[]).slice(0,i).filter(dd=>{const cl3=memberClasses.find(cl=>cl.date===dd);return !(cl3&&(cl3.paused||cl3.cancelType==="paused"))&&!(cl3&&cl3.cancelled&&cl3.cancelType==="cancelled");}).length;
-        const isPaid=(isPausedChk||isCancelledClass)?false:npBefore<paidCount;
-        const isPast=d<=TODAY_DATE;
-        const attEntry=memberClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===d);
-        const isGiven=attEntry?(attEntry.present||[]).includes(memberStudent.id)||(attEntry.ausente_dada||[]).includes(memberStudent.id):isPast;
-        return {date:d,isPaid,isGiven,isPast};
-      });
-    });
-    const seen2=new Set();
-    const deduped=allDates.filter(d=>{if(seen2.has(d.date))return false;seen2.add(d.date);return true;});
-    return {
-      noPagada:deduped.filter(d=>!d.isPaid).length,
-      pagada:deduped.filter(d=>d.isPaid).length,
-      programada:deduped.filter(d=>!d.isGiven&&d.date>TODAY_DATE).length,
-      realizada:deduped.filter(d=>d.isGiven||d.date<=TODAY_DATE).length,
-    };
-  };
+  // Canonical "Estado de Cuenta" counters — same source as Cobros/Alumnos
+  // (getAccountCounters). Thin wrapper only so the own account and family members
+  // share one call shape; it does not recompute or override any rule.
+  const computeAccountStats=(memberStudent,memberClasses)=>getAccountCounters(memberStudent,memberClasses);
 
   // Shared "Mis Clases" card rendering — same logic used for the own classes and for family members' classes
   const renderClassCards=(person,personClasses)=>{
     return [...new Map(personClasses.map(c=>[c.title,c])).values()].map(cls=>{
       const allDates=(person.combos||[]).filter(c=>c.total>0&&c.packType!=="mensual").flatMap(c=>{
         const seen=new Set();
+        const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
+        // Same leftover-budget criterion as getAccountCounters/buildAllDates, reused so
+        // this card's economic status can't diverge from the Estado de Cuenta panel
+        // above (Individual not extended, matching those two).
+        const _nonCancelledNonPausedCount=(c.dates||[]).filter(dd=>{
+          const cl3=personClasses.find(cl=>cl.date===dd);
+          return !(cl3&&(cl3.paused||cl3.cancelType==="paused"))&&!(cl3&&cl3.cancelled&&cl3.cancelType==="cancelled");
+        }).length;
+        const _cancelledLeftoverBudget=Math.max(0,paidCount-_nonCancelledNonPausedCount);
         return (c.dates||[]).filter(d=>{if(seen.has(d))return false;seen.add(d);return true;}).map((d,i)=>{
-          const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
           const clsChk=personClasses.find(cl=>cl.date===d);
           const isPausedChk=!!(clsChk&&(clsChk.paused||clsChk.cancelType==="paused"));
           const isCancelledClass=!!(clsChk&&clsChk.cancelled&&clsChk.cancelType==="cancelled");
           const npBefore=(c.dates||[]).slice(0,i).filter(dd=>{const cl3=personClasses.find(cl=>cl.date===dd);return !(cl3&&(cl3.paused||cl3.cancelType==="paused"))&&!(cl3&&cl3.cancelled&&cl3.cancelType==="cancelled");}).length;
-          const isPaid=(isPausedChk||isCancelledClass)?false:npBefore<paidCount;
+          const cancelledBefore=isCancelledClass?(c.dates||[]).slice(0,i).filter(dd=>{const cl3=personClasses.find(cl=>cl.date===dd);return cl3&&cl3.cancelled&&cl3.cancelType==="cancelled";}).length:0;
+          const isPaid=isPausedChk?false:isCancelledClass?(c.packType==="combo"&&cancelledBefore<_cancelledLeftoverBudget):npBefore<paidCount;
           const isPast=d<=TODAY_DATE;
           const clsForDate=personClasses.find(cl=>cl.date===d);
           const isPaused=!!(clsForDate&&(clsForDate.paused||clsForDate.cancelType==="paused"));
@@ -6053,10 +6083,10 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
             {(()=>{
               const stats=computeAccountStats(student,myClasses);
               const boxes=[
-                {label:"Pendiente",val:stats.noPagada,bg:"#FFEBEE",color:"#C62828"},
-                {label:"Pagada",val:stats.pagada,bg:C.greenL,color:"#2E7D32"},
-                {label:"Programada",val:stats.programada,bg:C.blueL,color:C.blue2},
-                {label:"Realizada",val:stats.realizada,bg:"#F5F5F5",color:"#616161"},
+                {label:"Pendiente",val:stats.noPagadas,bg:"#FFEBEE",color:"#C62828"},
+                {label:"Pagada",val:stats.pagadas,bg:C.greenL,color:"#2E7D32"},
+                {label:"Restantes",val:stats.restantes,bg:C.blueL,color:C.blue2},
+                {label:"Realizada",val:stats.realizadas,bg:"#F5F5F5",color:"#616161"},
               ];
               return (
                 <div style={{margin:"8px 12px 0"}}>
@@ -6085,10 +6115,10 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                     const mCourt=mClassesList.length>0?mClassesList[0].court:"";
                     const mStats=computeAccountStats(m,mClassesList);
                     const mBoxes=[
-                      {label:"Pendiente",val:mStats.noPagada,bg:"#FFEBEE",color:"#C62828"},
-                      {label:"Pagada",val:mStats.pagada,bg:C.greenL,color:"#2E7D32"},
-                      {label:"Programada",val:mStats.programada,bg:C.blueL,color:C.blue2},
-                      {label:"Realizada",val:mStats.realizada,bg:"#F5F5F5",color:"#616161"},
+                      {label:"Pendiente",val:mStats.noPagadas,bg:"#FFEBEE",color:"#C62828"},
+                      {label:"Pagada",val:mStats.pagadas,bg:C.greenL,color:"#2E7D32"},
+                      {label:"Restantes",val:mStats.restantes,bg:C.blueL,color:C.blue2},
+                      {label:"Realizada",val:mStats.realizadas,bg:"#F5F5F5",color:"#616161"},
                     ];
                     return (
                       <div key={m.id} style={{padding:"12px 0",borderBottom:i<familyMembers.length-1?"1px solid "+C.border:"none"}}>
