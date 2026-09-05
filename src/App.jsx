@@ -306,10 +306,24 @@ function getRem(s, classes=[]) {
   return getClaseRem(s, classes);
 }
 
+// Single source of truth for "which date decides whether a combo slot is fulfilled" —
+// shared by getAccountCounters, isComboClosed and the renewal checks (PaymentCard,
+// Dashboard) so none of them re-implement a different rule for the same slot. A slot
+// reprogrammed with a rescheduledTo is fulfilled by that new date, never by its
+// original one; a slot still pending reprogramming (no rescheduledTo yet) is never
+// fulfilled.
+function getSlotFulfillmentDate(originalDate, cancelled, cancelType, rescheduledTo) {
+  if(cancelled&&cancelType==="cancelled_reprog") return rescheduledTo||null;
+  return originalDate;
+}
 // Shared by getAccountCounters and PagoModal.buildAllDates: a combo with total>0 is
-// "closed" (fully paid AND all its non-paused dates already happened) once no paused
-// date remains pending — used by both to exclude it from their respective active sets.
-function isComboClosed(c, myClasses) {
+// "closed" once fully paid AND every non-paused slot is RESOLVED — present, ausente_dada,
+// or definitively cancelled (owes no makeup) all resolve regardless of time; with no
+// explicit attendance/cancellation action recorded, the historical time-based fallback
+// (isClassDone) still applies. A slot still owing a makeup (ausente_reprog, or
+// cancelled_reprog with no rescheduledTo yet or a future one) never resolves, however
+// much time has passed — see getSlotFulfillmentDate.
+function isComboClosed(c, myClasses, studentId) {
   const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
   if(!(c.paid&&paidCount>=(c.total||1))) return false;
   const nonPausedDates=(c.dates||[]).filter(d=>{
@@ -320,7 +334,23 @@ function isComboClosed(c, myClasses) {
     const cl=myClasses.find(cls=>cls.date===d);
     return cl&&(cl.paused||cl.cancelType==="paused");
   });
-  const allDone=nonPausedDates.length>0&&nonPausedDates.every(d=>isClassDone(d,"23:59"));
+  const allDone=nonPausedDates.length>0&&nonPausedDates.every(d=>{
+    const cl=myClasses.find(cls=>cls.date===d);
+    const fulfillmentDate=getSlotFulfillmentDate(d,cl?.cancelled,cl?.cancelType,cl?.rescheduledTo);
+    if(!fulfillmentDate) return false;
+    // Definitively cancelled never counts as Realizada (getAccountCounters), but it
+    // owes no makeup — the slot is resolved.
+    if(cl?.cancelled&&cl?.cancelType==="cancelled") return true;
+    const attEntry=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===fulfillmentDate);
+    const wasPresent=attEntry?(attEntry.present||[]).includes(studentId):false;
+    const wasAusenteDada=attEntry?(attEntry.ausente_dada||[]).includes(studentId):false;
+    const wasAusenteReprog=attEntry?(attEntry.ausente_reprog||[]).includes(studentId):false;
+    if(wasPresent||wasAusenteDada) return true;
+    if(wasAusenteReprog) return false;
+    // No explicit action recorded for this student on fulfillmentDate — preserve the
+    // historical time-based fallback.
+    return isClassDone(fulfillmentDate,"23:59");
+  });
   return allDone&&!hasPausedDates;
 }
 
@@ -342,14 +372,14 @@ function getCountedClassEntitlements(s, classes=[]) {
   const myClasses=classes.filter(c=>c.students&&c.students.includes(s.id));
   return (s.combos||[])
     .map((combo,sourceComboIndex)=>({combo,sourceComboIndex}))
-    .filter(({combo:c})=>(c.total>0||(c.packType&&c.packType!=="mensual"))&&!isComboClosed(c,myClasses));
+    .filter(({combo:c})=>(c.total>0||(c.packType&&c.packType!=="mensual"))&&!isComboClosed(c,myClasses,s.id));
 }
 function getVisibleClassEntitlements(s, classes=[]) {
   const myClasses=classes.filter(c=>c.students&&c.students.includes(s.id));
   return (s.combos||[])
     .map((combo,sourceComboIndex)=>({combo,sourceComboIndex}))
     .filter(({combo:c})=>{
-      if(c.packType==="combo") return !(isComboClosed(c,myClasses)&&c.archived===true);
+      if(c.packType==="combo") return !(isComboClosed(c,myClasses,s.id)&&c.archived===true);
       if(c.packType==="individual") return !(c.paid&&isClassDone(c.dates?.[0]||c.date,"23:59"));
       if(c.total===null&&c.date&&c.packType!=="mensual") return myClasses.some(cls=>cls.date===c.date);
       return false;
@@ -480,7 +510,6 @@ function getAccountCounters(s, classes=[]) {
       const isReprogWithDate=!!(cancelInfo.cancelled&&cancelInfo.cancelType==="cancelled_reprog"&&cancelInfo.rescheduledTo);
       const isReprogNoDate=!!(cancelInfo.cancelled&&cancelInfo.cancelType==="cancelled_reprog"&&!cancelInfo.rescheduledTo);
       const isPaused=!!(cancelInfo.paused||cancelInfo.cancelType==="paused");
-      const attEntry=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===d);
       const timeEnd=clsForDate?.timeEnd||"23:59";
       const nonPausedBefore=dates.slice(0,idx).filter(dd=>{
         const cl2=myClasses.find(cls=>cls.date===dd);
@@ -488,9 +517,14 @@ function getAccountCounters(s, classes=[]) {
       }).length;
       const isPaid=(isPaused||isCancelled)?false:nonPausedBefore<paidCount;
       const isDone=isClassDone(d,timeEnd);
-      const wasPresent=attEntry?(attEntry.present||[]).includes(s.id):false;
-      const wasAusenteDada=attEntry?(attEntry.ausente_dada||[]).includes(s.id):false;
-      const isGiven=isPaused?false:isCancelled?false:isReprogWithDate?true:isReprogNoDate?false:attEntry?(wasPresent||wasAusenteDada):isDone;
+      // Fulfillment (isGiven) is evaluated on the effective date — rescheduledTo for a
+      // reprogrammed slot, the original date otherwise — never on both, so a slot always
+      // contributes 0 or 1 to realizadas, never 2.
+      const fulfillmentDate=getSlotFulfillmentDate(d,cancelInfo.cancelled,cancelInfo.cancelType,cancelInfo.rescheduledTo);
+      const fulfillAttEntry=fulfillmentDate?myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===fulfillmentDate):null;
+      const wasPresent=fulfillAttEntry?(fulfillAttEntry.present||[]).includes(s.id):false;
+      const wasAusenteDada=fulfillAttEntry?(fulfillAttEntry.ausente_dada||[]).includes(s.id):false;
+      const isGiven=isPaused?false:isCancelled?false:!fulfillmentDate?false:fulfillAttEntry?(wasPresent||wasAusenteDada):isClassDone(fulfillmentDate,timeEnd);
       return {date:d,isPaid,isGiven,isPast:isDone,isCancelled,isReprogWithDate,isReprogNoDate,isPaused,packType:c.packType,sourceComboIndex,comboId:c.id,sourceClassId:c.sourceClassId};
     });
   });
@@ -507,7 +541,7 @@ function getAccountCounters(s, classes=[]) {
   });
   const noPagadas=allDates.filter(d=>!d.isPaid&&!d.isCancelled&&!d.isPaused).length;
   const pagadas=allDates.filter(d=>d.isPaid&&!d.isCancelled&&!d.isPaused).length;
-  const realizadas=allDates.filter(d=>d.isGiven&&!d.isCancelled&&!d.isReprogWithDate&&!d.isPaused).length;
+  const realizadas=allDates.filter(d=>d.isGiven&&!d.isCancelled&&!d.isPaused).length;
   const canceladas=allDates.filter(d=>d.isCancelled).length;
   const reprogramadas=allDates.filter(d=>d.isReprogWithDate).length;
   const aReprogramar=allDates.filter(d=>d.isReprogNoDate).length;
@@ -517,7 +551,7 @@ function getAccountCounters(s, classes=[]) {
   // realizada, pagada o no) never contributes, by construction (scoped to packType==="combo").
   const totalEntitlementCombo=activeCombosForCount.filter(({combo:c})=>c.packType==="combo").reduce((sum,{combo:c})=>sum+(c.total||0),0);
   const canceladasCombo=allDates.filter(d=>d.isCancelled&&d.packType==="combo").length;
-  const realizadasCombo=allDates.filter(d=>d.isGiven&&!d.isCancelled&&!d.isReprogWithDate&&!d.isPaused&&d.packType==="combo").length;
+  const realizadasCombo=allDates.filter(d=>d.isGiven&&!d.isCancelled&&!d.isPaused&&d.packType==="combo").length;
   const restantes=Math.max(0,totalEntitlementCombo-canceladasCombo-realizadasCombo);
   return {noPagadas,pagadas,realizadas,restantes,canceladas,reprogramadas,aReprogramar,pausadas,totalEntitlement,totalEntitlementCombo,realizadasCombo};
 }
@@ -1680,14 +1714,11 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
     if(combos.length===0) return false;
     const last=combos[combos.length-1];
     if(!last||!last.total||last.total<=0) return false;
-    const paidCount=last.paidCount!==undefined?last.paidCount:(last.paid?last.total:0);
-    const fullyPaid=paidCount>=(last.total||1);
-    if(!fullyPaid) return false;
-    // Check if combo period ended (all dates in the past)
-    const allDates=last.dates||[];
-    const futureDates=allDates.filter(d=>d>=TODAY_DATE);
-    // Show alert if fully paid AND (all dates passed OR 2 or fewer future dates)
-    return futureDates.length<=2;
+    // Same "combo truly closed" definition isComboClosed already uses elsewhere —
+    // fully paid AND every slot fulfilled (a reprogrammed slot by its rescheduledTo,
+    // a pending reprogramming without a date yet never counts as fulfilled).
+    const myClasses=classes.filter(c=>c.students&&c.students.includes(s.id));
+    return isComboClosed(last,myClasses,s.id);
   });
 
   // Classes that need rescheduling: ausente_reprog OR cancelled (but not already rescheduled)
@@ -4442,7 +4473,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             const byKey=new Map();
             activeDates.forEach((item,idx)=>{
               const comboObj=allCombos[item.sourceComboIndex];
-              const closed=comboObj?isComboClosed(comboObj,myClasses):false;
+              const closed=comboObj?isComboClosed(comboObj,myClasses,s.id):false;
               const key=closed?("closed:"+item.sourceComboIndex):"current";
               if(!byKey.has(key)) byKey.set(key,{key,comboId:item.comboId,sourceComboIndex:item.sourceComboIndex,comboObj,entries:[],closed});
               byKey.get(key).entries.push({item,idx});
@@ -4510,16 +4541,36 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               const rightColor=isPausedItem?"#E65100":isPaid?"#2E7D32":"#C62828";
               const rightLabel=isPausedItem?"⏸ Pausada":isPaid?"✓ Pagada":"Pendiente";
               return (
-                <div key={localI} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid #E3F2FD"}}>
-                  <div style={{width:28,height:28,borderRadius:"50%",background:isPausedItem?"#FFF3E0":isCancelled?"#FFF0F0":isReprogWithDate?"#E8F5E9":isReprogNoDate?"#E3F2FD":C.blueL,border:"2px solid "+(isPausedItem?"#E65100":isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":"#1976D2"),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                    <span style={{fontSize:11,fontWeight:800,color:isPausedItem?"#E65100":isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":C.blue2}}>{localI+1}</span>
+                <div key={localI} style={{padding:"8px 0",borderBottom:"1px solid #E3F2FD"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <div style={{width:28,height:28,borderRadius:"50%",background:isPausedItem?"#FFF3E0":isCancelled?"#FFF0F0":isReprogWithDate?"#E8F5E9":isReprogNoDate?"#E3F2FD":C.blueL,border:"2px solid "+(isPausedItem?"#E65100":isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":"#1976D2"),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                      <span style={{fontSize:11,fontWeight:800,color:isPausedItem?"#E65100":isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":C.blue2}}>{localI+1}</span>
+                    </div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(item.date)}{item.packType==="individual"&&<span style={{fontSize:9,fontWeight:700,color:"#6B7BAD",background:"#E8EAF6",borderRadius:6,padding:"2px 6px",marginLeft:6}}>Individual</span>}</div>
+                    </div>
+                    <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:leftBg,color:leftColor,fontWeight:700,flexShrink:0}}>{leftLabel}</span>
+                    <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700,flexShrink:0}}>{rightLabel}</span>
                   </div>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(item.date)}{item.packType==="individual"&&<span style={{fontSize:9,fontWeight:700,color:"#6B7BAD",background:"#E8EAF6",borderRadius:6,padding:"2px 6px",marginLeft:6}}>Individual</span>}</div>
-                    {isReprogWithDate&&item.rescheduledTo&&<div style={{fontSize:10,color:"#2E7D32",marginTop:1}}>→ {formatDate(item.rescheduledTo)}</div>}
-                  </div>
-                  <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:leftBg,color:leftColor,fontWeight:700,flexShrink:0}}>{leftLabel}</span>
-                  <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700,flexShrink:0}}>{rightLabel}</span>
+                  {isReprogWithDate&&item.rescheduledTo&&(()=>{
+                    // Presentation-only sub-row: same obligation as the row above (item.sourceComboIndex+item.date),
+                    // never added to buildAllDates()/allDates/payableRows — no new identity, no new obligation.
+                    const reschClsOnDate=myClasses.find(cl=>cl.date===item.date);
+                    const reschAttEntry=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===item.rescheduledTo);
+                    const reschWasPresent=reschAttEntry?(reschAttEntry.present||[]).includes(s.id):false;
+                    const reschWasAusenteDada=reschAttEntry?(reschAttEntry.ausente_dada||[]).includes(s.id):false;
+                    const reschIsGiven=reschAttEntry?(reschWasPresent||reschWasAusenteDada):isClassDone(item.rescheduledTo,reschClsOnDate?.timeEnd);
+                    const reschBg=reschIsGiven?"#E8F5E9":"#FFF8E1";
+                    const reschColor=reschIsGiven?"#2E7D32":"#F57F17";
+                    const reschLabel=reschIsGiven?"✓ Realizada":"Programada";
+                    return (
+                      <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6,marginLeft:36,paddingLeft:10,borderLeft:"2px solid #A5D6A7"}}>
+                        <div style={{flex:1,minWidth:0,fontSize:12,fontWeight:600,color:"#2E7D32"}}>↳ {formatDate(item.rescheduledTo)}</div>
+                        <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:reschBg,color:reschColor,fontWeight:700,flexShrink:0}}>{reschLabel}</span>
+                        <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700,flexShrink:0}}>{rightLabel}</span>
+                      </div>
+                    );
+                  })()}
                 </div>
               );
                 })}
@@ -4809,16 +4860,11 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
           // Individual: a trailing Individual in s.combos must never hide/suppress a
           // Combo's renewal prompt (picks by packType, not by array position).
           const lastComboS=getClassEntitlements(s).filter(c=>c.packType==="combo").slice(-1)[0];
-          const showRenewal=lastComboS&&(()=>{
-            const paidCount=lastComboS.paidCount!==undefined?lastComboS.paidCount:(lastComboS.paid?lastComboS.total:0);
-            const fullyPaid=paidCount>=(lastComboS.total||1);
-            if(!fullyPaid) return false; // don't show if unpaid classes remain
-            const allDates=lastComboS.dates||[];
-            const futureDates=allDates.filter(d=>d>=TODAY_DATE);
-            // Show renewal if: all dates in the past, OR 2 or fewer future dates remain
-            if(futureDates.length===0) return true; // combo period ended
-            return futureDates.length<=2;
-          })();
+          // Renewal only offers once the combo is truly closed — fully paid AND every
+          // slot fulfilled (a reprogrammed slot counts by its rescheduledTo, a pending
+          // reprogramming without a date yet never counts) — same definition isComboClosed
+          // already uses elsewhere, so this can't drift into a second "combo done" rule.
+          const showRenewal=!!lastComboS&&isComboClosed(lastComboS,myClassesH,s.id);
           // Mensual renewal
           const isMensualCombo=combo&&(combo.total===null&&combo.packType!=="individual")||(combo?.packType==="mensual");
           const showMensualRenewal=isMensualCombo&&combo?.paid===true&&(()=>{
