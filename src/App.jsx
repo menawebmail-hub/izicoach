@@ -296,56 +296,14 @@ function isNextComboPending(cls, students) {
     return false;
   });
 }
+// getRem is a thin compatibility wrapper: mensual keeps exclusive priority for any
+// existing caller that only understands one combined number (unchanged contract).
+// Callers that need class-debt and mensual-debt evaluated independently (Cobros
+// alerts) use getClaseRem/getMensualRem/hasAnyDeuda directly — see below.
 function getRem(s, classes=[]) {
-  const combos=s.combos||[];
-  // Check mensual combos first
-  const mensualCombos=combos.filter(x=>x.packType==="mensual"&&x.cobroDia);
-  if(mensualCombos.length>0){
-    const lastM=mensualCombos[mensualCombos.length-1];
-    const est=getMensualEstado(lastM);
-    if(est.mora>0) return -est.mora; // negative = en mora (count of months)
-    if(est.pendiente>0) return est.pendiente; // positive = por dar/pendiente
-    return 0; // al día
-  }
-  // All combos that are "clases" type (total>0 OR packType individual/combo)
-  const classCombos=combos.filter(x=>{
-    if(x.total>0) return true;
-    if(x.packType==="individual"||x.packType==="combo") return true;
-    // Legacy individual: null total but has a specific class date (not mensual)
-    if(x.total===null&&x.date&&x.packType!=="mensual"&&!x.payDate) return true;
-    return false;
-  });
-  if(classCombos.length===0) return null;
-  let totalUnpaid=0;
-  let totalPorDar=0;
-  let anyActive=false;
-  classCombos.forEach(c=>{
-    const effectiveTotal=c.total>0?getEffectiveTotal(s,c,classes):(c.total||1);
-    const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?effectiveTotal:0);
-    const unpaid=Math.max(0,effectiveTotal-paidCount);
-    // Past dates count as given UNLESS marked as "ausente - no dada" (ausente_reprog)
-    const studentClasses=classes.filter(cls=>cls.students&&cls.students.includes(s.id));
-    const pastGiven=(c.dates||[c.date]).filter(d=>{
-      if(!d||d>=TODAY_DATE) return false;
-      const attEntry=studentClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===d);
-      if(attEntry&&(attEntry.ausente_reprog||[]).includes(s.id)) return false; // not given
-      return true; // past + no record OR present OR ausente_dada = given
-    }).length;
-    const effectiveUsed=Math.max(c.used||0,pastGiven);
-    const porDar=Math.max(0,paidCount-effectiveUsed);
-    const lastDate=c.dates&&c.dates.length>0?c.dates[c.dates.length-1]:"";
-    const cycleOpen=!(porDar===0&&unpaid===0&&lastDate&&lastDate<TODAY_DATE);
-    if(cycleOpen) anyActive=true;
-    totalUnpaid+=unpaid;
-    totalPorDar+=porDar;
-  });
-  if(!anyActive){
-    // If we had class combos but none are active, the cycle is complete — return 0 (al día)
-    if(classCombos.length>0) return 0;
-    return null;
-  }
-  if(totalUnpaid>0) return -totalUnpaid;
-  return totalPorDar;
+  const mensual=getMensualRem(s);
+  if(mensual!==null) return mensual;
+  return getClaseRem(s, classes);
 }
 
 // Shared by getAccountCounters and PagoModal.buildAllDates: a combo with total>0 is
@@ -366,16 +324,139 @@ function isComboClosed(c, myClasses) {
   return allDone&&!hasPausedDates;
 }
 
+// --- COBROS: Combo + Individual consolidation helpers ---
+// All pure/no side effects. Three distinct "which combos matter" concepts are kept
+// separate on purpose (never merge them into one filter):
+//   - getClassEntitlements: every combo/individual regardless of state — used to find
+//     "the most recent one" even if closed (renewal, PAGO label).
+//   - getCountedClassEntitlements: only what participates in the 4-counter math —
+//     literal extraction of the filter getAccountCounters already used inline.
+//   - getVisibleClassEntitlements: what's worth showing (a completed-but-not-archived
+//     combo stays visible, matching the existing archive rule; an individual drops
+//     once paid+realized) — shared by PaymentCard.hasClases and PagoModal's timeline
+//     so the summary card and the detail view never disagree on what exists.
+function getClassEntitlements(s) {
+  return (s.combos||[]).filter(c=>c.total>0||(c.packType&&c.packType!=="mensual"));
+}
+function getCountedClassEntitlements(s, classes=[]) {
+  const myClasses=classes.filter(c=>c.students&&c.students.includes(s.id));
+  return (s.combos||[])
+    .map((combo,sourceComboIndex)=>({combo,sourceComboIndex}))
+    .filter(({combo:c})=>(c.total>0||(c.packType&&c.packType!=="mensual"))&&!isComboClosed(c,myClasses));
+}
+function getVisibleClassEntitlements(s, classes=[]) {
+  const myClasses=classes.filter(c=>c.students&&c.students.includes(s.id));
+  return (s.combos||[])
+    .map((combo,sourceComboIndex)=>({combo,sourceComboIndex}))
+    .filter(({combo:c})=>{
+      if(c.packType==="combo") return !(isComboClosed(c,myClasses)&&c.archived===true);
+      if(c.packType==="individual") return !(c.paid&&isClassDone(c.dates?.[0]||c.date,"23:59"));
+      if(c.total===null&&c.date&&c.packType!=="mensual") return myClasses.some(cls=>cls.date===c.date);
+      return false;
+    });
+}
+// Any mensual-shaped entry (moderna con cobroDia, o legacy sin) — decides whether to
+// show ANY mensual box at all. getModernMensualEntitlements narrows to the modern
+// shape that getMensualEstado/getMensualRem operate on; legacy stays handled by its
+// own existing PaymentCard branch, untouched.
+function getAllMensualEntitlements(s) {
+  return (s.combos||[]).filter(c=>
+    c.packType==="mensual"||
+    (c.total===null&&(c.paid||c.payDate||c.date)&&c.packType!=="individual"&&c.packType!=="combo")
+  );
+}
+function getModernMensualEntitlements(s) {
+  return (s.combos||[]).filter(c=>c.packType==="mensual"&&c.cobroDia);
+}
+// getRem split in two — same math as before, exposed independently so class-debt and
+// mensual-debt can be evaluated without one hiding the other (hasAnyDeuda below).
+// getRem() itself stays a thin wrapper preserving today's exact single-number contract.
+function getMensualRem(s) {
+  const mensualCombos=getModernMensualEntitlements(s);
+  if(mensualCombos.length===0) return null;
+  const lastM=mensualCombos[mensualCombos.length-1];
+  const est=getMensualEstado(lastM);
+  if(est.mora>0) return -est.mora;
+  if(est.pendiente>0) return est.pendiente;
+  return 0;
+}
+function getClaseRem(s, classes=[]) {
+  const combos=s.combos||[];
+  const classCombos=combos.filter(x=>{
+    if(x.total>0) return true;
+    if(x.packType==="individual"||x.packType==="combo") return true;
+    if(x.total===null&&x.date&&x.packType!=="mensual"&&!x.payDate) return true;
+    return false;
+  });
+  if(classCombos.length===0) return null;
+  let totalUnpaid=0;
+  let totalPorDar=0;
+  let anyActive=false;
+  classCombos.forEach(c=>{
+    const effectiveTotal=c.total>0?getEffectiveTotal(s,c,classes):(c.total||1);
+    const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?effectiveTotal:0);
+    const unpaid=Math.max(0,effectiveTotal-paidCount);
+    const studentClasses=classes.filter(cls=>cls.students&&cls.students.includes(s.id));
+    const pastGiven=(c.dates||[c.date]).filter(d=>{
+      if(!d||d>=TODAY_DATE) return false;
+      const attEntry=studentClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===d);
+      if(attEntry&&(attEntry.ausente_reprog||[]).includes(s.id)) return false;
+      return true;
+    }).length;
+    const effectiveUsed=Math.max(c.used||0,pastGiven);
+    const porDar=Math.max(0,paidCount-effectiveUsed);
+    const lastDate=c.dates&&c.dates.length>0?c.dates[c.dates.length-1]:"";
+    const cycleOpen=!(porDar===0&&unpaid===0&&lastDate&&lastDate<TODAY_DATE);
+    if(cycleOpen) anyActive=true;
+    totalUnpaid+=unpaid;
+    totalPorDar+=porDar;
+  });
+  if(!anyActive){
+    if(classCombos.length>0) return 0;
+    return null;
+  }
+  if(totalUnpaid>0) return -totalUnpaid;
+  return totalPorDar;
+}
+// Combo/Individual debt and Mensual debt are independent domains — neither may hide
+// the other. Used by consumers that need the real OR (Dashboard alerts, mora filter).
+function hasAnyDeuda(s, classes=[]) {
+  const clase=getClaseRem(s,classes), mensual=getMensualRem(s);
+  return (clase!==null&&clase<0)||(mensual!==null&&mensual<0);
+}
+// Safe row -> s.combos index resolution for multi-obligation targeting (e.g. "Marcar
+// pagada" on one Individual row). Never trusts combo.id alone (it can collide after
+// deletions: id = s.combos.length+1). Layered, fails closed on ambiguity:
+//  1) sourceClassId, only if it identifies exactly one combo.
+//  2) sourceComboIndex (the row's captured position in s.combos at build time),
+//     validated against the row's own packType+date at resolution time — protects
+//     against s.combos having been reordered/spliced between render and click.
+//  3) legacy fallback: comboId + packType + date membership, only if unique.
+//  4) still ambiguous -> -1, caller must no-op rather than guess.
+function resolveComboIndex(combos, row) {
+  if(row.sourceClassId!==undefined){
+    const matches=combos.map((c,i)=>({c,i})).filter(({c})=>c.sourceClassId===row.sourceClassId);
+    if(matches.length===1) return matches[0].i;
+  }
+  if(row.sourceComboIndex!==undefined&&combos[row.sourceComboIndex]){
+    const c=combos[row.sourceComboIndex];
+    const rowDates=c.dates||(c.date?[c.date]:[]);
+    if(c.packType===row.packType&&rowDates.includes(row.date)) return row.sourceComboIndex;
+  }
+  const legacy=combos.map((c,i)=>({c,i})).filter(({c})=>
+    c.id===row.comboId&&c.packType===row.packType&&
+    (c.dates||(c.date?[c.date]:[])).includes(row.date)
+  );
+  if(legacy.length===1) return legacy[0].i;
+  return -1;
+}
+
 // Shared per-date account counters for a student's active class combos (individual/combo).
 // Not applicable to mensual (returns all-zero, mensual has its own separate UI/logic).
 function getAccountCounters(s, classes=[]) {
   const myClasses=classes.filter(c=>c.students&&c.students.includes(s.id));
-  const activeCombosForCount=(s.combos||[]).filter(c=>{
-    if(!(c.total>0||(c.packType&&c.packType!=="mensual"))) return false;
-    if(isComboClosed(c,myClasses)) return false;
-    return true;
-  });
-  const allDatesRaw=activeCombosForCount.flatMap(c=>{
+  const activeCombosForCount=getCountedClassEntitlements(s, classes);
+  const allDatesRaw=activeCombosForCount.flatMap(({combo:c,sourceComboIndex})=>{
     let dates=[...(c.dates||[])];
     const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
     // Dynamic extension for paused dates
@@ -410,13 +491,18 @@ function getAccountCounters(s, classes=[]) {
       const wasPresent=attEntry?(attEntry.present||[]).includes(s.id):false;
       const wasAusenteDada=attEntry?(attEntry.ausente_dada||[]).includes(s.id):false;
       const isGiven=isPaused?false:isCancelled?false:isReprogWithDate?true:isReprogNoDate?false:attEntry?(wasPresent||wasAusenteDada):isDone;
-      return {date:d,isPaid,isGiven,isPast:isDone,isCancelled,isReprogWithDate,isReprogNoDate,isPaused};
+      return {date:d,isPaid,isGiven,isPast:isDone,isCancelled,isReprogWithDate,isReprogNoDate,isPaused,packType:c.packType,sourceComboIndex,comboId:c.id,sourceClassId:c.sourceClassId};
     });
   });
-  const seenDates=new Set();
+  // Dedup by (sourceComboIndex + date), NOT date alone: two distinct obligations
+  // (e.g. a Combo class and an Individual class) can legitimately land on the same
+  // date and must both survive. This only collapses a genuine duplicate date within
+  // the SAME obligation's own dates[] array.
+  const seenKeys=new Set();
   const allDates=allDatesRaw.filter(d=>{
-    if(seenDates.has(d.date)) return false;
-    seenDates.add(d.date);
+    const key=d.sourceComboIndex+"|"+d.date;
+    if(seenKeys.has(key)) return false;
+    seenKeys.add(key);
     return true;
   });
   const noPagadas=allDates.filter(d=>!d.isPaid&&!d.isCancelled&&!d.isPaused).length;
@@ -426,9 +512,14 @@ function getAccountCounters(s, classes=[]) {
   const reprogramadas=allDates.filter(d=>d.isReprogWithDate).length;
   const aReprogramar=allDates.filter(d=>d.isReprogNoDate).length;
   const pausadas=allDates.filter(d=>d.isPaused).length;
-  const totalEntitlement=activeCombosForCount.reduce((sum,c)=>sum+(c.total||0),0);
-  const restantes=Math.max(0,totalEntitlement-canceladas-realizadas);
-  return {noPagadas,pagadas,realizadas,restantes,canceladas,reprogramadas,aReprogramar,pausadas,totalEntitlement};
+  const totalEntitlement=activeCombosForCount.reduce((sum,{combo:c})=>sum+(c.total||0),0);
+  // Restantes represents ONLY Combo entitlement — an Individual (any state: programada,
+  // realizada, pagada o no) never contributes, by construction (scoped to packType==="combo").
+  const totalEntitlementCombo=activeCombosForCount.filter(({combo:c})=>c.packType==="combo").reduce((sum,{combo:c})=>sum+(c.total||0),0);
+  const canceladasCombo=allDates.filter(d=>d.isCancelled&&d.packType==="combo").length;
+  const realizadasCombo=allDates.filter(d=>d.isGiven&&!d.isCancelled&&!d.isReprogWithDate&&!d.isPaused&&d.packType==="combo").length;
+  const restantes=Math.max(0,totalEntitlementCombo-canceladasCombo-realizadasCombo);
+  return {noPagadas,pagadas,realizadas,restantes,canceladas,reprogramadas,aReprogramar,pausadas,totalEntitlement,totalEntitlementCombo,realizadasCombo};
 }
 
 function IziLogoBlack({ height=34 }) {
@@ -1580,7 +1671,9 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
   const income=monthExpenses.filter(e=>e.type==="ingreso").reduce((a,b)=>a+b.amount,0);
   const exp=monthExpenses.filter(e=>e.type==="gasto").reduce((a,b)=>a+b.amount,0);
   // Cobros alerts - students with unpaid combos
-  const cobrosAlerts=students.filter(s=>{if(s.suspended)return false;const r=getRem(s,classes);return r!==null&&r<0||(!getCombo(s)?.paid&&getCombo(s)?.total);});
+  // Combo/Individual debt and Mensual debt are independent domains — neither may hide
+  // the other (hasAnyDeuda), unlike getRem's single-number contract.
+  const cobrosAlerts=students.filter(s=>{if(s.suspended)return false;return hasAnyDeuda(s,classes);});
   // Combos that just completed and need renewal (new combo created but unpaid)
   const comboRenewalAlerts=students.filter(s=>{
     const combos=s.combos||[];
@@ -3864,31 +3957,11 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   // Build dates from ALL active combos (individual + regular combos)
   const buildAllDates=()=>{
     const result=[];
-    // Include active combos - hide fully paid AND fully realized ones (those go to history)
-    const activeCombos=allCombos.filter(c=>{
-      if(c.total>0){
-        if(c.packType==="combo"){
-          // Stay visible here once closed — only excluded once the coach archives it
-          if(isComboClosed(c,myClasses)&&c.archived===true) return false;
-          return true;
-        }
-        if(isComboClosed(c,myClasses)) return false;
-        return true;
-      }
-      if(c.packType==="individual"){
-        // Individual cerrado: pagado + realizado → historial
-        if(c.paid&&isClassDone(c.dates?.[0]||c.date,"23:59")) return false;
-        return true;
-      }
-      if(c.packType==="combo") return true;
-      if(c.total===null&&c.date&&c.packType!=="mensual"){
-        const hasMatchingClass=myClasses.some(cls=>cls.date===c.date);
-        if(hasMatchingClass) return true;
-      }
-      return false;
-    });
+    // Same visibility rule PaymentCard.hasClases uses — a completed-but-not-archived
+    // combo stays here as history, an individual drops once paid+realized.
+    const activeCombos=getVisibleClassEntitlements(s, classes);
     if(activeCombos.length===0) return result;
-    activeCombos.forEach(c=>{
+    activeCombos.forEach(({combo:c,sourceComboIndex})=>{
       const effectiveTotal=c.total||1;
       const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?effectiveTotal:0);
       // Get dates: from stored dates array, or from matching class dates, or generate
@@ -3928,24 +4001,43 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         let status;
         if(isPaidDate){status=isGiven?"dada":"adar";}
         else{status=isGiven?"dada_unpaid":"pendiente";}
-        result.push({date:ds,status,comboId:c.id,packType:c.packType||"combo",isGiven,wasPresent,wasAbsent,wasAusenteDada,wasAusenteReprog,isCancelled,isReprogWithDate,isReprogNoDate,isPaused,rescheduledTo:classOnDate?.rescheduledTo||null});
+        result.push({date:ds,status,comboId:c.id,sourceComboIndex,sourceClassId:c.sourceClassId,packType:c.packType||"combo",isGiven,wasPresent,wasAbsent,wasAusenteDada,wasAusenteReprog,isCancelled,isReprogWithDate,isReprogNoDate,isPaused,rescheduledTo:classOnDate?.rescheduledTo||null});
       });
     });
-    // Deduplicate by date - keep first occurrence
+    // Dedup by (sourceComboIndex + date), NOT date alone — two distinct obligations
+    // (a Combo class and an Individual class, or two Individuals) can legitimately
+    // share a date and must both survive; this only collapses a genuine duplicate
+    // date within the SAME obligation's own dates[] array.
     const seen=new Set();
     const deduped=result.filter(r=>{
-      if(seen.has(r.date)) return false;
-      seen.add(r.date);
+      const key=r.sourceComboIndex+"|"+r.date;
+      if(seen.has(key)) return false;
+      seen.add(key);
       return true;
     });
     return deduped.sort((a,b)=>a.date.localeCompare(b.date));
   };
 
   const allDates=buildAllDates();
-  // Scoped to the active combo only (combo?.id, from getCombo(s)) — used for the top
-  // indicators and the stepper cap. allDates itself stays unscoped: it still feeds
-  // buildAllDates/comboGroups below so a previous combo remains visible as history.
-  const activeComboDates=allDates.filter(d=>d.comboId===combo?.id);
+  // Single source of truth for the stepper: pending, payable rows across ALL
+  // obligations (Combo + Individual), chronologically ordered (allDates already is).
+  // payableRows.slice(0,qty) is used identically by the row-level preview below and
+  // by handleConfirm's write — never two separate selections. Mensual never appears
+  // here (allDates/buildAllDates already excludes it structurally). The 4 account
+  // counters (No pagadas/Pagadas/Realizadas/Restantes) are NEVER derived from this —
+  // those come exclusively from getAccountCounters(s,classes).
+  //
+  // INVARIANT (do not break): the stepper pays strictly by calendar date, never by
+  // packType/comboId/sourceComboIndex/array position, and never Combo-before-Individual.
+  // .filter() below must be the ONLY operation applied to allDates before slicing —
+  // it preserves allDates' chronological order verbatim; do not insert a resort here.
+  // Ties on the same date keep whatever order buildAllDates already produced (stable
+  // sort) — never dedupe/merge same-date rows from different obligations, since date
+  // is not identity (two Individuals, or a Combo + an Individual, can share a date and
+  // must both survive as separate rows). Grouping by resolved obligation happens only
+  // AFTER this chronological selection is fixed (see handleConfirm below), purely to
+  // decide which combo each already-chosen row writes into.
+  const payableRows=allDates.filter(d=>(d.status==="pendiente"||d.status==="dada_unpaid")&&!d.isCancelled&&!d.isPaused);
 
   // For new combo projection (mora + future)
   const buildProjectedDates=(qty)=>{
@@ -4001,35 +4093,33 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
     const qty=parseInt(localClasses)||0;
     let updatedCombos=[...s.combos];
 
-    // Generate projected dates for new combo based on class schedule
-    const generateNewDates=(qty, startAfterDate)=>{
-      if(!qty||classDowSet.size===0) return [];
-      const dates=[];
-      let cur=new Date((startAfterDate||TODAY)+"T12:00:00");
-      cur.setDate(cur.getDate()+1);
-      while(dates.length<qty){
-        if(classDowSet.has(cur.getDay())){
-          dates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
-        }
-        cur.setDate(cur.getDate()+1);
-      }
-      return dates;
-    };
-
     if(pagoTipo==="clases"&&qty>0){
-      // Payment applies exclusively to the active combo (combo?.id, from getCombo(s)).
-      // Never distributes into a previous or later combo.
-      updatedCombos=updatedCombos.map(c=>{
-        if(c.id!==combo?.id||!c.total||c.total===null) return c;
+      // Multi-obligation write: exactly the same rows the preview showed as "about
+      // to be paid" (payableRows.slice(0,qty)) — never combo?.id / getCombo(s) as
+      // the sole target. Resolve ALL rows first, before touching any state; if a
+      // single row can't be resolved unambiguously, abort entirely (no onUpdate,
+      // no addIncome) rather than guess or write a partial result.
+      const selectedRows=payableRows.slice(0,qty);
+      const groups=new Map(); // resolved s.combos index -> its selected rows
+      for(const row of selectedRows){
+        const idx=resolveComboIndex(s.combos,row);
+        if(idx<0){
+          alert("No se pudo identificar una de las clases seleccionadas de forma segura. No se registró ningún pago.");
+          return;
+        }
+        if(!groups.has(idx)) groups.set(idx,[]);
+        groups.get(idx).push(row);
+      }
+      const myClsForCombo=classes.filter(cl=>(cl.students||[]).includes(s.id));
+      updatedCombos=updatedCombos.map((c,i)=>{
+        if(!groups.has(i)||!c.total||c.total===null) return c;
+        const rows=groups.get(i);
+        const canPay=rows.length;
         const prevPaid=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
-        if(prevPaid>=c.total) return c; // already fully paid
-        // Pay up to qty, skipping paused/cancelled for payment record
-        const myClsForCombo=classes.filter(cl=>(cl.students||[]).includes(s.id));
-        const canPay=Math.min(c.total-prevPaid,qty);
-        if(canPay<=0) return c;
         const newPaidCount=prevPaid+canPay;
         const fullyPaid=newPaidCount>=c.total;
-        // Count given dates excluding paused
+        // Count given dates excluding paused — attendance-derived, independent of
+        // which dates were just paid.
         const givenCount=(c.dates||[]).filter(d=>{
           if(d>TODAY_DATE) return false;
           const clsD=myClsForCombo.find(cl=>cl.date===d);
@@ -4037,23 +4127,10 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
           if(clsD&&clsD.cancelled&&clsD.cancelType==="cancelled_reprog"&&!clsD.rescheduledTo) return false;
           return true;
         }).length;
-        const payableDates=(c.dates||[]).filter((d,idx)=>{
-          if(idx<prevPaid) return false;
-          const clsD=myClsForCombo.find(cl=>cl.date===d);
-          if(clsD&&(clsD.paused||clsD.cancelType==="paused")) return false;
-          if(clsD&&clsD.cancelled&&clsD.cancelType==="cancelled") return false;
-          return true;
-        });
-        const paymentDates=payableDates.slice(0,canPay);
+        const paymentDates=rows.map(r=>r.date);
         const newPayment={id:Date.now(),qty:canPay,amount:Math.round((parseInt(localAmount)||0)*(canPay/qty)),method:payMethod,date:localDate||TODAY,dates:paymentDates};
         return {...c,paid:fullyPaid,paidCount:newPaidCount,used:Math.max(c.used||0,givenCount),payments:[...(c.payments||[]),newPayment]};
       });
-    } else if(pagoTipo==="clases"&&qty>0){
-      const allExistingDates=updatedCombos.flatMap(c=>c.dates||[]).sort();
-      const lastDate=allExistingDates.length>0?allExistingDates[allExistingDates.length-1]:TODAY;
-      const newDates=generateNewDates(qty, lastDate);
-      const payment={id:Date.now(),qty,amount:parseInt(localAmount)||0,method:payMethod,date:localDate||TODAY,dates:newDates};
-      updatedCombos.push({id:s.combos.length+1,total:qty,used:0,paid:true,paidCount:qty,date:localDate||TODAY,amount:parseInt(localAmount)||0,method:payMethod,dates:newDates,payments:[payment]});
     } else {
       // Mensual - update existing combo or create new
       const existingMensual=updatedCombos.findIndex(c=>c.packType==="mensual"&&c.cobroDia);
@@ -4217,42 +4294,34 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             </div>
           )}
 
-          {/* Estado de cuenta - 4 column live summary */}
-          {pagoTipo==="clases"&&activeComboDates.length>0&&(()=>{
-            const qty=parseInt(localClasses)||0;
-            let unpaidCount=0;
-            const cols4={noPagada:0,pagada:0,programada:0,realizada:0,pausada:0};
-            activeComboDates.forEach((d,i)=>{
-              if(d.isCancelled) return;
-              if(d.isPaused){cols4.pausada++;return;}
-              const alreadyPaid=d.status==="adar"||d.status==="dada";
-              const isUnpaid=d.status==="pendiente"||d.status==="dada_unpaid";
-              const paidNow=alreadyPaid||(isUnpaid&&unpaidCount<qty);
-              if(isUnpaid&&!alreadyPaid){
-                if(unpaidCount<qty) unpaidCount++;
-              }
-              const isPaid=paidNow;
-              if(!isPaid) cols4.noPagada++;
-              else cols4.pagada++;
-              if(d.isGiven) cols4.realizada++;
-              else if(!d.isPast&&d.date>=TODAY_DATE) cols4.programada++;
-            });
-            // Restantes = current entitlement (not a projection based on qty being paid now)
-            const {restantes}=getAccountCounters(s,classes);
-            const isCombo=combo?.packType==="combo";
-            const cols=isCombo?[
-              cols4.noPagada>0&&{n:cols4.noPagada,label:"No pagadas",color:"#C62828",bg:"#FFEBEE"},
-              {n:cols4.pagada,label:"Pagadas",color:"#2E7D32",bg:"#EDFBEC"},
-              {n:cols4.realizada,label:"Realizadas",color:"#616161",bg:"#F5F5F5"},
+          {/* Estado de cuenta - 4 column summary. Base numbers still come exclusively
+              from getAccountCounters(s,classes) — same source PaymentCard's card uses,
+              never a parallel calculation. No pagadas/Pagadas get a live stepper
+              preview: exactly qty of the currently-pending rows (payableRows — the
+              same rows handleConfirm will write, chronological, Combo+Individual
+              mixed indiscriminately) are about to flip from unpaid to paid. This
+              ∓qty/±qty delta is provably exact, not an optimistic guess — payableRows
+              excludes cancelled/paused rows exactly like noPagadas/pagadas do, so
+              shifting qty of them always moves the two counts by exactly that qty;
+              confirming with this same qty reproduces this preview exactly. Realizadas
+              and Restantes never move here — paying doesn't retroactively change what
+              was already given, and Restantes is derived from Realizadas (Combo-only),
+              not from paid state. Targeting/writing in handleConfirm is untouched by
+              this — purely a display concern. */}
+          {pagoTipo==="clases"&&allDates.length>0&&(()=>{
+            const {noPagadas,pagadas,realizadas,restantes,pausadas}=getAccountCounters(s,classes);
+            const previewQty=Math.min(parseInt(localClasses)||0, payableRows.length);
+            const previewNoPagadas=Math.max(0, noPagadas-previewQty);
+            const previewPagadas=pagadas+previewQty;
+            const cols=[
+              previewNoPagadas>0&&{n:previewNoPagadas,label:"No pagadas",color:"#C62828",bg:"#FFEBEE"},
+              {n:previewPagadas,label:"Pagadas",color:"#2E7D32",bg:"#EDFBEC"},
+              {n:realizadas,label:"Realizadas",color:"#616161",bg:"#F5F5F5"},
               {n:restantes,label:"Restantes",color:C.blue2,bg:C.blueL},
-            ].filter(Boolean):[
-              {n:cols4.noPagada,label:"No pagadas",color:"#C62828",bg:"#FFEBEE"},
-              {n:cols4.pagada,label:"Pagadas",color:"#2E7D32",bg:"#EDFBEC"},
-              {n:restantes,label:"Restantes",color:C.blue2,bg:C.blueL},
-            ];
+            ].filter(Boolean);
             return (
               <>
-                <div style={{display:"grid",gridTemplateColumns:"repeat("+cols.length+",1fr)",gap:6,marginBottom:cols4.pausada>0?8:16}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat("+cols.length+",1fr)",gap:6,marginBottom:pausadas>0?8:16}}>
                   {cols.map((col,i)=>(
                     <div key={i} style={{background:col.bg,borderRadius:12,padding:"10px 4px",textAlign:"center"}}>
                       <div style={{fontSize:24,fontWeight:900,color:col.color,lineHeight:1}}>{col.n}</div>
@@ -4260,10 +4329,10 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
                     </div>
                   ))}
                 </div>
-                {cols4.pausada>0&&(
+                {pausadas>0&&(
                   <div style={{display:"grid",gridTemplateColumns:"1fr",gap:6,marginBottom:16}}>
                     <div style={{background:"#FFF3E0",borderRadius:12,padding:"8px 4px",textAlign:"center"}}>
-                      <div style={{fontSize:20,fontWeight:900,color:"#E65100",lineHeight:1}}>{cols4.pausada}</div>
+                      <div style={{fontSize:20,fontWeight:900,color:"#E65100",lineHeight:1}}>{pausadas}</div>
                       <div style={{fontSize:9,fontWeight:700,color:"#E65100",marginTop:3,lineHeight:1.2}}>Pausada</div>
                     </div>
                   </div>
@@ -4286,13 +4355,10 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               <div>
                 <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>¿Cuántas clases pagamos?</div>
                 {(()=>{
-                  // Count total unpaid for the active combo only, excluding paused and cancelled
-                  const totalUnpaidAll=activeComboDates.filter(d=>{
-                    if(d.isPaused||d.isCancelled) return false;
-                    const alreadyPaid=d.status==="adar"||d.status==="dada";
-                    return !alreadyPaid;
-                  }).length;
-                  const maxUnpaid=totalUnpaidAll;                  return (
+                  // Cap = payableRows.length: every currently pending, payable row
+                  // across ALL obligations (Combo + Individual), not just one combo.
+                  const maxUnpaid=payableRows.length;
+                  return (
                     <div style={{display:"flex",alignItems:"center",background:C.blueL,borderRadius:12,overflow:"hidden"}}>
                       <button onClick={()=>setLocalClasses(Math.max(0,(parseInt(localClasses)||0)-1))} style={{width:44,height:46,border:"none",background:"#2C5EF7",color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>◀</button>
                       <div style={{flex:1,textAlign:"center",fontSize:22,fontWeight:800,color:"#1A237E"}}>{parseInt(localClasses)||0}</div>
@@ -4361,24 +4427,29 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
           {pagoTipo==="clases"&&(()=>{
           const hasNew=parseInt(localClasses)>0;
           const activeDates=allDates;
-          // Group dates by combo: current/active combo first, then completed (not archived)
-          // combos most-recent-first. Numbering resets per group; payment-priority math below
-          // still uses the flat activeDates index (idx), unrelated to the display number (localI).
+          // Exactly the rows handleConfirm will write to if confirmed now — same
+          // list, same slice, no second algorithm.
+          const previewQty=parseInt(localClasses)||0;
+          const selectedRowKeys=new Set(payableRows.slice(0,previewQty).map(r=>r.sourceComboIndex+"|"+r.date));
+          // Group dates by obligation: closed (historical) obligations keep their own
+          // group per obligation — preserves "Combo anterior" exactly as before. Every
+          // NOT-closed obligation (Combo or Individual alike) collapses into ONE
+          // synthetic group so they interleave in a single chronology, per date, instead
+          // of fragmenting into separate "Combo actual" blocks. Resolves comboObj via
+          // sourceComboIndex (the row's real position in s.combos), never via comboId
+          // matching — comboId (s.combos.length+1) can collide after deletions.
           const comboGroups=(()=>{
-            const byId=new Map();
+            const byKey=new Map();
             activeDates.forEach((item,idx)=>{
-              const key=item.comboId;
-              if(!byId.has(key)) byId.set(key,[]);
-              byId.get(key).push({item,idx});
-            });
-            const orderIndex=new Map(allCombos.map((c,i)=>[c.id,i]));
-            const groups=[...byId.entries()].map(([comboId,entries])=>{
-              const comboObj=allCombos.find(c=>c.id===comboId);
+              const comboObj=allCombos[item.sourceComboIndex];
               const closed=comboObj?isComboClosed(comboObj,myClasses):false;
-              return {comboId,comboObj,entries,closed};
+              const key=closed?("closed:"+item.sourceComboIndex):"current";
+              if(!byKey.has(key)) byKey.set(key,{key,comboId:item.comboId,sourceComboIndex:item.sourceComboIndex,comboObj,entries:[],closed});
+              byKey.get(key).entries.push({item,idx});
             });
+            const groups=[...byKey.values()];
             const current=groups.filter(g=>!g.closed);
-            const completed=groups.filter(g=>g.closed).sort((a,b)=>(orderIndex.get(b.comboId)??0)-(orderIndex.get(a.comboId)??0));
+            const completed=groups.filter(g=>g.closed).sort((a,b)=>b.sourceComboIndex-a.sourceComboIndex);
             return [...current,...completed];
           })();
           // Fallback when all combos are fully paid and realized
@@ -4407,12 +4478,11 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
           <div style={{padding:"0 20px 16px"}}>
             <div style={{fontSize:11,fontWeight:700,color:"#5C7A9F",letterSpacing:0.5,marginBottom:8}}>FECHAS DE CLASE</div>
             {comboGroups.map((group,gi)=>(
-              <div key={group.comboId} style={{marginBottom:gi<comboGroups.length-1?16:0}}>
+              <div key={group.key} style={{marginBottom:gi<comboGroups.length-1?16:0}}>
                 {comboGroups.length>1&&(
-                  <div style={{fontSize:11,fontWeight:700,color:group.closed?C.mutedDark:C.blue2,marginBottom:6}}>{group.closed?"Combo anterior":"Combo actual"}</div>
+                  <div style={{fontSize:11,fontWeight:700,color:group.closed?C.mutedDark:C.blue2,marginBottom:6}}>{group.closed?"Combo anterior":"Vigente"}</div>
                 )}
                 {group.entries.map(({item,idx},localI)=>{
-              const qty=parseInt(localClasses)||0;
               const isCancelled=item.isCancelled||false;
               const isReprogWithDate=item.isReprogWithDate||false;
               const isReprogNoDate=item.isReprogNoDate||false;
@@ -4420,12 +4490,10 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               const wasAbsent=item.wasAbsent||false;
               const wasAusenteDada=item.wasAusenteDada||false;
               const wasAusenteReprog=item.wasAusenteReprog||false;
-              const unpaidBefore=activeDates.slice(0,idx).filter(d=>
-                (d.status==="pendiente"||d.status==="dada_unpaid")&&!d.isCancelled&&!d.isPaused
-              ).length;
-              const isUnpaid=item.status==="pendiente"||item.status==="dada_unpaid";
               const alreadyPaid=item.status==="adar"||item.status==="dada";
-              const isPaidNow=!isCancelled&&!isPausedItem&&(alreadyPaid||(isUnpaid&&unpaidBefore<qty));
+              // Same selection handleConfirm will write — membership in the shared
+              // payableRows.slice(0,qty), not a locally-recomputed count.
+              const isPaidNow=!isCancelled&&!isPausedItem&&selectedRowKeys.has(item.sourceComboIndex+"|"+item.date);
               const isPaid=!isPausedItem&&(alreadyPaid||isPaidNow);
               const isGiven=item.isGiven||item.status==="dada_unpaid"||item.status==="dada";
               let leftBg,leftColor,leftLabel;
@@ -4457,7 +4525,9 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
                 })}
                 {group.closed&&group.comboObj?.packType==="combo"&&group.comboObj.archived!==true&&(
                   <button onClick={()=>{
-                    const updatedCombos=s.combos.map(c=>c.id===group.comboId?{...c,archived:true}:c);
+                    // Targets by sourceComboIndex (the real captured array position),
+                    // never by comboId alone — comboId can collide after deletions.
+                    const updatedCombos=s.combos.map((c,i)=>i===group.sourceComboIndex?{...c,archived:true}:c);
                     onUpdate({...s,combos:updatedCombos});
                   }} style={{width:"100%",marginTop:8,padding:"10px",borderRadius:10,border:"1px solid "+C.border,background:C.white,color:C.mutedDark,fontSize:12,fontWeight:700,cursor:"pointer"}}>Archivar combo completo</button>
                 )}
@@ -4518,10 +4588,10 @@ function RecordatorioModal({ student:s, onClose, sendNotification, getRem, getCo
 }
 
 function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance }) {
+  // combo (getCombo) stays as the narrow "does this student have anything assigned
+  // at all" pick for the Asignar-paquete/Detalles-de-Pagos toggle and PagoModal's
+  // initial stepper seed — never used to decide WHICH box(es) to render below.
   const combo=getCombo(s);
-  const rem=getRem(s,classes);
-  const isExpired=rem!==null&&rem<=0;
-  const isWarning=rem!==null&&rem>0&&rem<=2;
   const [showPago,setShowPago]=useState(false);
   const [showHistory,setShowHistory]=useState(false);
   const [showAtt,setShowAtt]=useState(false);
@@ -4606,7 +4676,16 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
         </div>
         <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
           <span style={{fontSize:12,padding:"6px 14px",borderRadius:20,background:"#F5F5F5",color:C.text,fontWeight:400}}>
-            PAGO: <strong>{combo?.total?combo.total+" clases":combo?.packType==="individual"?"Individual":combo?.packType==="combo"?"Combo":"Mensual"}</strong>
+            {(()=>{
+              // PAGO: label — derived from the most relevant Combo (by type, never by
+              // array position — an Individual can never be picked here), else the
+              // most recent Individual, else Mensual, matching what the boxes below
+              // actually show instead of an arbitrary single-combo pick.
+              const pagoCombo=getClassEntitlements(s).filter(c=>c.packType==="combo").slice(-1)[0];
+              const pagoIndividual=getClassEntitlements(s).filter(c=>c.packType==="individual").slice(-1)[0];
+              const label=pagoCombo?pagoCombo.total+" clases":pagoIndividual?"Individual":getAllMensualEntitlements(s).length>0?"Mensual":"Sin paquete";
+              return <>PAGO: <strong>{label}</strong></>;
+            })()}
           </span>
           {(()=>{
             const groupNames=[...new Set(classes.filter(c=>(c.students||[]).includes(s.id)).map(c=>c.title))];
@@ -4614,50 +4693,19 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             return <span style={{fontSize:12,padding:"6px 14px",borderRadius:20,background:"#F5F5F5",color:C.text,fontWeight:400}}>GRUPOS: <strong>{groupNames.join(", ")}</strong></span>;
           })()}
         </div>
-        {/* ESTADO DE CLASES */}
-        {combo&&rem!==null&&(()=>{
-          // MENSUAL: show different UI
-          if(combo.packType==="mensual"&&combo.cobroDia){
-            const est=getMensualEstado(combo);
-            const oldestMora=est.mensualidades.find(m=>m.estado==="mora");
-            let diasV=0;
-            if(oldestMora){
-              const venc=new Date(oldestMora.fechaVencimiento+"T12:00:00");
-              const hoy=new Date(TODAY_DATE+"T12:00:00");
-              diasV=Math.floor((hoy-venc)/(1000*60*60*24));
-            }
-            const isMora=est.mora>0;
-            const isPendiente=est.pendiente>0&&!isMora;
-            const isAlDia=!isMora&&!isPendiente;
-            const MESES_LABEL=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
-            const moraMonths=est.mensualidades.filter(m=>m.estado==="mora").map(m=>{const [,mm]=m.mes.split("-");return MESES_LABEL[parseInt(mm)-1];});
-            return (
-              <div style={{marginBottom:12}}>
-                <div style={{background:isAlDia?"#E8F5E9":isMora?"#FFEBEE":"#FFF8E1",borderRadius:12,padding:"14px",textAlign:"center",border:"1.5px solid "+(isAlDia?"#66BB6A":isMora?"#EF5350":"#FFB74D"),marginBottom:8}}>
-                  <div style={{fontSize:28,fontWeight:900,color:isAlDia?"#2E7D32":isMora?"#C62828":"#F57F17"}}>{isAlDia?"✓":isMora?diasV+"d":"⏳"}</div>
-                  <div style={{fontSize:13,fontWeight:700,color:isAlDia?"#2E7D32":isMora?"#C62828":"#F57F17",marginTop:4}}>{isAlDia?"Al día":isMora?"En mora":"Pendiente"}</div>
-                </div>
-                <div style={{fontSize:11,color:C.mutedDark,textAlign:"center",lineHeight:1.5}}>
-                  Cobro: día {combo.cobroDia} de cada mes · Gracia: {combo.graciaDias||5} días
-                  {isMora&&<span style={{color:"#C62828",fontWeight:700}}> — Debe {moraMonths.join(", ")}</span>}
-                </div>
-              </div>
-            );
-          }
-          // CLASES: existing logic — per-date account counters via shared helper
-          const {noPagadas,pagadas,realizadas,restantes,canceladas,reprogramadas,aReprogramar,pausadas,totalEntitlement}=getAccountCounters(s,classes);
-          const isCombo=combo.packType==="combo";
-          const cols=isCombo?[
+        {/* ESTADO DE CLASES — Combo + Individual, independiente de Mensual */}
+        {getVisibleClassEntitlements(s,classes).length>0&&(()=>{
+          const {noPagadas,pagadas,realizadas,restantes,canceladas,reprogramadas,aReprogramar,pausadas,totalEntitlementCombo,realizadasCombo}=getAccountCounters(s,classes);
+          // Realizadas siempre visible mientras haya actividad Combo/Individual — nunca
+          // se oculta por el tipo de una sola obligación arbitraria.
+          const cols=[
             noPagadas>0&&{n:noPagadas,label:"No pagadas",color:"#C62828",bg:"#FFEBEE"},
             {n:pagadas,label:"Pagadas",color:"#2E7D32",bg:"#EDFBEC"},
             {n:realizadas,label:"Realizadas",color:"#616161",bg:"#F5F5F5"},
             {n:restantes,label:"Restantes",color:C.blue2,bg:C.blueL},
-          ].filter(Boolean):[
-            {n:noPagadas,label:"No pagadas",color:"#C62828",bg:"#FFEBEE"},
-            {n:pagadas,label:"Pagadas",color:"#2E7D32",bg:"#EDFBEC"},
-            {n:restantes,label:"Restantes",color:C.blue2,bg:C.blueL},
-          ];
-          const showProgress=isCombo&&totalEntitlement>0;
+          ].filter(Boolean);
+          // La barra de progreso sigue siendo exclusivamente del Combo.
+          const showProgress=totalEntitlementCombo>0;
           const extraCols=[
             canceladas>0&&{n:canceladas,label:"Cancelada",color:"#C62828",bg:"#FFF0F0"},
             reprogramadas>0&&{n:reprogramadas,label:"Reprogramada",color:"#2E7D32",bg:"#E8F5E9"},
@@ -4679,10 +4727,10 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
                 <div style={{marginBottom:extraCols.length>0?8:0}}>
                   <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
                     <span style={{fontSize:10,fontWeight:700,color:C.mutedDark}}>Progreso del combo</span>
-                    <span style={{fontSize:10,fontWeight:600,color:C.mutedDark}}>{realizadas} de {totalEntitlement} clases</span>
+                    <span style={{fontSize:10,fontWeight:600,color:C.mutedDark}}>{realizadasCombo} de {totalEntitlementCombo} clases</span>
                   </div>
                   <div style={{height:6,borderRadius:999,background:C.blueL,overflow:"hidden"}}>
-                    <div style={{height:"100%",width:Math.min(100,(realizadas/totalEntitlement)*100)+"%",borderRadius:999,background:realizadas>=totalEntitlement?C.green:C.blue2}}/>
+                    <div style={{height:"100%",width:Math.min(100,(realizadasCombo/totalEntitlementCombo)*100)+"%",borderRadius:999,background:realizadasCombo>=totalEntitlementCombo?C.green:C.blue2}}/>
                   </div>
                 </div>
               )}
@@ -4700,18 +4748,53 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
           );
         })()}
 
-        {/* Mensual estado */}
-        {combo&&rem===null&&(()=>{
-          const lastDate=combo?.payDate||combo?.date||TODAY_DATE;
+        {/* ESTADO MENSUAL — caja separada, puede coexistir con la de Combo/Individual
+            de arriba. hasMensual cubre moderna (cobroDia) y legacy (sin cobroDia); cada
+            ruta conserva exactamente su lógica original, solo cambia el gate externo. */}
+        {getAllMensualEntitlements(s).length>0&&(()=>{
+          const modernMensual=getModernMensualEntitlements(s).slice(-1)[0];
+          if(modernMensual){
+            const est=getMensualEstado(modernMensual);
+            const oldestMora=est.mensualidades.find(m=>m.estado==="mora");
+            let diasV=0;
+            if(oldestMora){
+              const venc=new Date(oldestMora.fechaVencimiento+"T12:00:00");
+              const hoy=new Date(TODAY_DATE+"T12:00:00");
+              diasV=Math.floor((hoy-venc)/(1000*60*60*24));
+            }
+            const isMora=est.mora>0;
+            const isPendiente=est.pendiente>0&&!isMora;
+            const isAlDia=!isMora&&!isPendiente;
+            const MESES_LABEL=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+            const moraMonths=est.mensualidades.filter(m=>m.estado==="mora").map(m=>{const [,mm]=m.mes.split("-");return MESES_LABEL[parseInt(mm)-1];});
+            return (
+              <div style={{marginBottom:12}}>
+                <div style={{fontSize:11,fontWeight:800,color:C.blue2,letterSpacing:1,marginBottom:8}}>ESTADO MENSUAL</div>
+                <div style={{background:isAlDia?"#E8F5E9":isMora?"#FFEBEE":"#FFF8E1",borderRadius:12,padding:"14px",textAlign:"center",border:"1.5px solid "+(isAlDia?"#66BB6A":isMora?"#EF5350":"#FFB74D"),marginBottom:8}}>
+                  <div style={{fontSize:28,fontWeight:900,color:isAlDia?"#2E7D32":isMora?"#C62828":"#F57F17"}}>{isAlDia?"✓":isMora?diasV+"d":"⏳"}</div>
+                  <div style={{fontSize:13,fontWeight:700,color:isAlDia?"#2E7D32":isMora?"#C62828":"#F57F17",marginTop:4}}>{isAlDia?"Al día":isMora?"En mora":"Pendiente"}</div>
+                </div>
+                <div style={{fontSize:11,color:C.mutedDark,textAlign:"center",lineHeight:1.5}}>
+                  Cobro: día {modernMensual.cobroDia} de cada mes · Gracia: {modernMensual.graciaDias||5} días
+                  {isMora&&<span style={{color:"#C62828",fontWeight:700}}> — Debe {moraMonths.join(", ")}</span>}
+                </div>
+              </div>
+            );
+          }
+          // Mensual legacy (sin cobroDia) — misma lógica original, solo re-gateada.
+          const legacyEntries=getAllMensualEntitlements(s).filter(c=>!(c.packType==="mensual"&&c.cobroDia));
+          const legacyMensual=legacyEntries[legacyEntries.length-1];
+          if(!legacyMensual) return null;
+          const lastDate=legacyMensual?.payDate||legacyMensual?.date||TODAY_DATE;
           const lastPay=new Date(lastDate+"T12:00:00");
           const today=new Date(TODAY_DATE+"T12:00:00");
-          const isPaid=combo?.paid===true;
+          const isPaid=legacyMensual?.paid===true;
           const nextDue=isPaid?new Date(lastPay.getFullYear(),lastPay.getMonth()+1,lastPay.getDate()):lastPay;
           const diffDays=Math.floor((today-nextDue)/(1000*60*60*24))+1;
           const overdue=!isPaid||diffDays>0;
           return (
             <div style={{marginBottom:12}}>
-              <div style={{fontSize:11,fontWeight:800,color:C.blue2,letterSpacing:1,marginBottom:8}}>ESTADO DE CLASES</div>
+              <div style={{fontSize:11,fontWeight:800,color:C.blue2,letterSpacing:1,marginBottom:8}}>ESTADO MENSUAL</div>
               <div style={{background:overdue?"#FFEBEE":"#EDFBEC",borderRadius:12,padding:"12px 16px",textAlign:"center"}}>
                 {overdue?<><div style={{fontSize:36,fontWeight:900,color:"#C62828",lineHeight:1}}>{diffDays}</div><div style={{fontSize:12,fontWeight:700,color:"#C62828",marginTop:2}}>días vencido</div></>
                 :<><div style={{fontSize:16,fontWeight:900,color:"#43A047"}}>Pago al Día ✓</div></>}
@@ -4722,10 +4805,11 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
 
         {/* Action buttons - horizontal */}
         {(()=>{
-          // Check if renewal button should show
-          const classCombos=(s.combos||[]).filter(c=>c.total>0||(c.packType&&c.packType!=="mensual"&&c.packType!=="individual"));
-          const lastComboS=classCombos.slice(-1)[0];
-          const showRenewal=lastComboS&&lastComboS.packType!=="individual"&&(()=>{
+          // Check if renewal button should show — must be an actual Combo, never an
+          // Individual: a trailing Individual in s.combos must never hide/suppress a
+          // Combo's renewal prompt (picks by packType, not by array position).
+          const lastComboS=getClassEntitlements(s).filter(c=>c.packType==="combo").slice(-1)[0];
+          const showRenewal=lastComboS&&(()=>{
             const paidCount=lastComboS.paidCount!==undefined?lastComboS.paidCount:(lastComboS.paid?lastComboS.total:0);
             const fullyPaid=paidCount>=(lastComboS.total||1);
             if(!fullyPaid) return false; // don't show if unpaid classes remain
@@ -4761,7 +4845,15 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
                 }
                 cur.setDate(cur.getDate()+1);
               }
-              const newCombo={id:(s.combos||[]).length+1,total:lastComboS.total,packType:lastComboS.packType||"combo",used:0,paid:false,paidCount:0,date:nextDates[0]||TODAY_DATE,amount:lastComboS.amount,dates:nextDates,payments:[]};
+              // sourceClassId: preserve the exact origin of the combo being renewed
+              // when known (same obligation/class/series continuing); only infer from
+              // the student's own classes when it's legacy AND unambiguous (exactly
+              // one class); never invented otherwise.
+              let renewSourceClassId=lastComboS.sourceClassId;
+              if(renewSourceClassId===undefined&&myClassesH.length===1){
+                renewSourceClassId=myClassesH[0]._seriesId||myClassesH[0].id;
+              }
+              const newCombo={id:(s.combos||[]).length+1,total:lastComboS.total,packType:lastComboS.packType||"combo",sourceClassId:renewSourceClassId,used:0,paid:false,paidCount:0,date:nextDates[0]||TODAY_DATE,amount:lastComboS.amount,dates:nextDates,payments:[]};
               onUpdate({...s,combos:[...(s.combos||[]),newCombo]});
             }
           };
@@ -5149,9 +5241,12 @@ function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], send
   });
   if(filter==="mora") list=list.filter(s=>{
     if(s.suspended) return false;
-    const r=getRem(s,classes);
+    // Combo/Individual debt and Mensual debt evaluated independently — hasAnyDeuda,
+    // not a single getRem() number that lets one domain hide the other.
+    const clase=getClaseRem(s,classes);
+    const mensualModerno=getMensualRem(s);
+    if(clase!==null||mensualModerno!==null) return hasAnyDeuda(s,classes);
     const combo=getCombo(s);
-    if(r!==null) return r<0;
     if(!combo) return false;
     const lastDate=combo.payDate||combo.date||TODAY_DATE;
     const lastPay=new Date(lastDate+"T12:00:00");
