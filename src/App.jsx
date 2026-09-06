@@ -4761,46 +4761,50 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
     cancelada:{text:"Cancelada",short:"Cancelada",color:"#C62828",bg:"#FFF0F0"},
   };
 
+  // Badge — same 3 sources and same priority order as the previous "PAGO:" pill
+  // (pagoCombo > pagoIndividual > Mensual > sin paquete). Lifted above the header so
+  // it can render inline with "ESTADO DE CLASES" when that section exists, falling
+  // back to the header only when there's no Combo/Individual section to sit next to.
+  const pagoCombo=getClassEntitlements(s).filter(c=>c.packType==="combo").slice(-1)[0];
+  const pagoIndividual=getClassEntitlements(s).filter(c=>c.packType==="individual").slice(-1)[0];
+  const hasMensual=getAllMensualEntitlements(s).length>0;
+  const badgeLabel=pagoCombo?"COMBO "+pagoCombo.total:pagoIndividual?"INDIVIDUAL":hasMensual?"MENSUAL":"SIN PAQUETE";
+  const hasClassSection=getVisibleClassEntitlements(s,classes).length>0;
+
   return (
     <>
       <WhiteCard style={{marginBottom:12,}}>
-        <div style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:10}}>
+        <div style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:8}}>
           <div style={{width:48,height:48,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,color:C.white,flexShrink:0}}>{s.avatar}</div>
-          <div style={{flex:1,textAlign:"left"}}>
-            <div style={{fontWeight:900,fontSize:18,color:C.text,lineHeight:1.1,textAlign:"left"}}>{s.name}</div>
-            {(classDays.length>0||classTime)&&(
-              <div style={{display:"flex",alignItems:"center",gap:6,marginTop:4,flexWrap:"wrap",justifyContent:"flex-start"}}>
-                {classDays.map(d=><span key={d} style={{fontSize:11,padding:"2px 7px",borderRadius:20,background:C.blueL,color:C.blue2,fontWeight:600}}>{d}</span>)}
-                {classTime&&<span style={{fontSize:12,color:C.mutedDark}}>{classTime}{classCourt?" · "+classCourt:""}</span>}
+          <div style={{flex:1,textAlign:"left",minWidth:0}}>
+            <div style={{fontWeight:900,fontSize:17,color:C.text,lineHeight:1.15,textAlign:"left"}}>{s.name}</div>
+            {(()=>{
+              const scheduleText=[classDays.length>0?classDays.join(", "):null,classTime?classTime+(classCourt?" · "+classCourt:""):null].filter(Boolean).join(" · ");
+              if(!scheduleText) return null;
+              return <div style={{fontSize:12,color:C.mutedDark,marginTop:3}}>{scheduleText}</div>;
+            })()}
+            {!hasClassSection&&(
+              <div style={{marginTop:3}}>
+                <span style={{fontSize:11,fontWeight:800,padding:"3px 9px",borderRadius:20,background:C.blueL,color:C.blue2}}>{badgeLabel}</span>
               </div>
             )}
           </div>
-          <div style={{display:"flex",flexDirection:"column",gap:6}}>
-            <button onClick={()=>setShowHistory(true)} style={{background:C.blueL,border:"none",borderRadius:10,padding:"8px 14px",cursor:"pointer",fontSize:13,color:C.blue2,fontWeight:700,minWidth:90}}>Historial</button>
-            <button onClick={()=>setShowAtt(true)} style={{background:C.blueL,border:"none",borderRadius:10,padding:"8px 14px",cursor:"pointer",fontSize:13,color:C.blue2,fontWeight:700,minWidth:90}}>Asistencia</button>
+          <div style={{display:"flex",gap:6,flexShrink:0}}>
+            <button onClick={()=>setShowHistory(true)} aria-label="Historial de pagos" title="Historial" style={{width:38,height:38,background:C.blueL,border:"none",borderRadius:10,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 2h12v18l-3-2-3 2-3-2-3 2V2z"/><line x1="9" y1="7" x2="15" y2="7"/><line x1="9" y1="11" x2="15" y2="11"/></svg>
+            </button>
+            <button onClick={()=>setShowAtt(true)} aria-label="Registrar asistencia" title="Asistencia" style={{width:38,height:38,background:C.blueL,border:"none",borderRadius:10,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><polyline points="16 11 18 13 22 9"/></svg>
+            </button>
           </div>
         </div>
-        <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
-          <span style={{fontSize:12,padding:"6px 14px",borderRadius:20,background:"#F5F5F5",color:C.text,fontWeight:400}}>
-            {(()=>{
-              // PAGO: label — derived from the most relevant Combo (by type, never by
-              // array position — an Individual can never be picked here), else the
-              // most recent Individual, else Mensual, matching what the boxes below
-              // actually show instead of an arbitrary single-combo pick.
-              const pagoCombo=getClassEntitlements(s).filter(c=>c.packType==="combo").slice(-1)[0];
-              const pagoIndividual=getClassEntitlements(s).filter(c=>c.packType==="individual").slice(-1)[0];
-              const label=pagoCombo?pagoCombo.total+" clases":pagoIndividual?"Individual":getAllMensualEntitlements(s).length>0?"Mensual":"Sin paquete";
-              return <>PAGO: <strong>{label}</strong></>;
-            })()}
-          </span>
-          {(()=>{
-            const groupNames=[...new Set(classes.filter(c=>(c.students||[]).includes(s.id)).map(c=>c.title))];
-            if(groupNames.length===0) return null;
-            return <span style={{fontSize:12,padding:"6px 14px",borderRadius:20,background:"#F5F5F5",color:C.text,fontWeight:400}}>GRUPOS: <strong>{groupNames.join(", ")}</strong></span>;
-          })()}
-        </div>
+        {(()=>{
+          const groupNames=[...new Set(classes.filter(c=>(c.students||[]).includes(s.id)).map(c=>c.title))];
+          if(groupNames.length===0) return null;
+          return <div style={{fontSize:11,color:C.mutedDark,textAlign:"left"}}><span style={{fontWeight:800}}>GRUPOS:</span> {groupNames.join(", ")}</div>;
+        })()}
         {/* ESTADO DE CLASES — Combo + Individual, independiente de Mensual */}
-        {getVisibleClassEntitlements(s,classes).length>0&&(()=>{
+        {hasClassSection&&(()=>{
           const {noPagadas,pagadas,realizadas,restantes,canceladas,reprogramadas,aReprogramar,pausadas,totalEntitlementCombo,realizadasCombo}=getAccountCounters(s,classes);
           // Realizadas siempre visible mientras haya actividad Combo/Individual — nunca
           // se oculta por el tipo de una sola obligación arbitraria.
@@ -4818,34 +4822,48 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             aReprogramar>0&&{n:aReprogramar,label:"A Reprog.",color:"#1565C0",bg:"#E3F2FD"},
             pausadas>0&&{n:pausadas,label:"Pausada",color:"#E65100",bg:"#FFF3E0"},
           ].filter(Boolean);
+          // Payment status bar/stripe color — a pure presentation condition on noPagadas
+          // (already computed by getAccountCounters above, never recalculated here).
+          // Independent of realizadasCombo/restantes/combo-completion: a combo can be
+          // 100% realizado and still show rojo if it isn't 100% pagado, and vice versa.
+          const paymentBarColor=noPagadas>0?"#C62828":C.green;
           return (
             <div style={{marginBottom:12}}>
-              <div style={{fontSize:11,fontWeight:800,color:C.blue2,letterSpacing:1,marginBottom:8}}>ESTADO DE CLASES</div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat("+cols.length+",1fr)",gap:6,marginBottom:(showProgress||extraCols.length>0)?8:0}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                <span style={{fontSize:11,fontWeight:800,color:C.blue2,letterSpacing:1}}>ESTADO DE CLASES</span>
+                <span style={{fontSize:11,fontWeight:800,padding:"3px 9px",borderRadius:20,background:C.blueL,color:C.blue2,flexShrink:0}}>{badgeLabel}</span>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat("+cols.length+",1fr)",gap:5,marginBottom:8}}>
                 {cols.map((col,i)=>(
-                  <div key={i} style={{background:col.bg,borderRadius:12,padding:"10px 4px",textAlign:"center"}}>
-                    <div style={{fontSize:26,fontWeight:900,color:col.color,lineHeight:1}}>{col.n}</div>
-                    <div style={{fontSize:9,fontWeight:700,color:col.color,marginTop:3,lineHeight:1.2}}>{col.label}</div>
+                  <div key={i} style={{background:col.bg,borderRadius:10,padding:"8px 4px",textAlign:"center"}}>
+                    <div style={{fontSize:22,fontWeight:900,color:col.color,lineHeight:1}}>{col.n}</div>
+                    <div style={{fontSize:8.5,fontWeight:700,color:col.color,marginTop:2,lineHeight:1.15}}>{col.label}</div>
                   </div>
                 ))}
               </div>
-              {showProgress&&(
-                <div style={{marginBottom:extraCols.length>0?8:0}}>
-                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                    <span style={{fontSize:10,fontWeight:700,color:C.mutedDark}}>Progreso del combo</span>
-                    <span style={{fontSize:10,fontWeight:600,color:C.mutedDark}}>{realizadasCombo} de {totalEntitlementCombo} clases</span>
-                  </div>
-                  <div style={{height:6,borderRadius:999,background:C.blueL,overflow:"hidden"}}>
-                    <div style={{height:"100%",width:Math.min(100,(realizadasCombo/totalEntitlementCombo)*100)+"%",borderRadius:999,background:realizadasCombo>=totalEntitlementCombo?C.green:C.blue2}}/>
-                  </div>
-                </div>
-              )}
+              <div style={{marginBottom:extraCols.length>0?8:0}}>
+                {showProgress?(
+                  <>
+                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                      <span style={{fontSize:10,fontWeight:700,color:C.mutedDark}}>Progreso del combo</span>
+                      <span style={{fontSize:10,fontWeight:600,color:C.mutedDark}}>{realizadasCombo} de {totalEntitlementCombo}</span>
+                    </div>
+                    <div style={{height:5,borderRadius:999,background:C.blueL,overflow:"hidden"}}>
+                      <div style={{height:"100%",width:Math.min(100,(realizadasCombo/totalEntitlementCombo)*100)+"%",borderRadius:999,background:paymentBarColor}}/>
+                    </div>
+                  </>
+                ):(
+                  // Individual puro (sin Combo activo): solo la raya de estado de pago,
+                  // sin texto "Progreso"/"N de N" ni porcentaje inventado.
+                  <div style={{height:5,borderRadius:999,background:paymentBarColor}}/>
+                )}
+              </div>
               {extraCols.length>0&&(
-                <div style={{display:"grid",gridTemplateColumns:"repeat("+extraCols.length+",1fr)",gap:6}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat("+extraCols.length+",1fr)",gap:5}}>
                   {extraCols.map((col,i)=>(
-                    <div key={i} style={{background:col.bg,borderRadius:12,padding:"8px 4px",textAlign:"center"}}>
-                      <div style={{fontSize:20,fontWeight:900,color:col.color,lineHeight:1}}>{col.n}</div>
-                      <div style={{fontSize:9,fontWeight:700,color:col.color,marginTop:3,lineHeight:1.2}}>{col.label}</div>
+                    <div key={i} style={{background:col.bg,borderRadius:9,padding:"6px 4px",textAlign:"center"}}>
+                      <div style={{fontSize:16,fontWeight:900,color:col.color,lineHeight:1}}>{col.n}</div>
+                      <div style={{fontSize:8,fontWeight:700,color:col.color,marginTop:2,lineHeight:1.1}}>{col.label}</div>
                     </div>
                   ))}
                 </div>
@@ -4875,12 +4893,12 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             const moraMonths=est.mensualidades.filter(m=>m.estado==="mora").map(m=>{const [,mm]=m.mes.split("-");return MESES_LABEL[parseInt(mm)-1];});
             return (
               <div style={{marginBottom:12}}>
-                <div style={{fontSize:11,fontWeight:800,color:C.blue2,letterSpacing:1,marginBottom:8}}>ESTADO MENSUAL</div>
-                <div style={{background:isAlDia?"#E8F5E9":isMora?"#FFEBEE":"#FFF8E1",borderRadius:12,padding:"14px",textAlign:"center",border:"1.5px solid "+(isAlDia?"#66BB6A":isMora?"#EF5350":"#FFB74D"),marginBottom:8}}>
-                  <div style={{fontSize:28,fontWeight:900,color:isAlDia?"#2E7D32":isMora?"#C62828":"#F57F17"}}>{isAlDia?"✓":isMora?diasV+"d":"⏳"}</div>
-                  <div style={{fontSize:13,fontWeight:700,color:isAlDia?"#2E7D32":isMora?"#C62828":"#F57F17",marginTop:4}}>{isAlDia?"Al día":isMora?"En mora":"Pendiente"}</div>
+                <div style={{fontSize:11,fontWeight:800,color:C.blue2,letterSpacing:1,marginBottom:6}}>ESTADO MENSUAL</div>
+                <div style={{background:isAlDia?"#E8F5E9":isMora?"#FFEBEE":"#FFF8E1",borderRadius:12,padding:"10px",textAlign:"center",border:"1.5px solid "+(isAlDia?"#66BB6A":isMora?"#EF5350":"#FFB74D"),marginBottom:6}}>
+                  <div style={{fontSize:22,fontWeight:900,color:isAlDia?"#2E7D32":isMora?"#C62828":"#F57F17"}}>{isAlDia?"✓":isMora?diasV+"d":"⏳"}</div>
+                  <div style={{fontSize:12,fontWeight:700,color:isAlDia?"#2E7D32":isMora?"#C62828":"#F57F17",marginTop:3}}>{isAlDia?"Al día":isMora?"En mora":"Pendiente"}</div>
                 </div>
-                <div style={{fontSize:11,color:C.mutedDark,textAlign:"center",lineHeight:1.5}}>
+                <div style={{fontSize:10.5,color:C.mutedDark,textAlign:"center",lineHeight:1.4}}>
                   Cobro: día {modernMensual.cobroDia} de cada mes · Gracia: {modernMensual.graciaDias||5} días
                   {isMora&&<span style={{color:"#C62828",fontWeight:700}}> — Debe {moraMonths.join(", ")}</span>}
                 </div>
@@ -4900,10 +4918,10 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
           const overdue=!isPaid||diffDays>0;
           return (
             <div style={{marginBottom:12}}>
-              <div style={{fontSize:11,fontWeight:800,color:C.blue2,letterSpacing:1,marginBottom:8}}>ESTADO MENSUAL</div>
-              <div style={{background:overdue?"#FFEBEE":"#EDFBEC",borderRadius:12,padding:"12px 16px",textAlign:"center"}}>
-                {overdue?<><div style={{fontSize:36,fontWeight:900,color:"#C62828",lineHeight:1}}>{diffDays}</div><div style={{fontSize:12,fontWeight:700,color:"#C62828",marginTop:2}}>días vencido</div></>
-                :<><div style={{fontSize:16,fontWeight:900,color:"#43A047"}}>Pago al Día ✓</div></>}
+              <div style={{fontSize:11,fontWeight:800,color:C.blue2,letterSpacing:1,marginBottom:6}}>ESTADO MENSUAL</div>
+              <div style={{background:overdue?"#FFEBEE":"#EDFBEC",borderRadius:12,padding:"10px 14px",textAlign:"center"}}>
+                {overdue?<><div style={{fontSize:26,fontWeight:900,color:"#C62828",lineHeight:1}}>{diffDays}</div><div style={{fontSize:11,fontWeight:700,color:"#C62828",marginTop:2}}>días vencido</div></>
+                :<><div style={{fontSize:14,fontWeight:900,color:"#43A047"}}>Pago al Día ✓</div></>}
               </div>
             </div>
           );
@@ -4965,16 +4983,16 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
               🔄 Renovar combo
             </button>
           )}
-          {!combo?(
-            <button onClick={()=>setShowPago(true)} style={{padding:"12px",borderRadius:12,border:"2px dashed "+C.blue2,background:C.blueL,color:C.blue2,fontSize:13,cursor:"pointer",fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              Asignar paquete
-            </button>
-          ):(
-            <button onClick={()=>setShowPago(true)} style={{padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:"#fff",fontSize:14,cursor:"pointer",fontWeight:800}}>Detalles de Pagos</button>
-          )}
-          <div style={{display:"flex",gap:8}}>
-            <button onClick={()=>setShowRecordatorio(true)} style={{flex:1,padding:"10px",borderRadius:10,border:"1.5px solid #65CE5A",background:C.white,color:"#2E7D32",fontSize:12,cursor:"pointer",fontWeight:700}}>Enviar Recordatorio</button>
+          <div style={{display:"flex",gap:8,alignItems:"stretch"}}>
+            {!combo?(
+              <button onClick={()=>setShowPago(true)} style={{flex:1,padding:"12px",borderRadius:12,border:"2px dashed "+C.blue2,background:C.blueL,color:C.blue2,fontSize:13,cursor:"pointer",fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Asignar paquete
+              </button>
+            ):(
+              <button onClick={()=>setShowPago(true)} style={{flex:1,padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:"#fff",fontSize:14,cursor:"pointer",fontWeight:800}}>Detalles de Pagos</button>
+            )}
+            <button onClick={()=>setShowRecordatorio(true)} style={{padding:"10px 14px",borderRadius:10,border:"1.5px solid #65CE5A",background:C.white,color:"#2E7D32",fontSize:12,cursor:"pointer",fontWeight:700,whiteSpace:"nowrap"}}>Recordatorio</button>
           </div>
         </div>
           );
