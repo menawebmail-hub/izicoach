@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from "re
 import { supabase } from "./services/supabaseClient.js";
 import { loadAllFromSupabase, syncToSupabase, cancelPendingSync } from "./data/coachData.js";
 import { useAuth } from "./auth/useAuth.js";
+import { AccountLockout } from "./auth/AccountLockout.jsx";
 
 // Inject Inter font
 if(typeof document!=="undefined"){
@@ -6659,10 +6660,20 @@ export default function App() {
   // rest of this file (reads and writes alike) didn't need to change.
   const {
     user,mode,onboarded,loadingAuth,checkingProfile,onboardingSaveFailed,
+    accountStatus,accountStatusError,accountStatusRef,refreshAccountStatus,
     setMode:setModeP,setOnboarded:setOnboardedP,
     setCheckingProfile,setOnboardingSaveFailed,
-    resolveSession,registerStudentFromInvite,loginStudentFromInvite,logout:authLogout,
+    resolveSession,reresolve,resolvedUserIdRef,registerStudentFromInvite,loginStudentFromInvite,logout:authLogout,
+    lifecycleTokenRef,
   }=useAuth();
+  // Account Access Control Phase C.1 — true only once identity resolution
+  // confirmed this specific identity is unrestricted. Used below to gate every
+  // effect that reads/writes messages/coach_data/Realtime, so none of them ever
+  // fire for a blocked/deactivated coach or a blocked student — mode alone
+  // ("coach"/"student_portal") is not enough post-Phase-C.1, since a
+  // blocked/deactivated coach and a blocked student both keep their normal mode.
+  const isCoachOperational=mode==="coach"&&accountStatus?.coach==="active";
+  const isStudentOperational=mode==="student_portal"&&accountStatus?.student==="active";
   const [showInvite,setShowInvite]=useState(false);
   const [inviteTarget,setInviteTarget]=useState(null);
   const [tab,setTab]=useState("dashboard");
@@ -6686,7 +6697,9 @@ export default function App() {
 
   // Subscribe to unread messages
   useEffect(()=>{
-    if(!user?.id) return;
+    // Account Access Control Phase C.1 — must not read messages or open a
+    // Realtime channel for a blocked/deactivated coach (decisions 9/14).
+    if(!user?.id||!isCoachOperational) return;
     // Load unread counts
     supabase.from("messages").select("student_id").eq("coach_id",user.id).eq("read",false).eq("from_coach",false)
       .then(({data})=>{
@@ -6702,7 +6715,7 @@ export default function App() {
         }
       }).subscribe();
     return ()=>supabase.removeChannel(channel);
-  },[user?.id]);
+  },[user?.id,isCoachOperational]);
   const [showConfig,setShowConfig]=useState(false);
   const [configInitialTab,setConfigInitialTab]=useState(null);
   const [courts,setCourtsRaw]=useState([]);
@@ -6906,11 +6919,16 @@ export default function App() {
     // RLS then rejected on every key (students/classes/expenses/courts/
     // packages) the moment dataReady flipped true for that identity.
     if(mode!=="coach") return;
+    // Account Access Control Phase C.1 — a blocked/deactivated coach must not
+    // write coach_data (decision 3). dataReadyForCurrentIdentity never becomes
+    // true for one anyway (the load effect below skips loadData for them), but
+    // this guard is the direct statement of the rule, not an accident of timing.
+    if(!isCoachOperational) return;
     const timer=setTimeout(()=>{
       syncAll(students,classes,expenses,courts,packages);
     },1000);
     return ()=>clearTimeout(timer);
-  },[students,classes,expenses,courts,packages,dataReadyForCurrentIdentity,dataLoadFailedForCurrentIdentity,user?.id,loadingAuth,checkingProfile,mode]);
+  },[students,classes,expenses,courts,packages,dataReadyForCurrentIdentity,dataLoadFailedForCurrentIdentity,user?.id,loadingAuth,checkingProfile,mode,isCoachOperational]);
 
   // Force sync when user switches tabs or minimizes to prevent data loss
   // AND reload from Supabase when returning to the tab (multi-device sync).
@@ -6924,16 +6942,19 @@ export default function App() {
       // Same positive rule as the debounced-sync effect above — proceed only
       // for an onboarded coach, not just "not student_portal" (was letting
       // coach_new through, same RLS rejection risk on tab switch/return).
-      if(document.visibilityState==="hidden"&&user?.id&&mode==="coach"&&dataReadyForCurrentIdentity&&!dataLoadFailedForCurrentIdentity){
+      // Account Access Control Phase C.1 — isCoachOperational added: a
+      // blocked/deactivated coach must not sync or reload coach_data
+      // (decision 3), even though mode stays "coach" for them.
+      if(document.visibilityState==="hidden"&&user?.id&&isCoachOperational&&dataReadyForCurrentIdentity&&!dataLoadFailedForCurrentIdentity){
         syncAll(students,classes,expenses,courts,packages);
       }
-      if(document.visibilityState==="visible"&&user?.id&&mode==="coach"){
+      if(document.visibilityState==="visible"&&user?.id&&isCoachOperational){
         loadData(user?.id);
       }
     };
     document.addEventListener("visibilitychange",handleVisChange);
     return ()=>document.removeEventListener("visibilitychange",handleVisChange);
-  },[mode,dataReadyForCurrentIdentity,dataLoadFailedForCurrentIdentity,students,classes,expenses,courts,packages,user?.id]);
+  },[mode,isCoachOperational,dataReadyForCurrentIdentity,dataLoadFailedForCurrentIdentity,students,classes,expenses,courts,packages,user?.id]);
 
   // Business-data hydration for a resolved identity (Fase D). resolveSession (now in
   // auth/, owned by AuthProvider) only resolves identity — it has no access to these
@@ -6962,6 +6983,12 @@ export default function App() {
       return;
     }
     if(mode==="coach"){
+      // Account Access Control Phase C.1 — a blocked/deactivated coach must
+      // never have coach_data/coaches queried (decision 3). accountStatus is
+      // resolved together with mode by resolveSession, so by the time this
+      // effect runs for mode==="coach" it already reflects the real status —
+      // no separate loading state needed here beyond skipping the query.
+      if(!isCoachOperational) return;
       if(dataReadyForCurrentIdentity||dataLoadFailedForCurrentIdentity) return;
       const myUserId=user.id;
       (async()=>{
@@ -6989,6 +7016,12 @@ export default function App() {
       // safely because state is (and must stay) empty until they create something.
       if(!dataReadyForCurrentIdentity){setDataReady(true);setDataLoadFailed(false);hydratedIdentityRef.current=user.id;}
     } else if(mode==="student_portal"){
+      // Account Access Control Phase C.1 — a blocked student must never have
+      // student_auth/coach_data queried, and never reach the portal (decision
+      // 8). izi_student_coach_id is only ever set by resolveSession on the
+      // active-student path, so it's simply absent here anyway — this check
+      // is the direct statement of the rule, not reliant on that absence.
+      if(!isStudentOperational) return;
       if(dataReadyForCurrentIdentity||dataLoadFailedForCurrentIdentity) return;
       const myUserId=user.id;
       const coachId=ls("izi_student_coach_id",null);
@@ -7014,7 +7047,7 @@ export default function App() {
         hydratedIdentityRef.current=myUserId;
       })();
     }
-  },[mode,user?.id]);
+  },[mode,user?.id,isCoachOperational,isStudentOperational]);
 
   // Single write for the whole signup+onboarding flow (Fase C). Nothing local
   // (coachProfile, courts, packages, currency, onboarded, mode) is touched
@@ -7029,30 +7062,143 @@ export default function App() {
       setOnboardingSaveFailed(true);
       return;
     }
-    const {error}=await supabase.from("coaches").upsert({id:user.id,...profile,email:user.email,onboarded:true});
-    if(error){
-      console.error("handleOnboardingComplete: coaches upsert failed, not marking onboarded:",error);
+    // Account Access Control Phase C.1 — capture the identity this
+    // operation started for. resolvedUserIdRef is AuthProvider's own live
+    // pointer to whichever identity is currently resolved (null after
+    // logout, a different uid after a user switch) — every step below that
+    // follows an await re-checks it against this snapshot, so a logout/user
+    // switch mid-flight can never repopulate local state or report
+    // success/failure that belongs to a session no longer on screen.
+    //
+    // Hallazgo v5 punto 4 — resolvedUserIdRef alone is not enough: nothing
+    // clears it when AuthProvider's own effect actually tears down (it must
+    // not — that's what keeps the Strict-Mode setup->cleanup->setup dedupe
+    // working), so it can go on reading as "still this uid" even after a
+    // real unmount, with no live provider left to safely act on behalf of.
+    // originalLifecycleToken is AuthProvider's own already-hardened
+    // mechanism for exactly this question (see resolveSession.js and
+    // AuthProvider's reresolve()): null while torn down, and a NEW distinct
+    // object on every fresh setup — including a Strict-Mode remount, which
+    // this must NOT treat as a discontinuity on its own (the component
+    // itself never unmounts in that case, only AuthProvider's effect
+    // cycles) — captured once, here, and required to still match on every
+    // later check.
+    const originalUid=user.id;
+    const originalLifecycleToken=lifecycleTokenRef?.current;
+    const stillSameIdentity=()=>
+      originalLifecycleToken!=null &&
+      lifecycleTokenRef?.current===originalLifecycleToken &&
+      resolvedUserIdRef.current===originalUid;
+
+    let upsertError;
+    try{
+      const result=await supabase.from("coaches").upsert({id:originalUid,...profile,email:user.email,onboarded:true});
+      upsertError=result.error;
+    }catch(thrown){
+      // A thrown exception (network-level, not a resolved {error}) must not
+      // propagate as an unhandled rejection, and must not be reported against
+      // whoever happens to be on screen NOW if that's no longer the identity
+      // that started this — check first, exactly like the {error} path below.
+      if(stillSameIdentity()){
+        console.error("handleOnboardingComplete: coaches upsert threw:",thrown);
+        setOnboardingSaveFailed(true);
+      }
+      return;
+    }
+    if(!stillSameIdentity()){
+      // Logout or a user switch happened during the upsert — this outcome
+      // no longer belongs to anyone currently on screen. Never surface an
+      // error for the previous user, never touch local state.
+      return;
+    }
+    if(upsertError){
+      console.error("handleOnboardingComplete: coaches upsert failed, not marking onboarded:",upsertError);
       setOnboardingSaveFailed(true);
       return;
     }
-    setOnboardingSaveFailed(false);
+    // Apply the local onboarding choices only once confirmed still current
+    // (the check above). BEFORE reresolve() below, so by the time it flips
+    // isCoachOperational to true (mode="coach" AND accountStatus.coach=
+    // "active"), courts/packages/profile already hold what was just chosen —
+    // no render tick where the operational app could see empty values.
+    // (loadData's own remote read separately never downgrades non-empty
+    // local courts/packages/students/classes with empty remote data — see
+    // its hasRemoteData gate — so there is no second window here either.)
     if(data.courts?.length) setCourts(data.courts);
     if(data.packages?.length) setPackages(data.packages);
     setCUR(data.currency||"₲"); setCurrency(data.currency||"₲");
     setCoachProfileRaw(profile);
-    setOnboardedP(true);
-    setModeP("coach");
+
+    // The coaches row now exists — reresolve() is the canonical source for
+    // what that means. Never assign mode/onboarded/accountStatus manually:
+    // get_my_account_status() will now see the row and (barring a real
+    // restriction) return coach_status="active", which is what actually
+    // flips isCoachOperational — assigning "coach"/onboarded=true directly
+    // here would leave accountStatus.coach stuck null, silently blocking
+    // every effect gated on isCoachOperational forever.
+    let resolvedMode;
+    try{
+      resolvedMode=await reresolve();
+    }catch(thrown){
+      // reresolve() is hardened not to reject in the ordinary case (a
+      // getSession() failure resolves to null, not a throw) — this catches
+      // any genuinely unexpected exception so it becomes a controlled
+      // failure instead of an unhandled rejection. Only reports the error
+      // if still the same identity — a stale exception for a user who
+      // already logged out must not surface anything.
+      console.error("handleOnboardingComplete: reresolve() threw:",thrown);
+      if(stillSameIdentity()) setOnboardingSaveFailed(true);
+      return;
+    }
+    if(!stillSameIdentity()){
+      // Logout or a user switch happened during reresolve() — its outcome,
+      // whatever it was, belongs to a session that's no longer current.
+      return;
+    }
+    if(resolvedMode!=="coach"||accountStatusRef?.current?.coach!=="active"){
+      // resolveSession's "coach" mode is also returned for a
+      // blocked/deactivated coach (mode alone never distinguishes them) —
+      // accountStatusRef is checked precisely so a coach blocked/deactivated
+      // in the instant between the upsert and this reresolve() doesn't get
+      // waved through as operational. Either way: fail closed, stay on
+      // OnboardingFlow (mode/onboarded were never touched by this function),
+      // let the user retry.
+      console.error("handleOnboardingComplete: reresolve() after onboarding did not confirm an active coach — mode:",resolvedMode,"accountStatus:",accountStatusRef?.current);
+      setOnboardingSaveFailed(true);
+      return;
+    }
+    setOnboardingSaveFailed(false);
     if(!data.skipToHome) setShowNewClass(true);
   };
 
+  // Account Access Control Phase C.1 — wrapped in try/finally: the local
+  // cleanup (izi_ keys, business-data arrays) must run whether authLogout()
+  // resolves cleanly or not — it already guarantees its own internal
+  // cleanup regardless of supabase.auth.signOut()'s outcome, but this local
+  // cleanup must not additionally depend on authLogout() itself never
+  // throwing. Used as the onSignOut handler from every AccountLockout
+  // variant too (not authLogout directly) — signing out from a lockout/error
+  // screen must clear the same local state as signing out from the
+  // operational app.
   const handleLogout=async()=>{
-    await authLogout();
-    // Clear all izi_ keys so next user gets fresh data from Supabase
-    Object.keys(localStorage).filter(k=>k.startsWith("izi_")).forEach(k=>localStorage.removeItem(k));
-    setStudentsRaw([]);setClassesRaw([]);setCourtsRaw([]);setPackagesRaw([]);setFamiliesRaw([]);
-    setCoachProfileRaw({name:"Coach",sport:"",photo:null});setExpensesRaw([]);
-    setDataReady(false);
-    setDataLoadFailed(false);
+    try{
+      await authLogout();
+    }finally{
+      // Account Access Control Phase C.1 — isolated in its own try/catch: a
+      // localStorage failure (quota, private-mode restrictions, anything)
+      // must not skip the React state resets below — those are what
+      // actually take the operational UI off screen, and must run
+      // regardless of whether authLogout() OR this cleanup succeeds.
+      try{
+        Object.keys(localStorage).filter(k=>k.startsWith("izi_")).forEach(k=>localStorage.removeItem(k));
+      }catch(thrown){
+        console.error("handleLogout: localStorage cleanup failed (non-fatal):",thrown);
+      }
+      setStudentsRaw([]);setClassesRaw([]);setCourtsRaw([]);setPackagesRaw([]);setFamiliesRaw([]);
+      setCoachProfileRaw({name:"Coach",sport:"",photo:null});setExpensesRaw([]);
+      setDataReady(false);
+      setDataLoadFailed(false);
+    }
   };
 
   // Re-attempts loadData for the currently authenticated coach after a failed
@@ -7786,8 +7932,7 @@ export default function App() {
   // is excluded from the loading condition so a real (current-identity) load
   // failure falls through to its own retry screen below instead of spinning forever.
   const awaitingBusinessData=(mode==="coach"||mode==="student_portal")&&!dataReadyForCurrentIdentity&&!dataLoadFailedForCurrentIdentity;
-  if(loadingAuth||checkingProfile||awaitingBusinessData){
-    return (
+  const loadingScreen=(
     <div style={{width:"100vw",height:"100vh",position:"fixed",top:0,left:0,display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",zIndex:9999}}>
       <div style={{textAlign:"center",color:"#fff"}}>
         <style>{`
@@ -7811,7 +7956,34 @@ export default function App() {
       </div>
     </div>
   );
+
+  if(loadingAuth||checkingProfile) return loadingScreen;
+
+  // Account Access Control Phase C.1 — top-level lockout/error gate. Placed
+  // after identity resolution has actually completed (loadingAuth/
+  // checkingProfile both false above) and before awaitingBusinessData/
+  // dataLoadFailedForCurrentIdentity/the operational mode branches below, so
+  // that: (a) a blocked/deactivated coach or blocked student never sits in
+  // awaitingBusinessData forever (their data effects deliberately never flip
+  // dataReady/dataLoadFailed — see the gated effects above), and (b) neither
+  // ever reaches the (mode==="coach_new"||mode==="coach")&&!onboarded
+  // onboarding branch further below, since a blocked/deactivated coach's
+  // local `onboarded` was never fetched (resolveSession skips that query for
+  // them) and defaults to false. No operational component (Dashboard/Chat/
+  // StudentApp/etc.) or its Realtime subscriptions ever mounts past this
+  // point for a restricted account — by construction, since this return
+  // happens before any of them are referenced in the render tree.
+  if(accountStatusError){
+    return <AccountLockout kind="error" onRetry={refreshAccountStatus} onSignOut={handleLogout}/>;
   }
+  if(mode==="coach"&&(accountStatus?.coach==="blocked"||accountStatus?.coach==="deactivated")){
+    return <AccountLockout kind={accountStatus.coach==="blocked"?"coach_blocked":"coach_deactivated"} onRetry={refreshAccountStatus} onSignOut={handleLogout}/>;
+  }
+  if(mode==="student_portal"&&accountStatus?.student==="blocked"){
+    return <AccountLockout kind="student_blocked" onRetry={refreshAccountStatus} onSignOut={handleLogout}/>;
+  }
+
+  if(awaitingBusinessData) return loadingScreen;
 
   if(dataLoadFailedForCurrentIdentity){
     return (
