@@ -387,3 +387,154 @@
   opacity: 0.6;
   cursor: default;
 }
+
+/* Account access controls (ADMIN-4B) — coach block/unblock/deactivate/
+   reactivate, student portal block/unblock. admin_get_coach/admin_get_student
+   return a real 'access' status (ADMIN-4B migration) — the badge below
+   reflects it directly, and the button set is derived from it. */
+
+.admin-status-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.admin-status-badge.active {
+  background: #EDFBEC;
+  color: #2E7D32;
+}
+
+.admin-status-badge.blocked {
+  background: #FFF4E5;
+  color: #B26A00;
+}
+
+.admin-status-badge.deactivated {
+  background: #FFF0F0;
+  color: #C62828;
+}
+
+.admin-access-reason {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #6B7BAD;
+}
+
+.admin-action-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.admin-btn-action {
+  border: none;
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.admin-btn-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.admin-btn-action.warn {
+  background: #FFF4E5;
+  color: #B26A00;
+}
+
+.admin-btn-action.warn:hover:not(:disabled) {
+  background: #FFE8C7;
+}
+
+.admin-btn-action.danger {
+  background: #FFF0F0;
+  color: #C62828;
+}
+
+.admin-btn-action.danger:hover:not(:disabled) {
+  background: #FFE0E0;
+}
+
+.admin-btn-action.restore {
+  background: #EDFBEC;
+  color: #2E7D32;
+}
+
+.admin-btn-action.restore:hover:not(:disabled) {
+  background: #DCF5DA;
+}
+
+.admin-action-confirm {
+  background: #F5F7FC;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.admin-action-confirm-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0D1B4B;
+  margin-bottom: 8px;
+}
+
+.admin-textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(13, 27, 75, 0.15);
+  font-size: 14px;
+  color: #0D1B4B;
+  font-family: inherit;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 60px;
+  margin-bottom: 12px;
+}
+
+.admin-action-confirm-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.admin-btn-confirm {
+  background: #1A3DB5;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.admin-btn-confirm:hover:not(:disabled) {
+  background: #16359E;
+}
+
+.admin-btn-confirm:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.admin-action-result {
+  margin-top: 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.admin-action-result.success {
+  background: #EDFBEC;
+  color: #2E7D32;
+}
+
+.admin-action-result.error {
+  background: #FFF0F0;
+  color: #C62828;
+}
