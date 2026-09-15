@@ -7788,12 +7788,17 @@ export default function App() {
     if(cd.applyToAll){
       setClasses(p=>p.map(c=>{
         if(c.id===realId){
-          return {...c,...cd,id:realId,date:c.date,occurrences:cd.occurrences||c.occurrences};
+          // attendanceLog's only owner is handleAttendance — cd.attendanceLog here
+          // is a per-date snapshot copied from the virtual xClasses instance being
+          // edited (expandClasses sets it to just that one date's log entry, or
+          // none), never the class's real full history. Force it back to the
+          // real value so a plain field edit can never truncate attendance.
+          return {...c,...cd,id:realId,date:c.date,occurrences:cd.occurrences||c.occurrences,attendanceLog:c.attendanceLog};
         }
         return c;
       }));
     } else {
-      setClasses(p=>p.map(c=>c.id===realId?{...c,...cd,id:realId}:c));
+      setClasses(p=>p.map(c=>c.id===realId?{...c,...cd,id:realId,attendanceLog:c.attendanceLog}:c));
     }
   };
 
