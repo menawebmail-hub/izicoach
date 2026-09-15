@@ -205,21 +205,59 @@ const expandClasses=(classes)=>{
     const isNewFormat=c.hasOwnProperty("cancelledDates");
     if(isNewFormat&&c.occurrences&&c.occurrences.length>0){
       const dc=c.dateCancellations||{};
+      // Follows a chain of dateCancellations rescheduledTo pointers (a class
+      // reprogrammed more than once, e.g. X→Y→Z) to its terminal date.
+      // Chains only ever start at a real occurrence (a date in c.occurrences)
+      // — an intermediate date born from a previous reschedule (Y) is never
+      // itself an occurrence, so it's only ever visited as a hop, never as
+      // its own starting point (see the two loops below). `visited` bounds
+      // the walk naturally — it can grow at most Object.keys(dc).length+1
+      // times before either running out of chain (clean terminal) or hitting
+      // a repeat (cycle) — no arbitrary max needed.
+      const resolveChain=(startDate)=>{
+        let current=startDate;
+        const visited=new Set([startDate]);
+        while(dc[current]&&dc[current].cancelType==="cancelled_reprog"&&dc[current].rescheduledTo){
+          const next=dc[current].rescheduledTo;
+          if(visited.has(next)) return {cancelInfo:dc[current],broken:true}; // X→Y→X or self-reference
+          visited.add(next);
+          current=next;
+        }
+        return {date:current,cancelInfo:dc[current]||null,broken:false};
+      };
+      // Per-occurrence resolved rescheduledTo: the fully-walked terminal date,
+      // or absent when the chain doesn't land on a clean live date (broken
+      // cycle, or terminates on its own "A Reprogramar sin fecha"/cancelled
+      // entry) — those cases must never surface a phantom live card, and the
+      // original occurrence falls back to showing "A Reprogramar" instead of
+      // a stale/invented date.
+      const resolvedReschTo={};
       // Collect rescheduled-to dates that aren't already in occurrences.
       // When the target date IS already an occurrence, don't create a second
       // card for it — instead flag it below so the existing occurrence absorbs
       // the "reprogramada" marker (avoids a duplicate card for the same date).
+      // Only fully-resolved chain terminals reach this set — an intermediate
+      // date that was itself later re-reprogrammed never gets its own "live"
+      // card, and two chains converging on the same terminal collapse to one
+      // entry (Set dedup).
       const reschDates=new Set();
       const rescheduledIntoOccurrence=new Set();
-      Object.values(dc).forEach(info=>{
-        if(!info.rescheduledTo) return;
-        if(c.occurrences.includes(info.rescheduledTo)) rescheduledIntoOccurrence.add(info.rescheduledTo);
-        else reschDates.add(info.rescheduledTo);
-      });
+      for(const date of c.occurrences){
+        const info=dc[date];
+        if(!info||info.cancelType!=="cancelled_reprog"||!info.rescheduledTo) continue;
+        const {date:finalDate,cancelInfo,broken}=resolveChain(date);
+        if(!broken&&cancelInfo===null){
+          resolvedReschTo[date]=finalDate;
+          if(c.occurrences.includes(finalDate)) rescheduledIntoOccurrence.add(finalDate);
+          else reschDates.add(finalDate);
+        }
+      }
       // Expand regular occurrences
       for(const date of c.occurrences){
         const log=(c.attendanceLog||[]).find(e=>e.date===date);
         const cancelInfo=dc[date]||null;
+        const isChainedReprog=!!(cancelInfo&&cancelInfo.cancelType==="cancelled_reprog"&&cancelInfo.rescheduledTo);
+        const resolvedTo=isChainedReprog?(resolvedReschTo[date]||null):(cancelInfo?.rescheduledTo||null);
         result.push({
           ...c,
           _seriesId:c.id,
@@ -227,14 +265,15 @@ const expandClasses=(classes)=>{
           date,
           cancelled:!!(cancelInfo&&cancelInfo.cancelType!=="paused"),
           cancelType:cancelInfo?.cancelType||null,
-          rescheduledTo:cancelInfo?.rescheduledTo||null,
-          rescheduled:!!(cancelInfo?.rescheduledTo),
+          rescheduledTo:resolvedTo,
+          rescheduled:!!resolvedTo,
           paused:!!(cancelInfo&&cancelInfo.cancelType==="paused"),
           _isRescheduledInstance:rescheduledIntoOccurrence.has(date),
           attendanceLog:log?[log]:[],
         });
       }
-      // Expand rescheduled-to dates (new class instances on the new day)
+      // Expand rescheduled-to dates (new class instances on the new day) —
+      // only fully-resolved chain terminals reach this point (see reschDates above).
       for(const date of reschDates){
         const log=(c.attendanceLog||[]).find(e=>e.date===date);
         result.push({
