@@ -1,6 +1,13 @@
 import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import { supabase } from "./services/supabaseClient.js";
-import { loadAllFromSupabase, syncToSupabase, cancelPendingSync } from "./data/coachData.js";
+import {
+  loadAllFromSupabase,
+  cancelPendingSync,
+  enqueueCoachDataWrite,
+  reconcileCoachData,
+  clearLocalStateExceptOutbox,
+} from "./data/coachData.js";
+import SyncStatusBanner from "./components/SyncStatusBanner.jsx";
 import { useAuth } from "./auth/useAuth.js";
 import { AccountLockout } from "./auth/AccountLockout.jsx";
 
@@ -38,10 +45,13 @@ const C = {
 // a combo package silently saved with qty:null.
 const isValidComboQty=(v)=>{const n=Number(v);return Number.isInteger(n)&&n>0;};
 
-// syncToSupabase / loadFromSupabase / loadAllFromSupabase moved to
-// src/data/coachData.js (Fase B) — imported above. loadAllFromSupabase now
-// returns {ok,data|error} instead of a plain object; see that file for the
-// contract and rationale.
+// loadAllFromSupabase / cancelPendingSync / enqueueCoachDataWrite /
+// reconcileCoachData live in src/data/coachData.js. The six coach_data keys
+// (students/classes/expenses/courts/packages/families) write exclusively via
+// enqueueCoachDataWrite (durable outbox + coach_data_compare_and_set RPC) —
+// the old debounced direct-upsert syncToSupabase is gone (Fase 2 rollout).
+// loadAllFromSupabase stays for the student_portal read-only path (students
+// never write these keys, so no revision/outbox concern applies there).
 const TODAY_DATE=(()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
 
 // --- MENSUAL HELPERS ---
@@ -1381,7 +1391,7 @@ function AuthFlow({ onLogin, registerStudentFromInvite, loginStudentFromInvite }
     // row as PGRST116 and routes to coach_new/onboarding on its own. The only
     // write to `coaches` in the whole signup+onboarding flow is the single
     // upsert in handleOnboardingComplete.
-    localStorage.clear();
+    clearLocalStateExceptOutbox();
     onLogin(data.user);setLoading(false);
   };
 
@@ -6796,27 +6806,17 @@ export default function App() {
   const dataReadyForCurrentIdentity=dataReady&&hydratedIdentityRef.current===user?.id;
   const dataLoadFailedForCurrentIdentity=dataLoadFailed&&hydratedIdentityRef.current===user?.id;
 
-  // Sync helpers - store all data as JSON blob per coach
-  const syncAll=async(newStudents, newClasses, newExpenses, newCourts, newPackages)=>{
-    const userId=user?.id;
-    if(!userId) return;
-    // E1: userId comes from this closure's `user`, which can be stale if this
-    // function instance was captured before the active identity changed —
-    // activeIdentityRef is always current, so this catches that case before
-    // scheduling any write under a coachId that's no longer active.
-    if(activeIdentityRef.current!==userId) return;
-    // Validate data before saving - must be arrays
-    if(!Array.isArray(newStudents)||!Array.isArray(newClasses)) return;
-    try {
-      syncToSupabase(userId,"students",newStudents||[]);
-      syncToSupabase(userId,"classes",newClasses||[]);
-      syncToSupabase(userId,"expenses",newExpenses||[]);
-      syncToSupabase(userId,"courts",newCourts||[]);
-      syncToSupabase(userId,"packages",newPackages||[]);
-    } catch(e){ console.error("Sync error:",e); }
-  };
+  // Raw (non-persisting) setters, grouped for reconcileCoachData/conflict
+  // resolution in coachData.js — they only ever apply data already confirmed
+  // safe (remote reconcile, "keep mine"/"discard" conflict resolution),
+  // never go through lsSet/enqueueCoachDataWrite themselves.
+  const rawSetters={setStudentsRaw,setClassesRaw,setExpensesRaw,setCourtsRaw,setPackagesRaw,setFamiliesRaw};
 
-  // Wrapped setters that persist to localStorage (Supabase sync handled by debounced useEffect)
+  // Wrapped setters that persist to localStorage and enqueue a durable,
+  // atomic compare-and-set write (coachData.js) — replaces the old
+  // debounced direct-upsert syncToSupabase (Fase 2 rollout). Fire-and-forget
+  // from here, same as before: the outbox/queue in coachData.js owns
+  // retrying, conflict detection and crash recovery from this point on.
   // IMPORTANT: keep functional updates. Do not replace prev with closure state.
   // Multiple sequential updates depend on React's latest state.
   const setStudents=(v)=>{
@@ -6832,14 +6832,14 @@ export default function App() {
       setStudentsRaw(prev=>{
         const next=applyGuard(v(prev));
         lsSet("izi_students",next);
-        if(activeIdentityRef.current===user?.id) syncToSupabase(user?.id,"students",next);
+        if(activeIdentityRef.current===user?.id) enqueueCoachDataWrite(user?.id,"students",next);
         return next;
       });
     } else {
       const next=applyGuard(v);
       setStudentsRaw(next);
       lsSet("izi_students",next);
-      if(activeIdentityRef.current===user?.id) syncToSupabase(user?.id,"students",next);
+      if(activeIdentityRef.current===user?.id) enqueueCoachDataWrite(user?.id,"students",next);
     }
   };
   // IMPORTANT: keep functional updates. Do not replace prev with closure state.
@@ -6849,19 +6849,19 @@ export default function App() {
       setClassesRaw(prev=>{
         const next=v(prev);
         lsSet("izi_classes",next);
-        if(activeIdentityRef.current===user?.id) syncToSupabase(user?.id,"classes",next);
+        if(activeIdentityRef.current===user?.id) enqueueCoachDataWrite(user?.id,"classes",next);
         return next;
       });
     } else {
       setClassesRaw(v);
       lsSet("izi_classes",v);
-      if(activeIdentityRef.current===user?.id) syncToSupabase(user?.id,"classes",v);
+      if(activeIdentityRef.current===user?.id) enqueueCoachDataWrite(user?.id,"classes",v);
     }
   };
-  const setCourts=(v)=>{if(typeof v==="function"){setCourtsRaw(prev=>{const next=v(prev);lsSet("izi_courts",next);if(activeIdentityRef.current===user?.id)syncToSupabase(user?.id,"courts",next);return next;});}else{setCourtsRaw(v);lsSet("izi_courts",v);if(activeIdentityRef.current===user?.id)syncToSupabase(user?.id,"courts",v);}};
-  const setPackages=(v)=>{if(typeof v==="function"){setPackagesRaw(prev=>{const next=v(prev);lsSet("izi_packages",next);if(activeIdentityRef.current===user?.id)syncToSupabase(user?.id,"packages",next);return next;});}else{setPackagesRaw(v);lsSet("izi_packages",v);if(activeIdentityRef.current===user?.id)syncToSupabase(user?.id,"packages",v);}};
+  const setCourts=(v)=>{if(typeof v==="function"){setCourtsRaw(prev=>{const next=v(prev);lsSet("izi_courts",next);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"courts",next);return next;});}else{setCourtsRaw(v);lsSet("izi_courts",v);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"courts",v);}};
+  const setPackages=(v)=>{if(typeof v==="function"){setPackagesRaw(prev=>{const next=v(prev);lsSet("izi_packages",next);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"packages",next);return next;});}else{setPackagesRaw(v);lsSet("izi_packages",v);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"packages",v);}};
   // IMPORTANT: keep functional updates. Do not replace prev with closure state.
-  const setFamilies=(v)=>{if(typeof v==="function"){setFamiliesRaw(prev=>{const next=v(prev);lsSet("izi_families",next);if(activeIdentityRef.current===user?.id)syncToSupabase(user?.id,"families",next);return next;});}else{setFamiliesRaw(v);lsSet("izi_families",v);if(activeIdentityRef.current===user?.id)syncToSupabase(user?.id,"families",v);}};
+  const setFamilies=(v)=>{if(typeof v==="function"){setFamiliesRaw(prev=>{const next=v(prev);lsSet("izi_families",next);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"families",next);return next;});}else{setFamiliesRaw(v);lsSet("izi_families",v);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"families",v);}};
   // E3: explicit, awaited write — replaces the old setCoachProfile, which
   // upserted to `coaches` as a fire-and-forget side effect of a generic
   // state setter (error only logged, never surfaced; local state and "saved"
@@ -6874,126 +6874,63 @@ export default function App() {
     setCoachProfileRaw(profile);
     return {ok:true};
   };
-  const setExpenses=(v)=>{if(typeof v==="function"){setExpensesRaw(prev=>{const next=v(prev);lsSet("izi_expenses",next);if(activeIdentityRef.current===user?.id)syncToSupabase(user?.id,"expenses",next);return next;});}else{setExpensesRaw(v);lsSet("izi_expenses",v);if(activeIdentityRef.current===user?.id)syncToSupabase(user?.id,"expenses",v);}};
+  const setExpenses=(v)=>{if(typeof v==="function"){setExpensesRaw(prev=>{const next=v(prev);lsSet("izi_expenses",next);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"expenses",next);return next;});}else{setExpensesRaw(v);lsSet("izi_expenses",v);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"expenses",v);}};
 
-  // Returns true only for a real read of this coach's own business data (with
-  // rows, or legitimately zero rows) — false for a real failure (Supabase error,
-  // thrown exception, missing coachId). Callers must treat false as "unknown
-  // state, don't touch anything", never as "empty account".
-  //
-  // PENDING VERIFICATION (Fase B, not yet resolved): the "no remote data" branch
-  // below still reads raw localStorage and pushes it to Supabase as a legacy
-  // local→remote migration. This depends on localStorage as an active source,
-  // which this migration is meant to eliminate — but removing it needs confirming
-  // no real coach's only copy of their data currently lives in localStorage
-  // (RLS blocks checking this from a normal coach session; needs a query run
-  // from the Supabase SQL editor). Left untouched until that's confirmed.
-  const loadData=async(userId)=>{
-    const result=await loadAllFromSupabase(userId);
-    // Stale-identity guard: activeIdentityRef may have moved on to a different
-    // user (or null) while this read was in flight. Whoever called loadData for
-    // that superseded identity must not write its data into state — the caller
-    // re-checks independently too, but this call itself must never touch a
-    // setter for a userId that's no longer the active one.
-    if(activeIdentityRef.current!==userId) return false;
-    if(!result.ok){
-      console.error("loadData: remote read failed — leaving local state untouched, no push, not marking data as loaded:",result.error);
-      return false;
-    }
-    const allData=result.data;
-    const hasRemoteData=Object.keys(allData).length>0&&Object.values(allData).some(v=>Array.isArray(v)&&v.length>0);
-    if(hasRemoteData){
-      // No lsSet mirroring here (Fase B): localStorage is not an active data
-      // source or cache for business data during this migration.
-      if(allData.students&&allData.students.length>0){setStudentsRaw(allData.students);}
-      if(allData.classes&&allData.classes.length>0){setClassesRaw(allData.classes);}
-      if(allData.expenses&&allData.expenses.length>0){setExpensesRaw(allData.expenses);}
-      if(allData.courts&&allData.courts.length>0){setCourtsRaw(allData.courts);}
-      if(allData.packages&&allData.packages.length>0){setPackagesRaw(allData.packages);}
-      if(allData.families&&allData.families.length>0){setFamiliesRaw(allData.families);}
-    }
-    // else: confirmed zero rows for this coachId — stays empty. The legacy
-    // "read izi_* from localStorage and push it as this coach's data" fallback
-    // that used to live here has been removed entirely (not gated, not
-    // conditional — gone). izi_students/izi_classes/etc. are no longer read
-    // anywhere in this function, on any branch: they're not hydrated into
-    // state, not treated as this coach's data, and not written to Supabase
-    // automatically. The keys themselves are left untouched in localStorage
-    // (not cleared) as possible manual-recovery material only — nothing in
-    // the app reads them for that purpose either.
-    // Coach profile (name/phone/email/sport/photo/currency) is a separate
-    // table/query, out of this Paso's scope — kept non-fatal exactly as before:
-    // a failure here logs and is ignored, it never flips the business-data result.
+  // Coach profile (name/phone/email/sport/photo/currency) — a separate
+  // table/RPC from the six outbox-backed keys, out of this Fase 2 rollout's
+  // scope. Extracted as-is from the old combined loadData (same query, same
+  // fields, same stale-identity guard, same non-fatal-on-error contract) so
+  // it can run in parallel with reconcileCoachData instead of after it.
+  const loadCoachProfile=async(userId)=>{
     try{
       const {data:profileData}=await supabase.from("coaches").select("*").eq("id",userId).single();
-      if(activeIdentityRef.current!==userId) return true;
+      if(activeIdentityRef.current!==userId) return;
       if(profileData){
         const profile={name:profileData.name||"Coach",sport:profileData.sport||"",photo:profileData.photo||null,phone:profileData.phone||"",email:profileData.email||"",currency:profileData.currency||""};
         setCoachProfileRaw(profile);
         // E3: previously only _cur.v (setCUR) was kept in sync here; `currency`
-        // (the separate useState used as a remount key, line ~7468) was never
-        // updated by loadData at all — it only got a real value once, at
-        // onboarding, and relied on izi_profile's leftover snapshot to look
-        // right on later logins. That's gone now, so it needs the same sync
-        // _cur.v already gets, or a coach with a non-₲ currency would see the
-        // wrong one after every logout→login.
+        // (the separate useState used as a remount key) was never updated by
+        // loadData at all — it only got a real value once, at onboarding.
         if(profile.currency){setCUR(profile.currency);setCurrency(profile.currency);}
       }
     }catch(e){ console.error("Coach profile load error (non-fatal):",e); }
-    return true;
   };
 
-  // Sync all data to Supabase when anything changes (debounced 1s).
-  // Gated on dataReadyForCurrentIdentity/dataLoadFailedForCurrentIdentity, not
-  // the raw booleans — dataReady/dataLoadFailed alone don't say *whose* data
-  // they describe, and during an A→B identity switch they can stay true/false
-  // from A for one or more renders while B's own load is still in flight. The
-  // scoped versions read false in that window, so this can never push a
-  // superseded identity's data under the new one's coachId.
+  // Reload from Supabase when returning to the tab (multi-device sync) and
+  // when a durable local write couldn't be confirmed while backgrounded.
+  // Fase 2: this now calls exclusively reconcileCoachData (coachData.js) —
+  // recoverOutbox + flushPending + fetchRemoteData + guarded apply, as one
+  // single-flight unit — never a separately composed flush-then-load pair.
+  // Coach profile is not re-fetched here (not part of the outbox/CAS path);
+  // it only needs refreshing on identity mount, handled in the effect below.
   useEffect(()=>{
-    if(!user?.id||loadingAuth||checkingProfile||!dataReadyForCurrentIdentity||dataLoadFailedForCurrentIdentity) return;
-    // Positive rule: only an authenticated + resolved + hydrated coach can
-    // sync coach_data. Was `if(mode==="student_portal") return;` — excluded
-    // student_portal but let coach_new (no coaches row yet) through, which
-    // RLS then rejected on every key (students/classes/expenses/courts/
-    // packages) the moment dataReady flipped true for that identity.
-    if(mode!=="coach") return;
-    // Account Access Control Phase C.1 — a blocked/deactivated coach must not
-    // write coach_data (decision 3). dataReadyForCurrentIdentity never becomes
-    // true for one anyway (the load effect below skips loadData for them), but
-    // this guard is the direct statement of the rule, not an accident of timing.
-    if(!isCoachOperational) return;
-    const timer=setTimeout(()=>{
-      syncAll(students,classes,expenses,courts,packages);
-    },1000);
-    return ()=>clearTimeout(timer);
-  },[students,classes,expenses,courts,packages,dataReadyForCurrentIdentity,dataLoadFailedForCurrentIdentity,user?.id,loadingAuth,checkingProfile,mode,isCoachOperational]);
-
-  // Force sync when user switches tabs or minimizes to prevent data loss
-  // AND reload from Supabase when returning to the tab (multi-device sync).
-  // Reads from React state (Fase B — localStorage is no longer written on a
-  // successful load, so reading it here would sync stale/empty arrays over
-  // real data). Depends on the same 5 arrays as the debounced-sync effect so
-  // this closure is never stale. Same identity-scoped gating as the effect
-  // above, and for the same reason — see comment there.
-  useEffect(()=>{
+    // Same positive rule used throughout: only an onboarded, operational
+    // coach reconciles coach_data. Account Access Control Phase C.1 —
+    // isCoachOperational: a blocked/deactivated coach must not sync or
+    // reload coach_data (decision 3), even though mode stays "coach" for them.
+    const canReconcile=()=>user?.id&&isCoachOperational&&mode==="coach";
     const handleVisChange=()=>{
-      // Same positive rule as the debounced-sync effect above — proceed only
-      // for an onboarded coach, not just "not student_portal" (was letting
-      // coach_new through, same RLS rejection risk on tab switch/return).
-      // Account Access Control Phase C.1 — isCoachOperational added: a
-      // blocked/deactivated coach must not sync or reload coach_data
-      // (decision 3), even though mode stays "coach" for them.
-      if(document.visibilityState==="hidden"&&user?.id&&isCoachOperational&&dataReadyForCurrentIdentity&&!dataLoadFailedForCurrentIdentity){
-        syncAll(students,classes,expenses,courts,packages);
+      if(document.visibilityState==="visible"&&canReconcile()){
+        const myUserId=user.id;
+        reconcileCoachData(myUserId,rawSetters,()=>activeIdentityRef.current===myUserId);
       }
-      if(document.visibilityState==="visible"&&user?.id&&isCoachOperational){
-        loadData(user?.id);
+    };
+    // Section 14: coming back online triggers an immediate retry instead of
+    // waiting for the scheduled backoff timer. reconcileCoachData's flushPending
+    // is the single sanctioned way to (re)send the outbox — no separate retry path.
+    const handleOnline=()=>{
+      if(canReconcile()){
+        const myUserId=user.id;
+        reconcileCoachData(myUserId,rawSetters,()=>activeIdentityRef.current===myUserId);
       }
     };
     document.addEventListener("visibilitychange",handleVisChange);
-    return ()=>document.removeEventListener("visibilitychange",handleVisChange);
-  },[mode,isCoachOperational,dataReadyForCurrentIdentity,dataLoadFailedForCurrentIdentity,students,classes,expenses,courts,packages,user?.id]);
+    window.addEventListener("online",handleOnline);
+    return ()=>{
+      document.removeEventListener("visibilitychange",handleVisChange);
+      window.removeEventListener("online",handleOnline);
+    };
+  },[mode,isCoachOperational,user?.id]);
 
   // Business-data hydration for a resolved identity (Fase D). resolveSession (now in
   // auth/, owned by AuthProvider) only resolves identity — it has no access to these
@@ -7004,14 +6941,16 @@ export default function App() {
   // reused as-is, no new loading state introduced.
   useEffect(()=>{
     // First line, synchronous: this is the identity as of *this* invocation.
-    // Any loadData/loadAllFromSupabase call started by a previous invocation
-    // checks this after its await — if it no longer matches what it started
-    // with, that call is superseded and must not call any setter.
-    // E1: whoever was active a moment ago (if anyone, and if it actually
-    // changed) may have writes still waiting on syncToSupabase's debounce —
-    // cancel those before moving on, so they never fire under a coachId
-    // that's no longer current. Only cancels what hasn't run yet; a write
-    // already in flight keeps going (correct coach_id, nothing to invalidate).
+    // Any reconcileCoachData/loadCoachProfile/loadAllFromSupabase call started
+    // by a previous invocation checks this after its await — if it no longer
+    // matches what it started with, that call is superseded and must not
+    // call any setter.
+    // E1/Fase 2: whoever was active a moment ago (if anyone, and if it
+    // actually changed) may have in-memory retry timers/backoff state for
+    // its outbox — cancel those before moving on, so they never fire under a
+    // coachId that's no longer current. The durable outbox itself is never
+    // touched here (coachData.js's cancelPendingSync contract) — a later
+    // reconcile (this tab or another) must still be able to recover/flush it.
     const previousIdentity=activeIdentityRef.current;
     const nextIdentity=user?.id||null;
     if(previousIdentity&&previousIdentity!==nextIdentity) cancelPendingSync(previousIdentity);
@@ -7031,17 +6970,25 @@ export default function App() {
       if(dataReadyForCurrentIdentity||dataLoadFailedForCurrentIdentity) return;
       const myUserId=user.id;
       (async()=>{
-        const loaded=await loadData(myUserId);
+        // Fase 2: business-data hydration (the six outbox-backed keys) and
+        // coach-profile hydration are independent concerns now — run them in
+        // parallel. reconcileCoachData is single-flight and self-contained
+        // (recoverOutbox + flushPending + fetchRemoteData + guarded apply);
+        // App.jsx never composes those steps itself.
+        const [businessResult]=await Promise.all([
+          reconcileCoachData(myUserId,rawSetters,()=>activeIdentityRef.current===myUserId),
+          loadCoachProfile(myUserId),
+        ]);
         if(activeIdentityRef.current!==myUserId) return;
-        if(loaded){
+        if(businessResult.ok){
           // A real read of this coach's own data completed (rows, or confirmed
-          // zero) — only now is it safe to let the auto-sync effect run.
+          // zero) — only now is it safe to let the setters' outbox writes run.
           setDataLoadFailed(false);
           setDataReady(true);
         } else {
-          // loadData couldn't get a real read — never treat that as "empty
-          // account". dataReady stays false (auto-sync stays blocked) and
-          // dataLoadFailed surfaces the retry screen instead of an empty dashboard.
+          // reconcileCoachData couldn't get a real read — never treat that as
+          // "empty account". dataReady stays false and dataLoadFailed surfaces
+          // the retry screen instead of an empty dashboard.
           setDataReady(false);
           setDataLoadFailed(true);
         }
@@ -7228,11 +7175,16 @@ export default function App() {
       // must not skip the React state resets below — those are what
       // actually take the operational UI off screen, and must run
       // regardless of whether authLogout() OR this cleanup succeeds.
-      try{
-        Object.keys(localStorage).filter(k=>k.startsWith("izi_")).forEach(k=>localStorage.removeItem(k));
-      }catch(thrown){
-        console.error("handleLogout: localStorage cleanup failed (non-fatal):",thrown);
-      }
+      // Verification finding (Prueba 11): this used to remove every
+      // "izi_"-prefixed key, including "izi_outbox:*" — the durable
+      // per-tab outbox coachData.js depends on surviving exactly this kind
+      // of identity change (a coach logging out mid-send, or switching to
+      // another coach in the same browser) so a later reconcile — this
+      // coach logging back in, or another tab/coach — can recover it. Only
+      // the legacy, inactive local caches this cleanup was meant for
+      // (izi_mode, izi_onboarded, the old non-namespaced izi_students/
+      // izi_classes/etc.) should go; the outbox must not.
+      clearLocalStateExceptOutbox();
       setStudentsRaw([]);setClassesRaw([]);setCourtsRaw([]);setPackagesRaw([]);setFamiliesRaw([]);
       setCoachProfileRaw({name:"Coach",sport:"",photo:null});setExpensesRaw([]);
       setDataReady(false);
@@ -7240,16 +7192,19 @@ export default function App() {
     }
   };
 
-  // Re-attempts loadData for the currently authenticated coach after a failed
-  // read (see dataLoadFailed). Reuses checkingProfile for the in-progress
-  // spinner — no new loading UI needed.
+  // Re-attempts reconcileCoachData/loadCoachProfile for the currently
+  // authenticated coach after a failed read (see dataLoadFailed). Reuses
+  // checkingProfile for the in-progress spinner — no new loading UI needed.
   const retryLoadData=async()=>{
     if(!user?.id) return;
     const myUserId=user.id;
     setCheckingProfile(true);
-    const loaded=await loadData(myUserId);
+    const [businessResult]=await Promise.all([
+      reconcileCoachData(myUserId,rawSetters,()=>activeIdentityRef.current===myUserId),
+      loadCoachProfile(myUserId),
+    ]);
     if(activeIdentityRef.current===myUserId){
-      if(loaded){setDataLoadFailed(false);setDataReady(true);}
+      if(businessResult.ok){setDataLoadFailed(false);setDataReady(true);}
       else{setDataReady(false);setDataLoadFailed(true);}
       hydratedIdentityRef.current=myUserId;
     }
@@ -7546,7 +7501,7 @@ export default function App() {
   };
 
   const [pendingReprog,setPendingReprog]=useState(null);
-  const handleRefresh=async()=>{if(user?.id)await loadData(user?.id);};
+  const handleRefresh=async()=>{if(user?.id)await reconcileCoachData(user.id,rawSetters,()=>activeIdentityRef.current===user.id);};
 
   const handleNavigate=(section,params)=>{
     setTab(section);
@@ -8075,14 +8030,14 @@ export default function App() {
             </div>
             <div style={{fontSize:15,fontWeight:700,marginBottom:8}}>No pudimos cargar tu perfil de alumno</div>
             <div style={{fontSize:13,color:"rgba(255,255,255,0.7)",marginBottom:24,lineHeight:1.5}}>Contactá a tu entrenador.</div>
-            <button onClick={async()=>{await authLogout();localStorage.clear();}} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:"#fff",color:"#1A3DB5",fontSize:15,cursor:"pointer",fontWeight:800}}>Cerrar sesión</button>
+            <button onClick={async()=>{await authLogout();clearLocalStateExceptOutbox();}} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:"#fff",color:"#1A3DB5",fontSize:15,cursor:"pointer",fontWeight:800}}>Cerrar sesión</button>
           </div>
         </div>
       );
     }
     return (
       <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden"}}>
-        <StudentApp student={studentData} onExit={async()=>{await authLogout();localStorage.clear();}} classes={xClasses} notifications={notifications} sendNotification={sendNotification} coachId={(()=>{try{const v=localStorage.getItem("izi_student_coach_id");return v?JSON.parse(v):null;}catch{return localStorage.getItem("izi_student_coach_id");}})()} students={students} families={families}/>
+        <StudentApp student={studentData} onExit={async()=>{await authLogout();clearLocalStateExceptOutbox();}} classes={xClasses} notifications={notifications} sendNotification={sendNotification} coachId={(()=>{try{const v=localStorage.getItem("izi_student_coach_id");return v?JSON.parse(v):null;}catch{return localStorage.getItem("izi_student_coach_id");}})()} students={students} families={families}/>
       </div>
     );
   }
@@ -8196,6 +8151,7 @@ export default function App() {
         )}
       </div>
       <NavBar tabs={coachTabs} active={tab} onSelect={(t)=>{setTab(t);}} zIdx={100} badges={{chat:Object.values(unreadChats).reduce((a,b)=>a+b,0)||0}}/>
+      <SyncStatusBanner coachId={user?.id} C={C} rawSetters={rawSetters} isStillActive={()=>activeIdentityRef.current===user?.id}/>
     </div>
   );
 }
