@@ -6,6 +6,7 @@ import {
   enqueueCoachDataWrite,
   reconcileCoachData,
   clearLocalStateExceptOutbox,
+  getSyncStatus,
 } from "./data/coachData.js";
 import SyncStatusBanner from "./components/SyncStatusBanner.jsx";
 import { useAuth } from "./auth/useAuth.js";
@@ -204,6 +205,401 @@ const _wDFull=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sába
 const _mNShort=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 const fmtDate=(ds)=>{const d=new Date(ds+"T12:00:00");return _wDFull[d.getDay()]+" "+d.getDate()+" "+_mNShort[d.getMonth()];};
 
+// Follows a chain of dateCancellations rescheduledTo pointers (a class
+// reprogrammed more than once, e.g. X→Y→Z) to its terminal date. Shared by
+// expandClasses (display: what date is this occurrence actually happening on)
+// and the pause interceptor in handleSaveClass (which future dates count as
+// this student's remaining contracted sessions) — both must agree on the walk,
+// or Agenda and the pause could disagree about where a rescheduled class
+// actually lands. `visited` bounds the walk naturally — it can grow at most
+// Object.keys(dateCancellations).length+1 times before either running out of
+// chain (clean terminal) or hitting a repeat (cycle) — no arbitrary max needed.
+// Returns {date:terminal,cancelInfo,broken:false} on a clean walk (cancelInfo
+// is whatever dateCancellations entry, if any, exists AT the terminal — e.g. a
+// further pending "sin fecha" reprogram, or null for a genuinely live date),
+// or {cancelInfo,broken:true} if the chain cycles (X→Y→X or self-reference).
+const resolveRescheduleChain=(dateCancellations,startDate)=>{
+  const dc=dateCancellations||{};
+  let current=startDate;
+  const visited=new Set([startDate]);
+  while(dc[current]&&dc[current].cancelType==="cancelled_reprog"&&dc[current].rescheduledTo){
+    const next=dc[current].rescheduledTo;
+    if(visited.has(next)) return {cancelInfo:dc[current],broken:true};
+    visited.add(next);
+    current=next;
+  }
+  return {date:current,cancelInfo:dc[current]||null,broken:false};
+};
+
+// Resolves ONE contracted date to its full status via resolveRescheduleChain:
+// the effective terminal of its reschedule chain (if any), whatever
+// dateCancellations entry (if any) sits AT that terminal, and whether the
+// chain was unresolvable (cycle). Unlike resolveEffectiveComboDates below
+// (which discards any terminal that isn't a clean live date — built for the
+// pause interceptor's c.occurrences matching), this exposes the terminal's
+// own cancelInfo untouched: a caller like ResumeModal needs to tell "this
+// contracted session's terminal is now paused" apart from "it's a live
+// upcoming class" apart from "still pending reprogramming", which a filter
+// that already discards non-clean terminals can't do.
+const resolveComboDateStatus=(dateCancellations,originalDate)=>{
+  const {date,cancelInfo,broken}=resolveRescheduleChain(dateCancellations,originalDate);
+  if(broken) return {original:originalDate,terminal:null,cancelInfo:null,broken:true};
+  return {original:originalDate,terminal:date,cancelInfo,broken:false};
+};
+
+// Read-only trace of a contracted date's full reschedule history, for Cobros:
+// [originalDate, ...every destination in order]. Same walk and cycle guard as
+// resolveRescheduleChain (deliberately not changed — Agenda depends on it); a
+// cyclic/self-referential chain stops before revisiting a date and reports
+// broken, still returning the reachable path.
+const traceRescheduleHistory=(dateCancellations,startDate)=>{
+  const dc=dateCancellations||{};
+  const path=[startDate];
+  const visited=new Set([startDate]);
+  let current=startDate;
+  while(dc[current]&&dc[current].cancelType==="cancelled_reprog"&&dc[current].rescheduledTo){
+    const next=dc[current].rescheduledTo;
+    if(visited.has(next)) return {path,broken:true};
+    visited.add(next);
+    path.push(next);
+    current=next;
+  }
+  return {path,broken:false};
+};
+
+// Single interpretation of one ORIGINAL contracted date (combo.dates entry) for
+// Cobros, resolved to the terminal of its reschedule chain. The row's economic
+// identity stays originalDate; terminalDate/reschedulePath are information only.
+// A terminal that is paused reads as Pausada (expandClasses deliberately hides
+// non-live terminals from its cards, which is right for Agenda but made Cobros
+// read such a chain as "A Reprogramar"). Never mutates its input.
+const interpretContractDate=(dateCancellations,originalDate)=>{
+  const {terminal,cancelInfo,broken}=resolveComboDateStatus(dateCancellations,originalDate);
+  const {path}=traceRescheduleHistory(dateCancellations,originalDate);
+  const wasRescheduled=path.length>1;
+  if(broken){
+    return {originalDate,terminalDate:null,cancelInfo:null,reschedulePath:path,terminalStatus:"inconsistent",isPaused:false,isCompensated:false,isCancelled:false,isReprogrammed:false,isReprogramPending:true,wasRescheduled};
+  }
+  const t=cancelInfo?cancelInfo.cancelType:null;
+  const isPaused=t==="paused";
+  const isCancelled=t==="cancelled";
+  const isReprogrammed=wasRescheduled&&cancelInfo===null;
+  const isReprogramPending=t==="cancelled_reprog"||(wasRescheduled&&cancelInfo!==null&&!isPaused&&!isCancelled);
+  const terminalStatus=isPaused?"paused":isCancelled?"cancelled":isReprogramPending?"pending":isReprogrammed?"reprogrammed":"normal";
+  const isCompensated=isPaused&&!!(cancelInfo&&cancelInfo.compensated);
+  return {originalDate,terminalDate:terminal,cancelInfo,reschedulePath:path,terminalStatus,isPaused,isCompensated,isCancelled,isReprogrammed,isReprogramPending,wasRescheduled};
+};
+
+// Shared by getAccountCounters and PagoModal.buildAllDates so list and counters
+// can never disagree. The series row is found via combo.sourceClassId (expanded
+// cards keep the series id in `id`, plus `_seriesId`); a card without
+// dateCancellations (legacy/single class) keeps the previous top-level-flags
+// reading, and so does any date the series has no entry for.
+const resolveContractSlotStatus=(myClasses,combo,originalDate,clsForDate)=>{
+  const series=(combo&&combo.sourceClassId!==undefined)?myClasses.find(cl=>cl.id===combo.sourceClassId||cl._seriesId===combo.sourceClassId):undefined;
+  const dc=(series&&series.dateCancellations)||(clsForDate&&clsForDate.dateCancellations)||null;
+  if(dc){
+    const r=interpretContractDate(dc,originalDate);
+    if(r.terminalStatus!=="normal"){
+      // A paused terminal is "compensated" once a resume replaced it: its dateCancellations
+      // entry says so (compensated), and so does the combo's resumeOperations[].pausedDates —
+      // either is enough, so a lost compensatedBy never hides the fact.
+      const compensatedByOps=r.isPaused&&(combo&&combo.resumeOperations||[]).some(op=>(op.pausedDates||[]).includes(r.terminalDate));
+      return {...r,isCompensated:r.isCompensated||!!compensatedByOps,isReprogWithDate:r.isReprogrammed,isReprogNoDate:r.isReprogramPending,rescheduledTo:r.isReprogrammed?r.terminalDate:null,
+        fulfillCancelled:r.isCancelled||r.isReprogrammed||r.isReprogramPending,
+        fulfillCancelType:r.isCancelled?"cancelled":(r.isReprogrammed||r.isReprogramPending)?"cancelled_reprog":null};
+    }
+  }
+  const cancelled=clsForDate?clsForDate.cancelled:undefined;
+  const cancelType=clsForDate?clsForDate.cancelType:undefined;
+  const rescheduledTo=clsForDate?clsForDate.rescheduledTo:undefined;
+  const isCancelled=!!(cancelled&&cancelType==="cancelled");
+  const isReprogWithDate=!!(cancelled&&cancelType==="cancelled_reprog"&&rescheduledTo);
+  const isReprogNoDate=!!(cancelled&&cancelType==="cancelled_reprog"&&!rescheduledTo);
+  const isPaused=!!((clsForDate&&clsForDate.paused)||cancelType==="paused");
+  return {originalDate,terminalDate:isReprogWithDate?rescheduledTo:originalDate,cancelInfo:null,reschedulePath:isReprogWithDate?[originalDate,rescheduledTo]:[originalDate],
+    terminalStatus:isPaused?"paused":isCancelled?"cancelled":isReprogNoDate?"pending":isReprogWithDate?"reprogrammed":"normal",
+    isPaused,isCompensated:false,isCancelled,isReprogrammed:isReprogWithDate,isReprogramPending:isReprogNoDate,wasRescheduled:isReprogWithDate,
+    isReprogWithDate,isReprogNoDate,rescheduledTo:rescheduledTo||null,fulfillCancelled:cancelled,fulfillCancelType:cancelType};
+};
+
+// Shared paid-status assignment for the slots of ONE combo (Cobros counters, Cobros
+// list and the student/family "Mis Clases" cards all use it). Payment and pause are
+// independent: a paused slot keeps its paid status. The only paused slots that stop
+// consuming a paid unit are those already displaced by a replacement date
+// (combo.dates longer than combo.total — same relation applyGuard uses), earliest
+// first, so a resume never moves Pagadas. Returns paymentAt(idx) -> {isPaid,isDisplaced,displayPaid}.
+// isPaid is the COUNTER truth (a slot's payment is counted once: a displaced historical date
+// never counts, its replacement does). displayPaid is presentation only: a displaced historical
+// date and its replacement belong to the same contractual slot, so both read Pagada when that
+// slot was paid; the displaced date's own paid status is its position among the ORIGINAL slots
+// (combo dates that are not resume replacements).
+const resolveSlotPayments=(dates,combo,paidCount,slotFor)=>{
+  const displaced=new Set(dates.filter(dd=>slotFor(dd).isCompensated));
+  const excess=Math.max(0,dates.length-(combo.total||dates.length));
+  if(displaced.size<excess) for(const dd of dates){ if(displaced.size>=excess) break; if(!displaced.has(dd)&&slotFor(dd).isPaused) displaced.add(dd); }
+  const isBillable=dd=>!slotFor(dd).isCancelled&&!displaced.has(dd);
+  const cancelledLeftover=Math.max(0,paidCount-dates.filter(isBillable).length);
+  const replacementSet=new Set((combo.resumeOperations||[]).flatMap(op=>op.replacementDates||[]));
+  const originalDates=replacementSet.size?dates.filter(dd=>!replacementSet.has(dd)):dates.slice(0,Math.min(dates.length,combo.total||dates.length));
+  return (idx)=>{
+    const dd=dates[idx];
+    const isDisplaced=displaced.has(dd);
+    const before=dates.slice(0,idx);
+    const isPaid=isDisplaced?false:slotFor(dd).isCancelled?before.filter(x=>slotFor(x).isCancelled).length<cancelledLeftover:before.filter(isBillable).length<paidCount;
+    let displayPaid=isPaid;
+    if(isDisplaced){
+      const oi=originalDates.indexOf(dd);
+      displayPaid=oi>=0&&originalDates.slice(0,oi).filter(x=>!slotFor(x).isCancelled).length<paidCount;
+    }
+    return {isPaid,isDisplaced,displayPaid};
+  };
+};
+
+// Shared "was this contractual slot delivered" rule (Cobros counters and getClaseRem):
+// evaluated on the effective fulfillment date, never on both original and destination.
+// A paused slot is never delivered; a definitively-cancelled Combo slot is billed and
+// consumed like a delivered one (Individual is deliberately not extended).
+const resolveSlotGiven=(slot,packType,originalDate,timeEnd,myClasses,studentId)=>{
+  if(slot.isPaused) return false;
+  if(slot.isCancelled) return packType==="combo";
+  const fulfillmentDate=getSlotFulfillmentDate(originalDate,slot.fulfillCancelled,slot.fulfillCancelType,slot.rescheduledTo);
+  if(!fulfillmentDate) return false;
+  const att=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===fulfillmentDate);
+  if(att) return (att.present||[]).includes(studentId)||(att.ausente_dada||[]).includes(studentId);
+  return isClassDone(fulfillmentDate,timeEnd);
+};
+
+// Visual history of ONE contractual slot: [original, ...every reschedule destination],
+// depth 0..n. Presentation only — these are never economic rows (no number, no payment,
+// no counter); the slot's display-paid status is simply repeated on every step. Intermediate steps are
+// "reprogrammed"; the terminal carries its real state: paused, cancelled, pending
+// ("A Reprogramar", also an inconsistent chain) or, for a live destination, done/scheduled.
+const buildSlotHistoryRows=(slot,displayPaid,isGiven,myClasses,studentId,timeEnd)=>{
+  const path=slot.reschedulePath&&slot.reschedulePath.length?slot.reschedulePath:[slot.originalDate];
+  return path.map((date,depth)=>{
+    const isTerminal=depth===path.length-1;
+    let status;
+    if(!isTerminal) status="reprogrammed";
+    else if(slot.terminalStatus==="paused") status="paused";
+    else if(slot.terminalStatus==="cancelled") status="cancelled";
+    else if(slot.terminalStatus==="pending"||slot.terminalStatus==="inconsistent") status="pending";
+    else if(depth===0) status=isGiven?"done":"scheduled";
+    else {
+      const att=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===date);
+      const done=att?((att.present||[]).includes(studentId)||(att.ausente_dada||[]).includes(studentId)):isClassDone(date,timeEnd);
+      status=done?"done":"scheduled";
+    }
+    return {date,depth,status,isPaid:!!displayPaid,isTerminal};
+  });
+};
+
+// Rows of the student/family "Mis Clases" cards: one row per ORIGINAL contractual date
+// (combo.dates), built with the same shared helpers as Cobros so both views agree.
+// The reschedule path/terminal are information only — never extra economic rows.
+const buildPersonSlotRows=(person,personClasses,todayDate)=>{
+  const rows=(person.combos||[]).filter(c=>c.total>0&&c.packType!=="mensual").flatMap(c=>{
+    const seen=new Set();
+    const dates=(c.dates||[]).filter(d=>{if(seen.has(d))return false;seen.add(d);return true;});
+    const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
+    const slotFor=dd=>resolveContractSlotStatus(personClasses,c,dd,personClasses.find(cl=>cl.date===dd));
+    const paymentAt=resolveSlotPayments(dates,c,paidCount,slotFor);
+    return dates.map((d,i)=>{
+      const slot=slotFor(d);
+      const clsForDate=personClasses.find(cl=>cl.date===d);
+      const {isPaid:paidByPosition,isDisplaced,displayPaid:displayByPosition}=paymentAt(i);
+      // Individual is deliberately not extended: its cancelled slots are never paid here.
+      const isPaid=slot.isCancelled?(c.packType==="combo"&&paidByPosition):paidByPosition;
+      const displayPaid=slot.isCancelled?isPaid:displayByPosition;
+      const isGiven=resolveSlotGiven(slot,c.packType,d,(clsForDate&&clsForDate.timeEnd)||"23:59",personClasses,person.id);
+      const timeEnd=(clsForDate&&clsForDate.timeEnd)||"23:59";
+      return {date:d,isPaid,displayPaid,isDisplaced,isGiven,isPast:d<=todayDate,isPaused:slot.isPaused,isCompensated:slot.isCompensated,isCancelledClass:slot.isCancelled,isReprogWithDate:slot.isReprogWithDate,isReprogNoDate:slot.isReprogNoDate,rescheduledTo:slot.rescheduledTo||null,terminalDate:slot.terminalDate,reschedulePath:slot.reschedulePath,terminalStatus:slot.terminalStatus,historyRows:buildSlotHistoryRows(slot,displayPaid,isGiven,personClasses,person.id,timeEnd)};
+    });
+  }).sort((a,b)=>a.date.localeCompare(b.date));
+  const seen2=new Set();
+  return rows.filter(d=>{if(seen2.has(d.date))return false;seen2.add(d.date);return true;});
+};
+
+// Agenda-only reading of ONE expanded occurrence card, layered on the shared Cobros helpers
+// (never a second chain resolver, and it never changes which occurrences exist):
+// - reprogSettledTo: the card is a step of a reschedule chain whose terminal is paused or
+//   definitively cancelled. expandClasses only resolves chains that end on a live date, so such a
+//   step arrives with rescheduledTo=null and read as "A Reprogramar"; it already HAS a
+//   destination, the terminal, and reads as Reprogramada. A chain that really ends pending (or
+//   is inconsistent) is left as it was.
+// - payment: "paid" for a paused terminal (still active or already replaced by a resume) or a
+//   resume replacement date whose contractual slot is paid, else null.
+const resolveAgendaCardStatus=(card,students,classes,todayDate)=>{
+  const dc=card.dateCancellations||{};
+  const own=dc[card.date]||null;
+  let reprogSettledTo=null;
+  if(own&&own.cancelType==="cancelled_reprog"&&own.rescheduledTo&&!card.rescheduledTo){
+    const r=interpretContractDate(dc,card.date);
+    if(r.terminalStatus==="paused"||r.terminalStatus==="cancelled") reprogSettledTo=r.terminalDate;
+  }
+  let payment=null;
+  const isPausedCard=!!(card.paused||card.cancelType==="paused");
+  const isLiveCard=!card.cancelled&&!isPausedCard;
+  // A paused date already replaced by a resume is history (its contractual slot lives on the
+  // replacement). The slot reading also honours resumeOperations when compensatedBy was lost.
+  let isCompensated=isPausedCard&&!!(own&&own.compensated);
+  for(const sid of card.students||[]){
+    const st=students.find(s=>s.id===sid);
+    if(!st) continue;
+    const isReplacement=isLiveCard&&(st.combos||[]).some(c=>(c.resumeOperations||[]).some(op=>(op.replacementDates||[]).includes(card.date)));
+    if(!isPausedCard&&!isReplacement) continue;
+    const rows=buildPersonSlotRows(st,classes.filter(c=>c.students&&c.students.includes(sid)),todayDate);
+    const row=isPausedCard?rows.find(r=>r.terminalStatus==="paused"&&r.terminalDate===card.date):rows.find(r=>r.date===card.date);
+    if(!row) continue;
+    payment=row.displayPaid?"paid":null;
+    if(isPausedCard) isCompensated=isCompensated||!!row.isCompensated;
+    break;
+  }
+  return {reprogSettledTo,payment,isCompensated};
+};
+// Which Agenda menu a card gets, from the SAME per-card reading (never a second interpretation):
+// a reprogrammed origin/step that already has a destination (live or paused/cancelled terminal), a
+// paused date already replaced by a resume, and a past definitive cancellation are history —
+// read-only, no menu. Everything else keeps its existing menu (normal/terminal: Editar, Asistencia,
+// Pausar, Reprogramar/Cancelar; really pending: Asignar fecha; active pause: Reanudar).
+const resolveAgendaMenu=(card,agSt,weekAgo)=>{
+  const isPaused=!!(card.paused||card.cancelType==="paused");
+  const isReprog=!!card.cancelled&&card.cancelType==="cancelled_reprog";
+  if(isReprog&&(card.rescheduledTo||agSt.reprogSettledTo)) return {kind:"history-reprog",readOnly:true};
+  if(isPaused&&agSt.isCompensated) return {kind:"paused-compensated",readOnly:true};
+  if(card.cancelled&&card.cancelType==="cancelled"&&card.date<weekAgo) return {kind:"cancelled-history",readOnly:true};
+  return {kind:isReprog?"pending":isPaused?"paused-active":card.cancelled?"cancelled":"normal",readOnly:false};
+};
+// Payment chip of an Agenda card, same colours/labels as the Cobros slot badge (compact).
+const agendaPaymentChip=(payment,fontSize)=>payment?(()=>{const b=slotPaymentBadge({isPaid:payment==="paid",isPaused:false},true);return <span data-agenda-payment={payment} style={{fontSize,padding:"2px 7px",borderRadius:10,background:b.bg,color:b.color,fontWeight:700,flexShrink:0}}>{b.label}</span>;})():null;
+
+// Resolves a student's contracted combo dates to their EFFECTIVE dates — the
+// real terminal of any reschedule chain each date has gone through. combo.dates
+// itself is never touched by this — it stays the original contractual
+// universe; this only tells a caller like the pause interceptor which of a
+// class's future c.occurrences correspond to this student's still-pending
+// sessions. A chain that cycles, or that terminates on its own further-pending
+// "cancelled_reprog" entry with no rescheduledTo yet ("a reprogramar sin
+// fecha"), contributes nothing — same as expandClasses never fabricating a
+// live card for those. Only a terminal with no dateCancellations entry at all
+// (cancelInfo===null, a genuinely live date) counts — a terminal that is
+// itself paused is NOT a "live occurrence to match against c.occurrences";
+// ResumeModal (via resolveComboDateStatus directly) is what needs to see it.
+const resolveEffectiveComboDates=(comboDates,dateCancellations)=>{
+  const effective=new Set();
+  (comboDates||[]).forEach((d0)=>{
+    const {terminal,cancelInfo,broken}=resolveComboDateStatus(dateCancellations,d0);
+    if(!broken&&cancelInfo===null) effective.add(terminal);
+  });
+  return effective;
+};
+
+// Resolves the paused terminals a resume action must compensate for — the
+// exact same computation ResumeModal itself uses (focal student =
+// cls.students[0]'s last non-mensual combo, each contracted date resolved to
+// its effective terminal via resolveComboDateStatus, only "paused, not yet
+// compensated" terminals count, deduped and sorted). Factored out so the
+// durable-planned-resume detection effect (pause-with-an-upfront-date;
+// Agenda's plannedResume-scanning effect) computes pausedDates the SAME way
+// as the manual "Reanudar" button, instead of a second, divergent
+// computation over raw occurrences/dateCancellations — both paths must
+// agree on which terminals a resume covers. `resumeDate`, when given, keeps
+// only terminals strictly before it (or all of them if none precede it) —
+// mirrors ResumeModal.handleConfirm's own rule.
+const resolvePausedDatesForResume=(cls,students,resumeDate)=>{
+  const studentId=(cls.students||[])[0];
+  const student=students.find(s=>s.id===studentId);
+  const combos=(student?.combos||[]).filter(c=>c.total>0&&c.packType!=="mensual");
+  const lastCombo=combos[combos.length-1];
+  const dc=cls.dateCancellations||{};
+  const pausedTerminals=new Set();
+  (lastCombo?.dates||[]).forEach((d0)=>{
+    const {terminal,cancelInfo,broken}=resolveComboDateStatus(dc,d0);
+    if(broken||!terminal) return;
+    if(cancelInfo&&cancelInfo.cancelType==="paused"&&!cancelInfo.compensated) pausedTerminals.add(terminal);
+  });
+  const pausedDates=[...pausedTerminals].sort();
+  if(!resumeDate) return pausedDates;
+  // Verification finding: this used to fall back to "no paused date precedes
+  // resumeDate? then treat ALL of them as needing a replacement" — silently
+  // generating replacement dates for sessions the coach's chosen resumeDate
+  // already placed on/after the return-to-Programada side. Only dates
+  // strictly before resumeDate ever need a replacement; there is no
+  // fallback — an empty result is a real, valid answer (see runResumeOperation's
+  // pCount===0 handling, case E).
+  return pausedDates.filter(d=>d<resumeDate);
+};
+
+// ---- Resume replacement dates: collision-free generation and audit (pure) ----
+const RESUME_DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mie":3,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+const resumeDowSet=(days)=>new Set((days||[]).map(d=>RESUME_DAY_MAP[d]));
+const isoOfDate=(x)=>x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");
+// Every date a contracted slot occupies: its original date, each reschedule step and the terminal.
+const collectSlotPathDates=(dates,dc)=>{
+  const occupied=new Set();
+  (dates||[]).forEach(d0=>{ traceRescheduleHistory(dc,d0).path.forEach(d=>occupied.add(d)); });
+  return occupied;
+};
+// Replacement dates for a resume: the same walk as always (weekday of the class, starting at the
+// resume date, or right after the combo's last date when that is later) but never on a date that
+// is already taken — a slot's original/step/terminal date (a paused terminal on/after the resume
+// date goes back to Programada, so it is taken too), a date already in any combo.dates, or a date
+// cancelled/reprogrammed/compensated-paused. An ORPHAN paused date (no slot) is free: the resume
+// un-pauses it. Returns null when not enough free dates exist inside a bounded window.
+// `combos` = every non-mensual combo of the student, `dates` = the target combo's dates.
+const computeResumeReplacementDates=({combos,dates,dc,dowSet,resumeDate,pCount})=>{
+  const occupied=new Set();
+  (combos||[]).forEach(c=>{ (c.dates||[]).forEach(d=>occupied.add(d)); collectSlotPathDates(c.dates,dc).forEach(d=>occupied.add(d)); });
+  const lastComboDate=(dates||[]).reduce((m,d)=>(m===null||d>m)?d:m,null);
+  const startFrom=lastComboDate&&lastComboDate>=resumeDate?lastComboDate:resumeDate;
+  const cur=new Date(startFrom+"T12:00:00");
+  if(lastComboDate&&lastComboDate>=resumeDate) cur.setDate(cur.getDate()+1);
+  const isFree=(ds)=>{
+    if(occupied.has(ds)) return false;
+    const e=dc&&dc[ds];
+    return !e||(e.cancelType==="paused"&&!e.compensated);
+  };
+  const out=[];
+  for(let guard=0;out.length<pCount&&guard<1500;guard++){
+    const ds=isoOfDate(cur);
+    if((dowSet.size===0||dowSet.has(cur.getDay()))&&isFree(ds)) out.push(ds);
+    cur.setDate(cur.getDate()+1);
+  }
+  return out.length<pCount?null:out;
+};
+// Defense against a resume that would (or did) place a replacement on a date another slot already
+// occupies. Invariants of ONE resumeOperation, read against the combo that holds it: unique replacement dates,
+// one per paused date, all on/after the resume date, all present in combo.dates, none landing on a
+// date a contracted (non-replacement) slot already occupies, none shared with another operation.
+const auditResumeOperation=(op,combos,dc)=>{
+  const combo=(combos||[]).find(c=>(c.resumeOperations||[]).some(o=>o.id===op.id));
+  const repl=op.replacementDates||[];
+  const issues={duplicates:[],countMismatch:false,beforeResume:[],notInCombo:[],collisions:[],sharedWithOtherOps:[]};
+  issues.duplicates=repl.filter((d,i)=>repl.indexOf(d)!==i);
+  issues.countMismatch=repl.length!==(op.pausedDates||[]).length;
+  issues.beforeResume=repl.filter(d=>op.resumeDate&&d<op.resumeDate);
+  if(combo){
+    issues.notInCombo=repl.filter(d=>!(combo.dates||[]).includes(d));
+    const allRepl=new Set((combo.resumeOperations||[]).flatMap(o=>o.replacementDates||[]));
+    const contract=(combo.dates||[]).filter(d=>!allRepl.has(d));
+    const taken=collectSlotPathDates(contract,dc);
+    (combos||[]).filter(c=>c!==combo).forEach(c=>collectSlotPathDates(c.dates,dc).forEach(d=>taken.add(d)));
+    issues.collisions=[...new Set(repl.filter(d=>taken.has(d)))];
+    const others=new Set((combo.resumeOperations||[]).filter(o=>o.id!==op.id).flatMap(o=>o.replacementDates||[]));
+    issues.sharedWithOtherOps=repl.filter(d=>others.has(d));
+  }
+  const valid=!issues.duplicates.length&&!issues.countMismatch&&!issues.beforeResume.length&&!issues.notInCombo.length&&!issues.collisions.length&&!issues.sharedWithOtherOps.length;
+  return {valid,issues,combo};
+};
+// Combo update for an operation: dates = combo.dates plus its replacements (sorted, deduped); the
+// operation is appended unless the combo already holds it.
+const applyOperationToCombo=(combo,operation)=>{
+  const dates=[...new Set([...(combo.dates||[]),...operation.replacementDates])].sort();
+  const ops=combo.resumeOperations||[];
+  const resumeOperations=ops.some(o=>o.id===operation.id)?ops:[...ops,operation];
+  return {...combo,dates,resumeOperations};
+};
+
 // Expand recurring classes into per-date virtual instances for display
 // Expand recurring classes into per-date virtual instances for display
 // NEW format: single object with occurrences + cancelledDates + rescheduledDates
@@ -215,26 +611,7 @@ const expandClasses=(classes)=>{
     const isNewFormat=c.hasOwnProperty("cancelledDates");
     if(isNewFormat&&c.occurrences&&c.occurrences.length>0){
       const dc=c.dateCancellations||{};
-      // Follows a chain of dateCancellations rescheduledTo pointers (a class
-      // reprogrammed more than once, e.g. X→Y→Z) to its terminal date.
-      // Chains only ever start at a real occurrence (a date in c.occurrences)
-      // — an intermediate date born from a previous reschedule (Y) is never
-      // itself an occurrence, so it's only ever visited as a hop, never as
-      // its own starting point (see the two loops below). `visited` bounds
-      // the walk naturally — it can grow at most Object.keys(dc).length+1
-      // times before either running out of chain (clean terminal) or hitting
-      // a repeat (cycle) — no arbitrary max needed.
-      const resolveChain=(startDate)=>{
-        let current=startDate;
-        const visited=new Set([startDate]);
-        while(dc[current]&&dc[current].cancelType==="cancelled_reprog"&&dc[current].rescheduledTo){
-          const next=dc[current].rescheduledTo;
-          if(visited.has(next)) return {cancelInfo:dc[current],broken:true}; // X→Y→X or self-reference
-          visited.add(next);
-          current=next;
-        }
-        return {date:current,cancelInfo:dc[current]||null,broken:false};
-      };
+      const resolveChain=(startDate)=>resolveRescheduleChain(dc,startDate);
       // Per-occurrence resolved rescheduledTo: the fully-walked terminal date,
       // or absent when the chain doesn't land on a clean live date (broken
       // cycle, or terminates on its own "A Reprogramar sin fecha"/cancelled
@@ -336,6 +713,10 @@ function isNextComboPending(cls, students) {
     const coveredDates=new Set(combos.flatMap(c=>c.dates||[]));
     // If the date is in the combo → not grey
     if(coveredDates.has(cls.date)) return false;
+    // A date on the reschedule path of a contracted date (an intermediate step or a paused
+    // terminal) is still that contracted slot, already paid — never "Sin pagar".
+    const dcs=cls.dateCancellations;
+    if(dcs&&combos.some(c=>(c.dates||[]).some(d0=>traceRescheduleHistory(dcs,d0).path.includes(cls.date)))) return false;
     const allDates=combos.flatMap(c=>c.dates||[]).sort();
     const lastDate=allDates[allDates.length-1]||"";
     if(!lastDate) return false;
@@ -477,23 +858,16 @@ function getClaseRem(s, classes=[]) {
     const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?effectiveTotal:0);
     const unpaid=Math.max(0,effectiveTotal-paidCount);
     const studentClasses=classes.filter(cls=>cls.students&&cls.students.includes(s.id));
-    // Resolve each original date's real fulfillment date via the canonical
-    // getSlotFulfillmentDate (same definition getAccountCounters uses) instead of
-    // assuming the original date itself — a pending/future recovery must NOT count
-    // here just because the original date already passed. A definitive Combo
-    // cancellation is billed and consumes the slot regardless of date/attendance
-    // (product rule, not extended to Individual — matches getAccountCounters).
+    // "Por dar" is the contractual remainder of what is paid: paidCount minus the slots
+    // actually delivered. Delivery is decided by the SAME per-slot rule Cobros'
+    // Realizadas uses (resolveContractSlotStatus + resolveSlotGiven, terminal-aware):
+    // a paused, undelivered slot stays remaining, a reprogramación is delivered once
+    // (on its fulfillment date), a definitive Combo cancellation consumes the slot.
     const pastGiven=(c.dates||[c.date]).filter(d=>{
       if(!d) return false;
       const clsForDate=studentClasses.find(cls=>cls.date===d);
-      const cancelled=clsForDate?.cancelled;
-      const cancelType=clsForDate?.cancelType;
-      if(c.packType==="combo"&&cancelled&&cancelType==="cancelled") return true;
-      const fulfillmentDate=getSlotFulfillmentDate(d,cancelled,cancelType,clsForDate?.rescheduledTo);
-      if(!fulfillmentDate||fulfillmentDate>=TODAY_DATE) return false;
-      const attEntry=studentClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===fulfillmentDate);
-      if(attEntry&&(attEntry.ausente_reprog||[]).includes(s.id)) return false;
-      return true;
+      const slot=resolveContractSlotStatus(studentClasses,c,d,clsForDate);
+      return resolveSlotGiven(slot,c.packType,d,(clsForDate&&clsForDate.timeEnd)||"23:59",studentClasses,s.id);
     }).length;
     const effectiveUsed=Math.max(c.used||0,pastGiven);
     const porDar=Math.max(0,paidCount-effectiveUsed);
@@ -565,52 +939,26 @@ function getAccountCounters(s, classes=[]) {
         dates=[...dates,..._ex2];
       }
     }
-    // Economic budget for definitively-cancelled slots: a cancellation doesn't erase
-    // the payment obligation, but it must never double-count against the same
-    // paidCount a non-cancelled slot already claimed (nonPausedBefore, below, already
-    // excludes cancelled dates when positioning every OTHER date — untouched). Any
-    // paidCount left over past the N non-cancelled/non-paused slots is what a
-    // cancelled slot can draw on, first-cancelled-first-paid.
-    const _nonCancelledNonPausedCount=dates.filter(dd=>{
-      const cl3=myClasses.find(cls=>cls.date===dd);
-      return !(cl3&&(cl3.paused||cl3.cancelType==="paused"))&&!(cl3&&cl3.cancelled&&cl3.cancelType==="cancelled");
-    }).length;
-    const _cancelledLeftoverBudget=Math.max(0,paidCount-_nonCancelledNonPausedCount);
+    // Paid-status assignment (incl. the economic budget of definitively-cancelled slots:
+    // a cancellation doesn't erase the payment obligation, first-cancelled-first-paid) lives
+    // in resolveSlotPayments. Every slot is read through the shared terminal-aware interpretation (the same
+    // one PagoModal.buildAllDates uses): a chain ending on a paused date counts as
+    // paused here too, never as a pending reprogramación.
+    const slotFor=dd=>resolveContractSlotStatus(myClasses,c,dd,myClasses.find(cls=>cls.date===dd));
+    const paymentAt=resolveSlotPayments(dates,c,paidCount,slotFor);
     return dates.map((d,idx)=>{
       const clsForDate=myClasses.find(cls=>cls.date===d);
-      const cancelInfo=clsForDate?{cancelled:clsForDate.cancelled,cancelType:clsForDate.cancelType,rescheduledTo:clsForDate.rescheduledTo,paused:clsForDate.paused}:{};
-      const isCancelled=!!(cancelInfo.cancelled&&cancelInfo.cancelType==="cancelled");
-      const isReprogWithDate=!!(cancelInfo.cancelled&&cancelInfo.cancelType==="cancelled_reprog"&&cancelInfo.rescheduledTo);
-      const isReprogNoDate=!!(cancelInfo.cancelled&&cancelInfo.cancelType==="cancelled_reprog"&&!cancelInfo.rescheduledTo);
-      const isPaused=!!(cancelInfo.paused||cancelInfo.cancelType==="paused");
+      const slot=slotFor(d);
+      const {isCancelled,isReprogWithDate,isReprogNoDate,isPaused}=slot;
       const timeEnd=clsForDate?.timeEnd||"23:59";
-      const nonPausedBefore=dates.slice(0,idx).filter(dd=>{
-        const cl2=myClasses.find(cls=>cls.date===dd);
-        return !(cl2&&(cl2.paused||cl2.cancelType==="paused"))&&!(cl2&&cl2.cancelled&&cl2.cancelType==="cancelled");
-      }).length;
-      // A cancelled slot's own paid status draws only on the leftover budget past the
-      // non-cancelled slots (first-cancelled-first-paid) — never the same paidCount
-      // unit nonPausedBefore already assigned to a non-cancelled slot above.
-      const cancelledBefore=isCancelled?dates.slice(0,idx).filter(dd=>{
-        const cl2=myClasses.find(cls=>cls.date===dd);
-        return cl2&&cl2.cancelled&&cl2.cancelType==="cancelled";
-      }).length:0;
-      const isPaid=isPaused?false:isCancelled?cancelledBefore<_cancelledLeftoverBudget:nonPausedBefore<paidCount;
+      const {isPaid,isDisplaced}=paymentAt(idx);
       const isDone=isClassDone(d,timeEnd);
       // Fulfillment (isGiven) is evaluated on the effective date — rescheduledTo for a
       // reprogrammed slot, the original date otherwise — never on both, so a slot always
-      // contributes 0 or 1 to realizadas, never 2.
-      const fulfillmentDate=getSlotFulfillmentDate(d,cancelInfo.cancelled,cancelInfo.cancelType,cancelInfo.rescheduledTo);
-      const fulfillAttEntry=fulfillmentDate?myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===fulfillmentDate):null;
-      const wasPresent=fulfillAttEntry?(fulfillAttEntry.present||[]).includes(s.id):false;
-      const wasAusenteDada=fulfillAttEntry?(fulfillAttEntry.ausente_dada||[]).includes(s.id):false;
-      // A definitively-cancelled Combo slot is billed and consumed exactly like a given
-      // one — it counts as Realizada (isGiven=true) even though its own operative label
-      // stays "Cancelada" elsewhere. Individual is deliberately NOT extended (product
-      // decision: cancellation isn't a normal Individual flow) — its cancelled slots
-      // keep the prior behavior of never counting as given.
-      const isGiven=isPaused?false:isCancelled?c.packType==="combo":!fulfillmentDate?false:fulfillAttEntry?(wasPresent||wasAusenteDada):isClassDone(fulfillmentDate,timeEnd);
-      return {date:d,isPaid,isGiven,isPast:isDone,isCancelled,isReprogWithDate,isReprogNoDate,isPaused,packType:c.packType,sourceComboIndex,comboId:c.id,sourceClassId:c.sourceClassId};
+      // contributes 0 or 1 to realizadas, never 2. A definitively-cancelled Combo slot is
+      // billed and consumed like a given one (Individual is deliberately not extended).
+      const isGiven=resolveSlotGiven(slot,c.packType,d,timeEnd,myClasses,s.id);
+      return {date:d,isPaid,isGiven,isPast:isDone,isCancelled,isReprogWithDate,isReprogNoDate,isPaused,isCompensated:slot.isCompensated,isDisplaced,packType:c.packType,sourceComboIndex,comboId:c.id,sourceClassId:c.sourceClassId,terminalDate:slot.terminalDate,reschedulePath:slot.reschedulePath,terminalStatus:slot.terminalStatus};
     });
   });
   // Dedup by (sourceComboIndex + date), NOT date alone: two distinct obligations
@@ -630,13 +978,19 @@ function getAccountCounters(s, classes=[]) {
   // is deliberately NOT extended (cancellation isn't a normal Individual flow) — its
   // cancelled slots keep the prior behavior of never appearing in either counter, and
   // never counting as given.
-  const noPagadas=allDates.filter(d=>!d.isPaid&&!d.isPaused&&(!d.isCancelled||d.packType==="combo")).length;
-  const pagadas=allDates.filter(d=>d.isPaid&&!d.isPaused&&(!d.isCancelled||d.packType==="combo")).length;
+  const noPagadas=allDates.filter(d=>!d.isPaid&&!d.isDisplaced&&(!d.isCancelled||d.packType==="combo")).length;
+  const pagadas=allDates.filter(d=>d.isPaid&&(!d.isCancelled||d.packType==="combo")).length;
   const realizadas=allDates.filter(d=>d.isGiven&&!d.isPaused).length;
   const canceladas=allDates.filter(d=>d.isCancelled).length;
   const reprogramadas=allDates.filter(d=>d.isReprogWithDate).length;
   const aReprogramar=allDates.filter(d=>d.isReprogNoDate).length;
-  const pausadas=allDates.filter(d=>d.isPaused).length;
+  // "Pausada" is the ACTIVE pause: a pause already compensated by a resume stays visible as
+  // history in the lists but no longer counts here.
+  const pausadas=allDates.filter(d=>d.isPaused&&!d.isCompensated).length;
+  // The same active pauses attributed to the class series that owns each contractual slot
+  // (combo.sourceClassId), for consumers that list one entry per series (Dashboard alert).
+  const pausadasBySource={};
+  allDates.forEach(d=>{if(d.isPaused&&!d.isCompensated){const k=String(d.sourceClassId);pausadasBySource[k]=(pausadasBySource[k]||0)+1;}});
   const totalEntitlement=activeCombosForCount.reduce((sum,{combo:c})=>sum+(c.total||0),0);
   // Restantes represents ONLY Combo entitlement — an Individual (any state: programada,
   // realizada, pagada o no) never contributes, by construction (scoped to packType==="combo").
@@ -646,7 +1000,92 @@ function getAccountCounters(s, classes=[]) {
   // slot would be discounted twice (once as "cancelled", once as "realized").
   const realizadasCombo=allDates.filter(d=>d.isGiven&&!d.isPaused&&d.packType==="combo").length;
   const restantes=Math.max(0,totalEntitlementCombo-realizadasCombo);
-  return {noPagadas,pagadas,realizadas,restantes,canceladas,reprogramadas,aReprogramar,pausadas,totalEntitlement,totalEntitlementCombo,realizadasCombo};
+  return {noPagadas,pagadas,realizadas,restantes,canceladas,reprogramadas,aReprogramar,pausadas,pausadasBySource,totalEntitlement,totalEntitlementCombo,realizadasCombo};
+}
+
+// Class-row update for a "_resuming" write (manual Reanudar and the durable planned resume),
+// kept pure so it can be verified in isolation. Never mutates its inputs.
+// - Non-compensated paused entries on/after the resume date go back to Programada (deleted).
+//   A compensated entry is history and is never deleted.
+// - The paused terminals this exact operation replaced are marked compensated, and
+//   compensatedBy is only ever set from a real operation id: an entry that is already
+//   compensated is left as it is (a missing compensatedBy may be back-filled from a real id,
+//   an existing one is never replaced, and null never overwrites it).
+// - New occurrence dates are added once (replaying an operation never duplicates them).
+// - A pending plannedResume is marked completed.
+const applyResumeToClassRow=({c,cd,realId,editDate,dc,occ,plannedResume})=>{
+  const nextDc={...dc};
+  Object.keys(nextDc).forEach(d=>{if(d>=editDate&&nextDc[d]?.cancelType==="paused"&&!nextDc[d].compensated) delete nextDc[d];});
+  (cd._compensatedPausedDates||[]).forEach(d=>{
+    const e=nextDc[d];
+    if(!e||e.cancelType!=="paused") return;
+    if(e.compensated){
+      if(!e.compensatedBy&&cd._resumeOperationId) nextDc[d]={...e,compensatedBy:cd._resumeOperationId};
+      return;
+    }
+    nextDc[d]={...e,compensated:true,compensatedBy:cd._resumeOperationId||null};
+  });
+  const nextOcc=[...occ];
+  (cd._newOccurrenceDates||[]).forEach(d=>{if(!nextOcc.includes(d))nextOcc.push(d);});
+  if(cd._newOccurrenceDates&&cd._newOccurrenceDates.length>0) nextOcc.sort();
+  const nextPlanned=plannedResume&&!plannedResume.completed?{...plannedResume,completed:true}:plannedResume;
+  const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,dateCancellations:_dc2,_compensatedPausedDates:_cpd,_resumeOperationId:_roid,_newOccurrenceDates:_nod,_plannedResumeDate:_prdate,...rest}=cd;
+  return {...c,...rest,id:realId,dateCancellations:nextDc,occurrences:nextOcc,plannedResume:nextPlanned};
+};
+
+// One contractual slot as a group: the single numbered row (original date) followed by one
+// indented "↳" sub-row per reschedule step (historyRows, depth>=1). Shared by Cobros and
+// Familias/portal so both show the same history. Sub-rows carry no number and are never
+// economic rows; the separator is drawn once, after the whole group.
+// Payment-side badge of a slot row: Pagada wins over Pausada, and an unpaid, unpaused slot is
+// Pendiente. Pagada + Pausada are independent dimensions. `isPaid` here is the DISPLAY status
+// (displayPaid): a historical paused date already replaced by a resume still reads Pagada.
+const slotPaymentBadge=({isPaid,isPaused},compact)=>isPaid
+  ?{bg:"#E8F5E9",color:"#2E7D32",label:compact?"Pagada":"✓ Pagada"}
+  :isPaused?{bg:"#FFF3E0",color:"#E65100",label:compact?"Pausada":"⏸ Pausada"}
+  :{bg:"#FFEBEE",color:"#C62828",label:"Pendiente"};
+const SLOT_BADGES={
+  reprogrammed:{bg:"#E8F5E9",color:"#2E7D32",icon:"🔄 ",text:"Reprogramada"},
+  paused:{bg:"#FFF3E0",color:"#E65100",icon:"⏸ ",text:"Pausada"},
+  done:{bg:"#E8F5E9",color:"#2E7D32",icon:"✓ ",text:"Realizada"},
+  scheduled:{bg:"#FFF8E1",color:"#F57F17",icon:"",text:"Programada"},
+  cancelled:{bg:"#FFF0F0",color:"#C62828",icon:"⛔ ",text:"Cancelada"},
+  pending:{bg:"#E3F2FD",color:"#1565C0",icon:"🕐 ",text:"A Reprogramar"},
+};
+function SlotGroup({number,item,dateText,dateTag,circle,left,right,paidNow,fmt,borderColor,dateColor,compact}) {
+  const subRows=(item.historyRows||[]).filter(h=>h.depth>0);
+  const groupPaused=!!item.isPaused;
+  const pill=(bg,color,label,key)=><span key={key} style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:bg,color:color,fontWeight:700,flexShrink:0}}>{label}</span>;
+  return (
+    <div data-slot-group={number} style={{padding:"8px 0",borderBottom:"1px solid "+borderColor}}>
+      <div data-slot-row="main" style={{display:"flex",alignItems:"center",gap:8}}>
+        <div style={{width:circle.size,height:circle.size,borderRadius:"50%",background:circle.bg,border:"2px solid "+circle.border,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <span data-slot-number="" style={{fontSize:circle.numSize,fontWeight:800,color:circle.color}}>{number}</span>
+        </div>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:13,fontWeight:600,color:dateColor}}>{dateText}{dateTag}</div>
+        </div>
+        {pill(left.bg,left.color,left.label,"l")}
+        {pill(right.bg,right.color,right.label,"r")}
+      </div>
+      {subRows.map(h=>{
+        const b=SLOT_BADGES[h.status]||SLOT_BADGES.pending;
+        const txt=groupPaused?"#E65100":h.status==="cancelled"?"#C62828":h.status==="pending"?"#1565C0":"#2E7D32";
+        const paid=h.isPaid||paidNow;
+        const rb=slotPaymentBadge({isPaid:paid,isPaused:h.status==="paused"},compact);
+        const rBg=rb.bg,rCol=rb.color,rLabel=rb.label;
+        return (
+          <div key={h.depth} data-slot-history={h.depth} style={{display:"flex",alignItems:"center",flexWrap:"wrap",gap:"4px 8px",marginTop:6,marginLeft:(compact?34:36)+(h.depth-1)*12,paddingLeft:10,borderLeft:"2px solid "+(groupPaused?"#FFCC80":"#A5D6A7"),minWidth:0}}>
+            <div style={{flex:"1 1 120px",minWidth:0,fontSize:12,fontWeight:600,color:txt,textAlign:"left"}}>↳ {fmt(h.date)}</div>
+            <div style={{display:"flex",gap:8,marginLeft:"auto",flexShrink:0}}>
+              {pill(b.bg,b.color,(compact?"":b.icon)+b.text,"b")}
+              {pill(rBg,rCol,rLabel,"p")}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function IziLogoBlack({ height=34 }) {
@@ -1817,7 +2256,9 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
   // Classes that need rescheduling: ausente_reprog OR cancelled (but not already rescheduled)
   const reprogAlerts=[
     // Classes marked as "A Reprogramar" (cancelled_reprog without date)
-    ...classes.filter(c=>c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo).map(c=>({
+    // Only chains whose terminal really has no destination: a step whose terminal is paused (or
+    // already replaced by a resume) or cancelled is history, read from the same per-card status.
+    ...classes.filter(c=>c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo&&!resolveAgendaCardStatus(c,students,classes,TODAY_DATE).reprogSettledTo).map(c=>({
       cls:c,reason:"a_reprogramar",students:(c.students||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean)
     })).filter(x=>x.students.length>0),
     // Ausente-reprog: student marked as needing reschedule from attendance
@@ -1830,17 +2271,23 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
     }).filter(x=>x.students.length>0),
   ];
   // Paused packages alert
+  // The count is the ACTIVE pauses of the student's contractual slots (the same figure Cobros
+  // shows), never the raw dateCancellations entries: an orphan paused date that belongs to no
+  // combo.dates, or a pause already compensated by a resume, must not inflate it.
   const pauseAlerts=[];
   const seenPaused=new Set();
+  const countersByStudent=new Map();
   classes.filter(c=>c.paused||c.cancelType==="paused").forEach(c=>{
     (c.students||[]).forEach(sid=>{
-      const key=sid+"_"+(c._seriesId||c.id);
+      const seriesKey=c._seriesId||c.id;
+      const key=sid+"_"+seriesKey;
       if(seenPaused.has(key)) return;
       seenPaused.add(key);
       const st=students.find(s=>s.id===sid);
       if(!st) return;
-      const dc=c.dateCancellations||{};
-      const pausedCount=Object.keys(dc).filter(d=>dc[d].cancelType==="paused").length;
+      if(!countersByStudent.has(sid)) countersByStudent.set(sid,getAccountCounters(st,classes).pausadasBySource);
+      const bySource=countersByStudent.get(sid);
+      const pausedCount=bySource[String(seriesKey)]||bySource["undefined"]||0;
       if(pausedCount>0) pauseAlerts.push({student:st,cls:c,pausedCount});
     });
   });
@@ -2670,15 +3117,35 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
 function ResumeModal({ cls, onClose, onResume, students=[], classes=[] }) {
   const [resumeDate,setResumeDate]=useState("");
   const [warning,setWarning]=useState("");
+  const [submitting,setSubmitting]=useState(false);
+  const [resumeIssue,setResumeIssue]=useState("");
 
   const studentId=(cls.students||[])[0];
   const student=students.find(s=>s.id===studentId);
   const combos=(student?.combos||[]).filter(c=>c.total>0&&c.packType!=="mensual");
   const lastCombo=combos[combos.length-1];
 
-  // Count total paused dates in combo
+  // Count total paused dates in combo. Verification finding: a contracted
+  // date reprogrammed forward (possibly through a chain) is never itself the
+  // paused one — its EFFECTIVE terminal is. Resolve each contracted date's
+  // chain and check cancelType at the terminal, not at the original date
+  // (mirrors the same fix already applied to the pause interceptor's
+  // allComboDates, via the same resolveComboDateStatus/resolveRescheduleChain
+  // walk). Two different originals whose chains converge on the same
+  // terminal must count once, not twice — the Set below dedupes that.
+  // `compensated` (set by the _resuming branch after a real resume already
+  // accounted for this terminal) excludes it from being counted again on a
+  // later "Reanudar" click for the same already-resumed package — the
+  // dateCancellations entry itself, and its "paused" history, are never
+  // deleted or altered beyond that one flag.
   const dc=cls.dateCancellations||{};
-  const pausedDates=(lastCombo?.dates||[]).filter(d=>dc[d]&&dc[d].cancelType==="paused");
+  const pausedTerminals=new Set();
+  (lastCombo?.dates||[]).forEach((d0)=>{
+    const {terminal,cancelInfo,broken}=resolveComboDateStatus(dc,d0);
+    if(broken||!terminal) return;
+    if(cancelInfo&&cancelInfo.cancelType==="paused"&&!cancelInfo.compensated) pausedTerminals.add(terminal);
+  });
+  const pausedDates=[...pausedTerminals].sort();
   const pausedCount=pausedDates.length;
   const pausedStay=resumeDate?pausedDates.filter(d=>d<resumeDate):pausedDates;
   const pausedReturn=resumeDate?pausedDates.filter(d=>d>=resumeDate):[];
@@ -2687,8 +3154,18 @@ function ResumeModal({ cls, onClose, onResume, students=[], classes=[] }) {
   const validate=(date)=>{
     setResumeDate(date);
     if(!date){setWarning("");return;}
-    // Check if there are already non-paused programmed dates after resume date
-    const existingAfter=(lastCombo?.dates||[]).filter(d=>d>=date&&(!dc[d]||dc[d].cancelType!=="paused"));
+    // Check if there are already non-paused programmed dates after resume date.
+    // Verification finding: comparing raw combo.dates strings against dc[d]
+    // misreads a reprogrammed-away original as "still programmed on that
+    // date" — resolve each contracted date to its effective terminal first;
+    // only a terminal with no dateCancellations entry at all (a genuinely
+    // live, unpaused class) counts as "already programmed after this date".
+    // Informational only — does not gate handleConfirm/the button below.
+    const existingAfter=(lastCombo?.dates||[]).filter(d0=>{
+      const {terminal,cancelInfo,broken}=resolveComboDateStatus(dc,d0);
+      if(broken||!terminal) return false;
+      return terminal>=date&&cancelInfo===null;
+    });
     if(existingAfter.length>0){
       setWarning("Ya existen "+existingAfter.length+" clases programadas para este paquete después de la fecha seleccionada. Revisa el calendario antes de continuar.");
     } else {
@@ -2696,14 +3173,56 @@ function ResumeModal({ cls, onClose, onResume, students=[], classes=[] }) {
     }
   };
 
-  const handleConfirm=()=>{
-    if(!resumeDate) return;
-    // Count only paused dates BEFORE the resume date
-    const pausedBeforeResume=pausedDates.filter(d=>d<resumeDate).length;
-    // If resume is after all paused dates, count all
-    const effectivePausedCount=pausedBeforeResume>0?pausedBeforeResume:pausedCount;
-    onResume({cls,resumeDate,pausedCount:effectivePausedCount});
-    onClose();
+  // Maps runResumeOperation's structured result to a message this modal can
+  // show without ever claiming success it hasn't verified. Only "completed"
+  // closes the modal — every other outcome (noop aside, which reads as
+  // "nothing to do" rather than a problem) keeps it open with a clear
+  // explanation, so the coach never wonders whether Reanudar actually worked.
+  const describeResumeIssue=(result)=>{
+    if(!result) return "No se pudo confirmar la reanudación (sin respuesta). Intentá de nuevo.";
+    if(result.status==="noop") return ""; // nothing to do — treated as success below, not an issue
+    const where=result.key==="classes"?"la clase":result.key==="students"?"el paquete del alumno":"la operación";
+    switch(result.status){
+      case "conflict": return "Hay un cambio más reciente en "+where+" que todavía no se sincronizó. Revisá el aviso de sincronización y volvé a intentar.";
+      case "retrying": return "La conexión falló al confirmar "+where+". Se reintentará solo en segundo plano — volvé a intentar en unos segundos.";
+      case "pending": return "La pausa todavía no se reflejó localmente. Esperá un momento y volvé a intentar.";
+      case "failed": case "timeout": case "cancelled": return "No se pudo confirmar "+where+" ("+result.status+"). Intentá de nuevo.";
+      case "invalid-operation": return "No pudimos reanudar porque algunas fechas se superponen. No se realizó ningún cambio.";
+      case "error": return result.reason==="no-free-dates"?"No se encontraron fechas libres para las clases de reemplazo.":"No se encontró a los alumnos de esta clase. Revisá el paquete antes de reintentar.";
+      default: return "No se pudo confirmar la reanudación ("+result.status+"). Intentá de nuevo.";
+    }
+  };
+
+  const handleConfirm=async()=>{
+    if(!resumeDate||submitting) return; // guard against double-click while a previous confirm is still in flight
+    setSubmitting(true);
+    setResumeIssue("");
+    // Verification finding: this used to fall back to "no paused date
+    // precedes resumeDate? use ALL of them" — silently submitting
+    // replacement dates the modal's OWN display (pausedStay/replacementCount
+    // above) never showed the coach. pausedStay is exactly "dates before
+    // resumeDate" with no fallback — submit precisely what's displayed, an
+    // empty set included (case E: every paused date returns to Programada
+    // with zero replacements, handled by runResumeOperation).
+    const result=await onResume({cls,resumeDate,pausedCount:pausedStay.length,pausedDates:pausedStay});
+    if(result&&(result.status==="completed"||result.status==="noop")){
+      // Section 5: the date the coach just picked is never silently
+      // dropped — if a resumeOperation already existed for these exact
+      // paused dates (a retry after conflict/F5/another tab) with a
+      // DIFFERENT resumeDate, that original date was the one actually
+      // used (its already-generated replacement dates depend on it), and
+      // that fact is surfaced here explicitly rather than staying quiet.
+      if(result.resumeDateOverridden&&result.effectiveResumeDate){
+        alert("Esta reanudación ya se había registrado con la fecha "+fmtDate(result.effectiveResumeDate)+". Se mantuvo esa fecha para no duplicar clases de reemplazo.");
+      }
+      onClose();
+      return;
+    }
+    // Never close on conflict/retrying/failed/timeout/cancelled/pending/
+    // error/undefined — the modal stays open and says exactly why, instead
+    // of silently claiming a success that hasn't been verified.
+    setSubmitting(false);
+    setResumeIssue(describeResumeIssue(result));
   };
 
   return (
@@ -2751,10 +3270,17 @@ function ResumeModal({ cls, onClose, onResume, students=[], classes=[] }) {
           </div>
         )}
 
+        {/* Resume issue — never a silent failure; the modal stays open whenever this shows */}
+        {resumeIssue&&(
+          <div style={{background:"#FFF3E0",border:"1.5px solid #FFB74D",borderRadius:12,padding:"12px 14px",marginBottom:16,fontSize:12,color:"#E65100",lineHeight:1.4}}>
+            ⚠️ {resumeIssue}
+          </div>
+        )}
+
         {/* Buttons */}
         <div style={{display:"flex",gap:10}}>
-          <button onClick={onClose} style={{flex:1,padding:"14px",borderRadius:14,border:"1.5px solid #DDE3F0",background:"#fff",cursor:"pointer",fontSize:14,color:"#6B7BAD",fontWeight:700}}>Cancelar</button>
-          <button onClick={handleConfirm} disabled={!resumeDate} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:!resumeDate?"#ccc":"linear-gradient(135deg,#2E7D32,#43A047)",color:"#fff",cursor:!resumeDate?"not-allowed":"pointer",fontSize:14,fontWeight:800,opacity:!resumeDate?0.5:1}}>▶ Reanudar paquete</button>
+          <button onClick={onClose} disabled={submitting} style={{flex:1,padding:"14px",borderRadius:14,border:"1.5px solid #DDE3F0",background:"#fff",cursor:submitting?"not-allowed":"pointer",fontSize:14,color:"#6B7BAD",fontWeight:700,opacity:submitting?0.6:1}}>Cancelar</button>
+          <button onClick={handleConfirm} disabled={!resumeDate||submitting} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:(!resumeDate||submitting)?"#ccc":"linear-gradient(135deg,#2E7D32,#43A047)",color:"#fff",cursor:(!resumeDate||submitting)?"not-allowed":"pointer",fontSize:14,fontWeight:800,opacity:(!resumeDate||submitting)?0.5:1}}>{submitting?"Reanudando…":"▶ Reanudar paquete"}</button>
         </div>
       </div>
     </div>
@@ -3145,7 +3671,7 @@ function AttModal({ att, students, onAttendance, onClose }) {
   );
 }
 
-function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAddStudent, courts=[], packages=[], onUpdateStudent, onDeleteClass, pendingReprog, onClearPendingReprog, onAddPackage, onRefresh }) {
+function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAddStudent, courts=[], packages=[], onUpdateStudent, onUpdateStudentsBatch, isClassesWriteSettled, onDeleteClass, pendingReprog, onClearPendingReprog, onAddPackage, onRefresh }) {
   const [selDay,setSelDay]=useState(TODAY_DATE);
   const [viewYear,setViewYear]=useState(new Date().getFullYear());
   const [viewMonth,setViewMonth]=useState(new Date().getMonth());
@@ -3196,65 +3722,273 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
   const [showCancel,setShowCancel]=useState(null);
   const [showPause,setShowPause]=useState(null);
   const [showResume,setShowResume]=useState(null);
-  const [pendingResume,setPendingResume]=useState(null);
 
-  // When pendingResume is set, execute resume on NEXT render (fresh state)
+  // Maps a settled write's CAS status (confirmed/already_applied/conflict/
+  // retrying/failed/timeout/cancelled/skipped-*) to runResumeOperation's own
+  // structured vocabulary. `key` says WHICH write this outcome belongs to,
+  // so a caller can tell "students never confirmed" apart from "students
+  // confirmed but classes didn't".
+  const classifyWriteOutcome=(outcome,key)=>{
+    if(outcome&&(outcome.status==="confirmed"||outcome.status==="already_applied")) return null; // ok — no problem to report
+    return {status:outcome?.status||"unknown",key};
+  };
+
+  // Shared resume orchestrator — used by BOTH the manual "Reanudar" button
+  // (ResumeModal.onResume, below) and the durable-planned-resume detection
+  // effect (pause with an upfront resume date), right after this. Single
+  // source of truth for: idempotent operation reuse via resumeOperations,
+  // ONE batched students write covering every affected student (built from
+  // the CURRENT committed state via a producer, never a stale `students`
+  // prop — see commitStudentsBatch's own comment), waiting for that write's
+  // real confirmation before ever touching classes, waiting for classes'
+  // OWN real confirmation too before ever reporting success, and the
+  // classes-side compensated/occurrences payload. Neither caller touches
+  // onUpdateStudent, setTimeout, or _occOnly directly anymore. ALWAYS
+  // returns a structured result — never undefined — so a caller (ResumeModal)
+  // can tell a genuine completion from every other outcome and never close
+  // claiming success it hasn't verified.
+  const runResumeOperation=async({cls:rCls,resumeDate:rDate,pausedCount:pCount,pausedDates:pDates})=>{
+    const realId=rCls._seriesId||rCls.id;
+    const studentId0=(rCls.students||[])[0];
+
+    // Read-only audit of this class's resumeOperations: a stored operation whose replacement dates
+    // collide with dates a contracted slot already occupies is never trusted, and nothing is written
+    // for it. Returns the safe rejection, or null when every operation is valid. The students
+    // producer only reads the latest committed state and yields nothing, so it never commits.
+    const auditResumeOperations=async()=>{
+      const dcA=rCls.dateCancellations||{};
+      let invalid=false;
+      onUpdateStudentsBatch((latest)=>{
+        const student0=latest.find(s=>s.id===studentId0);
+        if(!student0) return null;
+        const combosAll=(student0.combos||[]).filter(c=>c.total>0&&c.packType!=="mensual");
+        combosAll.forEach(c=>(c.resumeOperations||[]).forEach(op=>{
+          if(op.classId===realId&&!auditResumeOperation(op,combosAll,dcA).valid) invalid=true;
+        }));
+        return null;
+      });
+      return invalid?{status:"invalid-operation",reason:"overlapping-dates"}:null;
+    };
+
+    if(pCount===0){
+      // Section 5: pCount===0 alone never proves "safe to resume" — it only
+      // means the caller's OWN combo-date resolution found nothing left to
+      // compensate, which can mean several different things. Distinguish
+      // them using dateCancellations directly — the reliable per-occurrence
+      // source of truth for a recurring class — rather than a class-wide
+      // `.paused`/`.cancelType` flag: those only ever reflect ONE specific
+      // occurrence's expanded virtual card (accurate when `rCls` IS that
+      // card, e.g. the manual ResumeModal flow, but never set on the RAW
+      // class row the durable-detection effect passes in, since a
+      // recurring class's pause state is inherently per-date, not
+      // class-wide).
+      const dc=rCls.dateCancellations||{};
+      const pausedEntries=Object.entries(dc).filter(([,e])=>e&&e.cancelType==="paused");
+      if(pausedEntries.length===0){
+        // C: genuinely nothing to do — this class's students have no
+        // paused dateCancellations entry at all right now.
+        return {status:"noop",reason:"not-paused"};
+      }
+      const activePaused=pausedEntries.filter(([,e])=>!e.compensated);
+      if(activePaused.length===0){
+        // A: every paused date is already compensated — a previous resume completed. The
+        // second attempt is a true noop: no students write, no classes write, nothing in
+        // dateCancellations/resumeOperations/dates/occurrences changes. The only thing that
+        // can still need a classes write is a durable plannedResume that was never marked
+        // completed; then (and only then) the same _resuming write completes it, without
+        // touching any compensated entry (applyResumeToClassRow never rewrites those).
+        // An invalid stored operation is reported instead of a silent noop.
+        const invalidOp=await auditResumeOperations();
+        if(invalidOp) return invalidOp;
+        const pendingPlanned=rCls.plannedResume&&!rCls.plannedResume.completed;
+        if(!pendingPlanned) return {status:"noop",reason:"already-compensated"};
+        const classesResult=await onSaveClass({...rCls,date:rDate,_resuming:true,cancelled:false,cancelType:null,paused:false,applyToAll:false,_compensatedPausedDates:[],_resumeOperationId:null,_newOccurrenceDates:[]},true);
+        const classesProblem=classifyWriteOutcome(classesResult,"classes");
+        return classesProblem||{status:"completed"};
+      }
+      // Section 4 (partición por resumeDate): pDates already excludes any
+      // active-paused date >= rDate (only dates strictly before rDate ever
+      // need a replacement — see resolvePausedDatesForResume/ResumeModal,
+      // neither of which falls back to "use all" anymore). pCount===0 here
+      // with active-paused entries still outstanding means one of two
+      // things, and mixing them up would either resume too early (B) or
+      // stall forever on a legitimate case (E):
+      if(activePaused.some(([d])=>d<rDate)){
+        // B: at least one active-paused date IS before rDate, so the
+        // caller's OWN resolution should have surfaced it as pausedDates —
+        // it didn't, meaning this call's view is stale relative to that
+        // computation (a genuine race). Never blindly resume against
+        // evidence we can't reconcile — wait for a fresher snapshot (the
+        // durable-detection effect naturally retries on the next classes
+        // change; a manual click gets fresh state on its next render).
+        return {status:"pending",reason:"pause-not-yet-visible"};
+      }
+      // E: every active-paused date is >= rDate — the coach picked a resume
+      // date early enough that NONE of the still-paused sessions need a
+      // replacement; they simply "vuelven a Programada". The _resuming
+      // interceptor's own `d>=editDate` cleanup already un-pauses them
+      // (deletes their dateCancellations entry) unconditionally — nothing
+      // needs to be passed as _compensatedPausedDates for this branch, and
+      // _newOccurrenceDates stays empty: zero replacements, by design, not
+      // by an "use all paused dates" fallback.
+      const classesResultE=await onSaveClass({...rCls,date:rDate,_resuming:true,cancelled:false,cancelType:null,paused:false,applyToAll:false,_compensatedPausedDates:[],_resumeOperationId:null,_newOccurrenceDates:[]},true);
+      const classesProblemE=classifyWriteOutcome(classesResultE,"classes");
+      return classesProblemE||{status:"completed"};
+    }
+
+    const dowSet_R=resumeDowSet(rCls.days);
+    const dcR=rCls.dateCancellations||{};
+    let genFailed=false;
+    let invalidOp=false;
+
+    // Section 2: build the operation AND the updated students entirely
+    // inside this producer, against `latest` — the state commitStudentsBatch
+    // itself reads synchronously from latestStudentsRef at call time — never
+    // from the `students` prop closure, which could be stale relative to a
+    // payment/attendance/reconcile that landed after this render.
+    const {promise,operation}=onUpdateStudentsBatch((latest)=>{
+      const student0=latest.find(s=>s.id===studentId0);
+      const combo0=(student0?.combos||[]).filter(c=>c.total>0&&c.packType!=="mensual");
+      const lastCombo0=combo0[combo0.length-1];
+
+      // Idempotencia durable (Alternativa C): antes de generar fechas
+      // nuevas, buscar si el combo YA tiene una operación de reanudación
+      // registrada para esta clase y exactamente este conjunto de
+      // pausedDates — sobrevive a F5, a un conflict/Descartar en "classes"
+      // que dejó "students" ya confirmado, y a dos pestañas (la que pierde
+      // el CAS reconcilia y encuentra la operación que la otra ya escribió).
+      // pDates ya viene ordenado/deduplicado por el llamador.
+      const existingOp=(lastCombo0?.resumeOperations||[]).find(op=>op.classId===realId&&JSON.stringify(op.pausedDates)===JSON.stringify(pDates));
+
+      let operation;
+      if(existingOp){
+        operation=existingOp; // reutilizar id y replacementDates — nunca generar un segundo lote
+        // Section 5: `existingOp` matches on classId+pausedDates only, never
+        // on resumeDate — a retry (after a conflict, F5, or a second tab)
+        // for the SAME paused dates may legitimately carry a DIFFERENT
+        // resumeDate than the one the original operation was computed for.
+        // Silently honoring the NEW date here would desync it from the
+        // ALREADY-generated replacementDates (computed relative to the
+        // ORIGINAL date) — and silently keeping the OLD date would ignore
+        // what the user just chose without telling anyone. Neither happens:
+        // the original date is reused deterministically (never a second,
+        // possibly-overlapping batch of replacement dates), and the
+        // mismatch is reported back on the result so the caller can inform
+        // the user explicitly instead of staying silent about it.
+      } else {
+        const newDates=computeResumeReplacementDates({combos:combo0,dates:lastCombo0?.dates||[],dc:dcR,dowSet:dowSet_R,resumeDate:rDate,pCount});
+        if(!newDates){ genFailed=true; return null; }
+        operation={id:crypto.randomUUID(),classId:realId,pausedDates:pDates,replacementDates:newDates,resumeDate:rDate,createdAt:Date.now()};
+      }
+
+      // Defense: the operation about to be committed (new, or reused from a previous attempt) must not
+      // put a replacement on a date another slot occupies. Nothing is written when it does.
+      if(lastCombo0){
+        const projected=combo0.map(c=>c===lastCombo0?applyOperationToCombo(c,operation):c);
+        if(!auditResumeOperation(operation,projected,dcR).valid){ invalidOp=true; return null; }
+      }
+
+      let updatedCount=0;
+      const next=latest.map(s=>{
+        if(!(rCls.students||[]).includes(s.id)) return s;
+        const combos2=[...(s.combos||[])];
+        let lastIdx=-1;
+        for(let ci=combos2.length-1;ci>=0;ci--){
+          if(combos2[ci].dates&&combos2[ci].packType!=="mensual"){lastIdx=ci;break;}
+        }
+        if(lastIdx===-1) return s;
+        const combo=combos2[lastIdx];
+        combos2[lastIdx]=applyOperationToCombo(combo,operation);
+        updatedCount++;
+        return {...s,combos:combos2};
+      });
+      if(updatedCount===0) return null; // no affected student found in `latest` — nothing to commit
+      return {next,operation};
+    });
+
+    if(!operation){
+      // D: the producer found none of rCls.students in the current
+      // committed state — a genuine data inconsistency (e.g. the class
+      // references students that no longer exist). Never write classes.
+      if(invalidOp) return {status:"invalid-operation",reason:"overlapping-dates"};
+      return {status:"error",reason:genFailed?"no-free-dates":"no-affected-students"};
+    }
+
+    // Section 5: `operation.resumeDate` is the single authoritative date
+    // from here on — whatever this specific call's caller passed as `rDate`
+    // is only ever used to (a) look up/generate `operation` above and (b)
+    // detect a mismatch to report. The class row itself is always edited at
+    // `operation.resumeDate`, so a reused operation's ALREADY-generated
+    // replacementDates (computed relative to that original date) never
+    // desync from the editDate the interceptor un-pauses from.
+    const resumeDateOverridden=operation.resumeDate!==rDate;
+
+    // Orden durable: nunca marcar "classes" como compensated sin haber
+    // confirmado "students" primero — una sola escritura, una sola promesa
+    // real. Ante conflict/failed/timeout/cancelled/retrying, no se toca
+    // "classes" — la UI sigue mostrando la pausa como pendiente y un
+    // reintento posterior descubre la operación ya escrita en vez de
+    // generar reemplazos nuevos.
+    const studentsResult=await promise;
+    const studentsProblem=classifyWriteOutcome(studentsResult,"students");
+    if(studentsProblem) return {...studentsProblem,resumeOperationId:operation.id,resumeDateOverridden,effectiveResumeDate:operation.resumeDate};
+
+    // Recién ahora, con "students" realmente confirmado: compensated +
+    // compensatedBy + des-pausa + las nuevas occurrences, todo en la misma
+    // escritura durable de "classes" — y su propia promesa real se espera
+    // también, en vez de asumir éxito apenas se la despacha.
+    const classesResult=await onSaveClass({...rCls,date:operation.resumeDate,_resuming:true,cancelled:false,cancelType:null,paused:false,applyToAll:false,_compensatedPausedDates:operation.pausedDates,_resumeOperationId:operation.id,_newOccurrenceDates:operation.replacementDates},true);
+    const classesProblem=classifyWriteOutcome(classesResult,"classes");
+    if(classesProblem) return {...classesProblem,resumeOperationId:operation.id,resumeDateOverridden,effectiveResumeDate:operation.resumeDate};
+
+    return {status:"completed",resumeOperationId:operation.id,resumeDateOverridden,effectiveResumeDate:operation.resumeDate};
+  };
+
+  // Section 4: "pausar con fecha" no longer relies on transient pendingResume
+  // React state (lost on any F5/remount before this effect got a chance to
+  // run — see PauseModal's onPause below, which now writes the resume intent
+  // DURABLY onto the class row itself as `plannedResume`, in the SAME CAS
+  // write as the pause). This effect is the recovery/completion path: it
+  // runs on mount and whenever classes changes (a fresh reconcile from
+  // another tab/device can bring in a NEW incomplete plannedResume too),
+  // scans for any class with an incomplete plannedResume, and delegates to
+  // the SAME runResumeOperation orchestrator the manual button uses.
+  // plannedResumeInFlightRef prevents starting a second concurrent attempt
+  // for the same plannedResume.id while one is already awaiting; it does NOT
+  // prevent retrying on a LATER classes change if that attempt returned
+  // anything other than "completed" — the next state change (or the
+  // student manually clicking "Reanudar") gets another chance, and
+  // resumeOperations' own idempotency guarantees no duplicate replacements
+  // regardless of how many attempts it takes.
+  const plannedResumeInFlightRef=useRef(new Set());
   useEffect(()=>{
-    if(!pendingResume) return;
-    const {cls:prCls,rDate:prDate}=pendingResume;
-    setPendingResume(null);
-    const parentPR=(rawClasses||classes).find(c=>c.id===(prCls._seriesId||prCls.id));
-    if(!parentPR) return;
-    const allOccPR=(parentPR.occurrences||[]).sort();
-    const pausedBeforePR=allOccPR.filter(d=>{
-      const dc=parentPR.dateCancellations||{};
-      return dc[d]&&dc[d].cancelType==="paused"&&d<prDate;
+    // Verification finding: this used to act on `plannedResume` the instant
+    // it showed up in local `classes` state — which happens as soon as the
+    // pause write's OPTIMISTIC update commits, well before its CAS write to
+    // "classes" is actually confirmed/already_applied server-side. Starting
+    // to modify `students` (new replacement dates, resumeOperations) on top
+    // of a pause that might still conflict/retry/fail/timeout/get cancelled
+    // could commit a resume for a pause that classes never durably recorded.
+    // isClassesWriteSettled asks the REAL outbox — never proceeds while this
+    // identity's "classes" key has any conflict/quarantine/volatile-unsafe/
+    // pendingOwn write outstanding. Nothing forces a re-render when a
+    // pending write later confirms (that's plain module/localStorage
+    // bookkeeping, no setState), so an attempt skipped here is retried on
+    // the next natural classes/students/rawClasses change (a manual action,
+    // a periodic reconcile, a tab-visibility resync) — never on a timer.
+    if(isClassesWriteSettled&&!isClassesWriteSettled()) return;
+    const source=rawClasses||classes;
+    source.forEach(c=>{
+      const pr=c.plannedResume;
+      if(!pr||pr.completed) return;
+      if(plannedResumeInFlightRef.current.has(pr.id)) return;
+      plannedResumeInFlightRef.current.add(pr.id);
+      const pDatesPR=resolvePausedDatesForResume(c,students,pr.resumeDate);
+      runResumeOperation({cls:c,resumeDate:pr.resumeDate,pausedCount:pDatesPR.length,pausedDates:pDatesPR}).finally(()=>{
+        plannedResumeInFlightRef.current.delete(pr.id);
+      });
     });
-    const pCountPR=pausedBeforePR.length;
-    if(pCountPR===0){
-      onSaveClass({...prCls,date:prDate,_resuming:true,cancelled:false,cancelType:null,paused:false,applyToAll:false},true);
-      return;
-    }
-    const DAY_MAP_PR={"Dom":0,"Lun":1,"Mar":2,"Mie":3,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
-    const dowPR=new Set((prCls.days||[]).map(d=>DAY_MAP_PR[d]));
-    const sid0=(prCls.students||[])[0];
-    const st0=students.find(s=>s.id===sid0);
-    const c0=(st0?.combos||[]).filter(c=>c.total>0&&c.packType!=="mensual");
-    const lc0=c0[c0.length-1];
-    const lastCD=lc0?.dates?lc0.dates[lc0.dates.length-1]:null;
-    const startPR=lastCD&&lastCD>=prDate?lastCD:prDate;
-    const newDatesPR=[];
-    let curPR=new Date(startPR+"T12:00:00");
-    if(lastCD&&lastCD>=prDate) curPR.setDate(curPR.getDate()+1);
-    while(newDatesPR.length<pCountPR){
-      if(dowPR.size===0||dowPR.has(curPR.getDay())){
-        newDatesPR.push(curPR.getFullYear()+"-"+String(curPR.getMonth()+1).padStart(2,"0")+"-"+String(curPR.getDate()).padStart(2,"0"));
-      }
-      curPR.setDate(curPR.getDate()+1);
-    }
-    (prCls.students||[]).forEach(sid=>{
-      const st=students.find(s=>s.id===sid);
-      if(!st) return;
-      const combos2=[...(st.combos||[])];
-      let lastIdx=-1;
-      for(let ci=combos2.length-1;ci>=0;ci--){if(combos2[ci].dates&&combos2[ci].packType!=="mensual"){lastIdx=ci;break;}}
-      if(lastIdx===-1) return;
-      const combined=[...new Set([...combos2[lastIdx].dates,...newDatesPR])].sort();
-      combos2[lastIdx]={...combos2[lastIdx],dates:combined};
-      onUpdateStudent({...st,combos:combos2});
-    });
-    const realIdPR=prCls._seriesId||prCls.id;
-    onSaveClass({...prCls,date:prDate,_resuming:true,cancelled:false,cancelType:null,paused:false,applyToAll:false},true);
-    setTimeout(()=>{
-      const pc=(rawClasses||classes).find(c=>c.id===realIdPR);
-      if(pc){
-        const occ=[...(pc.occurrences||[])];
-        newDatesPR.forEach(d=>{if(!occ.includes(d))occ.push(d);});
-        occ.sort();
-        onSaveClass({...pc,occurrences:occ,applyToAll:true,_occOnly:true},true);
-      }
-    },150);
-  },[pendingResume]);
+  },[classes,rawClasses,students]);
   // Auto-open reprog modal if navigated from dashboard
   useEffect(()=>{if(pendingReprog){setShowCancel(pendingReprog);onClearPendingReprog&&onClearPendingReprog();}},[pendingReprog]); // class to reschedule
 
@@ -3399,31 +4133,35 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
               </div>
             ):dayC.map(c=>{
               const isCancelled=c.cancelled&&c.cancelType==="cancelled";
-              const isReprogWithDate=c.cancelled&&c.cancelType==="cancelled_reprog"&&c.rescheduledTo;
-              const isReprogNoDate=c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo;
+              const agSt=resolveAgendaCardStatus(c,students,classes,TODAY_DATE);
+              const agMenu=resolveAgendaMenu(c,agSt,WEEK_AGO);
+              const reprogTo=c.rescheduledTo||agSt.reprogSettledTo;
+              const isReprogWithDate=c.cancelled&&c.cancelType==="cancelled_reprog"&&reprogTo;
+              const isReprogNoDate=c.cancelled&&c.cancelType==="cancelled_reprog"&&!reprogTo;
               const isPaused=c.paused||c.cancelType==="paused";
               const cardBg=isPaused?"#FFF3E0":isCancelled?"#FFF0F0":isReprogWithDate?"#E8F5E9":isReprogNoDate?"#E3F2FD":isNextComboPending(c,students)?"#F5F5F5":C.white;
               return (
-              <div key={c._virtualId||c.id} onClick={()=>setHighlightCls((c._virtualId||c.id)===highlightCls?null:(c._virtualId||c.id))} style={{background:cardBg,borderRadius:16,padding:"12px 14px",marginBottom:10,boxShadow:highlightCls===(c._virtualId||c.id)?"0 4px 16px rgba(44,94,247,0.18)":"0 2px 10px rgba(44,94,247,0.07)",border:"1.5px solid "+(highlightCls===(c._virtualId||c.id)?C.blue2:isPaused?"#FFB74D":isCancelled?"#FFCDD2":isReprogWithDate?"#A5D6A7":isReprogNoDate?"#90CAF9":isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:"pointer",opacity:isNextComboPending(c,students)?0.75:1,transition:"box-shadow 0.15s,border 0.15s"}}>
+              <div key={c._virtualId||c.id} onClick={agMenu.readOnly?undefined:()=>setHighlightCls((c._virtualId||c.id)===highlightCls?null:(c._virtualId||c.id))} style={{background:cardBg,borderRadius:16,padding:"12px 14px",marginBottom:10,boxShadow:highlightCls===(c._virtualId||c.id)?"0 4px 16px rgba(44,94,247,0.18)":"0 2px 10px rgba(44,94,247,0.07)",border:"1.5px solid "+(highlightCls===(c._virtualId||c.id)?C.blue2:isPaused?"#FFB74D":isCancelled?"#FFCDD2":isReprogWithDate?"#A5D6A7":isReprogNoDate?"#90CAF9":isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:agMenu.readOnly?"default":"pointer",opacity:isNextComboPending(c,students)?0.75:1,transition:"box-shadow 0.15s,border 0.15s"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:4}}>
                       <div style={{fontWeight:800,fontSize:15,color:isPaused?"#E65100":isCancelled?"#C62828":isReprogNoDate?"#1565C0":isReprogWithDate?"#2E7D32":isNextComboPending(c,students)?"#9E9E9E":C.text}}>{c.title}{isPaused?" (Pausada)":isCancelled?" (Cancelada)":isReprogWithDate?" (Reprogramada)":isReprogNoDate?" (A Reprogramar)":""}</div>
+                      {agendaPaymentChip(agSt.payment,10)}
                       {isNextComboPending(c,students)&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#EEEEEE",color:"#757575",fontWeight:700}}>Sin pagar</span>}
                       {(()=>{const log=(c.attendanceLog||[]).find(e=>e.date===c.date);if(!log)return null;const dC=(log.ausente_dada||[]).length;const nC=(log.ausente_reprog||[]).length;if(!dC&&!nC)return null;return(<>{dC>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ Ausente-Dada</span>}{nC>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF8E1",color:"#F57F17",fontWeight:700}}>↩ A Reprogramar</span>}</>);})()}
                     </div>
-                    {isReprogWithDate&&c.rescheduledTo&&<div style={{fontSize:11,color:"#2E7D32",marginBottom:4}}>📅 Reprogramada al {fmtDate(c.rescheduledTo)}</div>}
+                    {isReprogWithDate&&reprogTo&&<div style={{fontSize:11,color:"#2E7D32",marginBottom:4}}>📅 Reprogramada al {fmtDate(reprogTo)}</div>}
                     <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                       {(c.days||[]).map(d=><span key={d} style={{fontSize:11,padding:"2px 7px",borderRadius:20,background:C.blueL,color:C.blue2,fontWeight:600}}>{d}</span>)}
                       <span style={{fontSize:12,color:C.mutedDark}}>{c.time+(c.timeEnd?" - "+c.timeEnd:"")} · {c.court}</span>
                     </div>
                   </div>
-                  <div style={{flexShrink:0}}>
+                  {!agMenu.readOnly&&<div style={{flexShrink:0}}>
                     <div style={{display:"flex",alignItems:"center",gap:4,background:highlightCls===(c._virtualId||c.id)?C.blue2:"#F0F2FF",borderRadius:20,padding:"5px 10px"}}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill={highlightCls===(c._virtualId||c.id)?"#fff":C.blue2}><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
                       <span style={{fontSize:10,fontWeight:700,color:highlightCls===(c._virtualId||c.id)?"#fff":C.blue2}}>{highlightCls===(c._virtualId||c.id)?"Cerrar":"Opciones"}</span>
                     </div>
-                  </div>
+                  </div>}
                 </div>
                 <div style={{display:"flex",gap:4,marginTop:8,flexWrap:"wrap"}}>
                   {(c.students||[]).map(sid=>{const st=students.find(s=>s.id===sid);if(!st)return null;const attSt=getAttendanceChipStatus(c,sid);const attStyle=attSt&&ATT_CHIP_STYLE[attSt];return (
@@ -3441,6 +4179,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
           {highlightCls&&(()=>{
             const c=classes.find(x=>(x._virtualId||x.id)===highlightCls);
             if(!c) return null;
+            if(resolveAgendaMenu(c,resolveAgendaCardStatus(c,students,classes,TODAY_DATE),WEEK_AGO).readOnly) return null;
             return (
               <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.45)",zIndex:99,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 16px"}} onClick={()=>setHighlightCls(null)}>
                 <div style={{background:C.white,borderRadius:24,padding:"20px 20px 24px",width:"100%",boxShadow:"0 20px 60px rgba(0,0,0,0.25)"}} onClick={e=>e.stopPropagation()}>
@@ -3471,7 +4210,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                       {label:"Editar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,action:()=>{setEditCls(c);setHighlightCls(null);},disabled:false,color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
                       {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt({...c,attendanceLog:c.attendanceLog||[]});setHighlightCls(null);},disabled:isNextComboPending(c,students),color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
                       {label:c.paused||c.cancelType==="paused"?"▶ Reanudar":"⏸ Pausar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{c.paused||c.cancelType==="paused"?<polygon points="5 3 19 12 5 21 5 3"/>:<g><line x1="10" y1="4" x2="10" y2="20"/><line x1="14" y1="4" x2="14" y2="20"/></g>}</svg>,action:()=>{if(c.paused||c.cancelType==="paused"){setShowResume(c);}else{setShowPause(c);}setHighlightCls(null);},disabled:c.date<WEEK_AGO,color:c.date<WEEK_AGO?"#ccc":c.paused||c.cancelType==="paused"?"linear-gradient(135deg,#2E7D32,#43A047)":"linear-gradient(135deg,#E65100,#FF8F00)"},
-                      {label:c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo?"Asignar fecha":c.cancelled&&c.cancelType==="cancelled_reprog"&&c.rescheduledTo?"Volver a fecha original":c.cancelled?"Reactivar":"Reprogramar / Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="15" x2="15" y2="15"/></svg>,action:()=>{if(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo){setShowCancel(c);}else if(c.cancelled){onSaveClass({...c,cancelled:false,cancelType:null,rescheduledTo:null,applyToAll:false,_reactivating:true},true);}else{setShowCancel(c);}setHighlightCls(null);},disabled:(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo)?false:c.date<WEEK_AGO,color:(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo)?"linear-gradient(135deg,#1565C0,#42A5F5)":c.date<WEEK_AGO?"#ccc":c.cancelled&&!c.rescheduledTo?"linear-gradient(135deg,#1565C0,#42A5F5)":c.cancelled?"linear-gradient(135deg,#1565C0,#42A5F5)":"linear-gradient(135deg,#E65100,#FF8F00)"},
+                      {label:c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo?"Asignar fecha":c.cancelled?"Reactivar":"Reprogramar / Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="15" x2="15" y2="15"/></svg>,action:()=>{if(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo){setShowCancel(c);}else if(c.cancelled){onSaveClass({...c,cancelled:false,cancelType:null,rescheduledTo:null,applyToAll:false,_reactivating:true},true);}else{setShowCancel(c);}setHighlightCls(null);},disabled:(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo)?false:c.date<WEEK_AGO,color:(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo)?"linear-gradient(135deg,#1565C0,#42A5F5)":c.date<WEEK_AGO?"#ccc":c.cancelled&&!c.rescheduledTo?"linear-gradient(135deg,#1565C0,#42A5F5)":c.cancelled?"linear-gradient(135deg,#1565C0,#42A5F5)":"linear-gradient(135deg,#E65100,#FF8F00)"},
                     ].map(btn=>(
                       <button key={btn.label} onClick={btn.disabled?null:btn.action} disabled={btn.disabled} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"13px",borderRadius:14,border:"none",background:btn.disabled?"#E0E0E0":(btn.color||"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"),color:btn.disabled?"#9E9E9E":"#fff",fontSize:13,cursor:btn.disabled?"not-allowed":"pointer",fontWeight:700,boxShadow:btn.disabled?"none":"0 4px 12px rgba(0,0,0,0.15)"}}>
                         {btn.icon}{btn.label}{btn.disabled?" 🔒":""}
@@ -3609,11 +4348,15 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                     const heightPx=Math.max(36,(durMins/60)*HOUR_HEIGHT-4);
                     const colW=`calc((100% - ${LEFT}px - ${RIGHT}px) / ${c.totalCols} - 4px)`;
                     const colL=`calc(${LEFT}px + (100% - ${LEFT}px - ${RIGHT}px) / ${c.totalCols} * ${c.col} + ${c.col*2}px)`;
+                    const agSt=resolveAgendaCardStatus(c,students,classes,TODAY_DATE);
+                    const agMenu=resolveAgendaMenu(c,agSt,WEEK_AGO);
+                    const reprogTo=c.rescheduledTo||agSt.reprogSettledTo;
                     return (
-                      <div key={c._virtualId||c.id} onClick={()=>setHighlightCls((c._virtualId||c.id)===highlightCls?null:(c._virtualId||c.id))}
-                        style={{position:"absolute",top:topPx,left:colL,width:colW,height:heightPx,background:c.paused||c.cancelType==="paused"?"#FFF3E0":c.cancelled&&c.cancelType==="cancelled"?"#FFF0F0":c.cancelled&&c.cancelType==="cancelled_reprog"&&c.rescheduledTo?"#E8F5E9":c.cancelled&&c.cancelType==="cancelled_reprog"?"#E3F2FD":isNextComboPending(c,students)?"#F5F5F5":C.white,borderRadius:12,padding:"6px 10px",border:"1.5px solid "+(highlightCls===(c._virtualId||c.id)?C.blue2:isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:"pointer",boxShadow:"0 2px 8px rgba(44,94,247,0.10)",overflow:"hidden",borderLeft:"4px solid "+(c.paused||c.cancelType==="paused"?"#E65100":c.cancelled&&c.cancelType==="cancelled"?"#C62828":c.cancelled&&c.cancelType==="cancelled_reprog"&&c.rescheduledTo?"#2E7D32":c.cancelled&&c.cancelType==="cancelled_reprog"?"#1565C0":isNextComboPending(c,students)?"#BDBDBD":C.blue2),zIndex:2,opacity:isNextComboPending(c,students)?0.7:1}}>
+                      <div key={c._virtualId||c.id} onClick={agMenu.readOnly?undefined:()=>setHighlightCls((c._virtualId||c.id)===highlightCls?null:(c._virtualId||c.id))}
+                        style={{position:"absolute",top:topPx,left:colL,width:colW,height:heightPx,background:c.paused||c.cancelType==="paused"?"#FFF3E0":c.cancelled&&c.cancelType==="cancelled"?"#FFF0F0":c.cancelled&&c.cancelType==="cancelled_reprog"&&reprogTo?"#E8F5E9":c.cancelled&&c.cancelType==="cancelled_reprog"?"#E3F2FD":isNextComboPending(c,students)?"#F5F5F5":C.white,borderRadius:12,padding:"6px 10px",border:"1.5px solid "+(highlightCls===(c._virtualId||c.id)?C.blue2:isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:agMenu.readOnly?"default":"pointer",boxShadow:"0 2px 8px rgba(44,94,247,0.10)",overflow:"hidden",borderLeft:"4px solid "+(c.paused||c.cancelType==="paused"?"#E65100":c.cancelled&&c.cancelType==="cancelled"?"#C62828":c.cancelled&&c.cancelType==="cancelled_reprog"&&reprogTo?"#2E7D32":c.cancelled&&c.cancelType==="cancelled_reprog"?"#1565C0":isNextComboPending(c,students)?"#BDBDBD":C.blue2),zIndex:2,opacity:isNextComboPending(c,students)?0.7:1}}>
                         <div style={{display:"flex",alignItems:"center",gap:4,overflow:"hidden"}}>
-                          <div style={{fontSize:13,fontWeight:800,color:c.paused||c.cancelType==="paused"?"#E65100":c.cancelled&&c.cancelType==="cancelled"?"#C62828":c.cancelled&&c.cancelType==="cancelled_reprog"&&c.rescheduledTo?"#2E7D32":c.cancelled&&c.cancelType==="cancelled_reprog"?"#1565C0":isNextComboPending(c,students)?"#9E9E9E":C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",flex:1}}>{c.title}{c.paused||c.cancelType==="paused"?" (Pausada)":c.cancelled&&c.cancelType==="cancelled"?" (Cancelada)":c.cancelled&&c.cancelType==="cancelled_reprog"&&c.rescheduledTo?" (Reprogramada)":c.cancelled&&c.cancelType==="cancelled_reprog"?" (A Reprogramar)":""}</div>
+                          <div style={{fontSize:13,fontWeight:800,color:c.paused||c.cancelType==="paused"?"#E65100":c.cancelled&&c.cancelType==="cancelled"?"#C62828":c.cancelled&&c.cancelType==="cancelled_reprog"&&reprogTo?"#2E7D32":c.cancelled&&c.cancelType==="cancelled_reprog"?"#1565C0":isNextComboPending(c,students)?"#9E9E9E":C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",flex:1}}>{c.title}{c.paused||c.cancelType==="paused"?" (Pausada)":c.cancelled&&c.cancelType==="cancelled"?" (Cancelada)":c.cancelled&&c.cancelType==="cancelled_reprog"&&reprogTo?" (Reprogramada)":c.cancelled&&c.cancelType==="cancelled_reprog"?" (A Reprogramar)":""}</div>
+                          {agendaPaymentChip(agSt.payment,9)}
                           {isNextComboPending(c,students)&&<span style={{fontSize:9,padding:"2px 5px",borderRadius:8,background:"#EEEEEE",color:"#757575",fontWeight:700,flexShrink:0}}>Sin pagar</span>}
                         </div>
                         <div style={{fontSize:11,color:C.mutedDark,marginTop:1}}>{c.time+(c.timeEnd?" – "+c.timeEnd:"")} · {c.court}</div>
@@ -3634,6 +4377,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
               {highlightCls&&(()=>{
                 const c=classes.find(x=>(x._virtualId||x.id)===highlightCls);
                 if(!c) return null;
+                if(resolveAgendaMenu(c,resolveAgendaCardStatus(c,students,classes,TODAY_DATE),WEEK_AGO).readOnly) return null;
                 return (
                   <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.45)",zIndex:99,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 16px"}} onClick={()=>setHighlightCls(null)}>
                     <div style={{background:C.white,borderRadius:24,padding:"20px 20px 24px",width:"100%",boxShadow:"0 20px 60px rgba(0,0,0,0.25)"}} onClick={e=>e.stopPropagation()}>
@@ -3667,7 +4411,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                           {label:"Editar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,action:()=>{setEditCls(c);setHighlightCls(null);},color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
                           {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt({...c,attendanceLog:c.attendanceLog||[]});setHighlightCls(null);},color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
                           {label:c.paused||c.cancelType==="paused"?"▶ Reanudar":"⏸ Pausar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{c.paused||c.cancelType==="paused"?<polygon points="5 3 19 12 5 21 5 3"/>:<g><line x1="10" y1="4" x2="10" y2="20"/><line x1="14" y1="4" x2="14" y2="20"/></g>}</svg>,action:()=>{if(c.paused||c.cancelType==="paused"){setShowResume(c);}else{setShowPause(c);}setHighlightCls(null);},disabled:c.date<WEEK_AGO,color:c.date<WEEK_AGO?"#ccc":c.paused||c.cancelType==="paused"?"linear-gradient(135deg,#2E7D32,#43A047)":"linear-gradient(135deg,#E65100,#FF8F00)"},
-                          {label:c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo?"Asignar fecha":c.cancelled&&c.cancelType==="cancelled_reprog"&&c.rescheduledTo?"Volver a fecha original":c.cancelled?"Reactivar":"Reprogramar / Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="15" x2="15" y2="15"/></svg>,action:()=>{if(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo){setShowCancel(c);}else if(c.cancelled){onSaveClass({...c,cancelled:false,cancelType:null,rescheduledTo:null,applyToAll:false,_reactivating:true},true);}else{setShowCancel(c);}setHighlightCls(null);},disabled:(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo)?false:c.date<WEEK_AGO,color:(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo)?"linear-gradient(135deg,#1565C0,#42A5F5)":c.date<WEEK_AGO?"#ccc":c.cancelled&&!c.rescheduledTo?"linear-gradient(135deg,#1565C0,#42A5F5)":c.cancelled?"linear-gradient(135deg,#1565C0,#42A5F5)":"linear-gradient(135deg,#E65100,#FF8F00)"},
+                          {label:c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo?"Asignar fecha":c.cancelled?"Reactivar":"Reprogramar / Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="15" x2="15" y2="15"/></svg>,action:()=>{if(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo){setShowCancel(c);}else if(c.cancelled){onSaveClass({...c,cancelled:false,cancelType:null,rescheduledTo:null,applyToAll:false,_reactivating:true},true);}else{setShowCancel(c);}setHighlightCls(null);},disabled:(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo)?false:c.date<WEEK_AGO,color:(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo)?"linear-gradient(135deg,#1565C0,#42A5F5)":c.date<WEEK_AGO?"#ccc":c.cancelled&&!c.rescheduledTo?"linear-gradient(135deg,#1565C0,#42A5F5)":c.cancelled?"linear-gradient(135deg,#1565C0,#42A5F5)":"linear-gradient(135deg,#E65100,#FF8F00)"},
                         ].map(btn=>(
                           <button key={btn.label} onClick={btn.action} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"13px",borderRadius:14,border:"none",background:btn.color||"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)",color:"#fff",fontSize:13,cursor:"pointer",fontWeight:700,boxShadow:"0 4px 12px rgba(0,0,0,0.15)"}}>
                             {btn.icon}{btn.label}
@@ -3735,65 +4479,13 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
           </div>
         </div>
       )}
-      {showResume&&<ResumeModal cls={showResume} onClose={()=>setShowResume(null)} students={students} classes={classes} onResume={({cls:rCls,resumeDate:rDate,pausedCount:pCount})=>{
-        if(pCount===0){
-          // All dates un-paused, no replacements needed
-          const realId0=rCls._seriesId||rCls.id;
-          onSaveClass({...rCls,date:rDate,_resuming:true,cancelled:false,cancelType:null,paused:false,applyToAll:false},true);
-          return;
-        }
-        const DAY_MAP_R={"Dom":0,"Lun":1,"Mar":2,"Mie":3,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
-        const dowSet_R=new Set((rCls.days||[]).map(d=>DAY_MAP_R[d]));
-        // Find last date in combo to append replacements AFTER it
-        const studentId0=(rCls.students||[])[0];
-        const student0=students.find(s=>s.id===studentId0);
-        const combo0=(student0?.combos||[]).filter(c=>c.total>0&&c.packType!=="mensual");
-        const lastCombo0=combo0[combo0.length-1];
-        const lastComboDate=lastCombo0?.dates?lastCombo0.dates[lastCombo0.dates.length-1]:null;
-        // Start generating from after last combo date OR from resume date (whichever is later)
-        const startFrom=lastComboDate&&lastComboDate>=rDate?lastComboDate:rDate;
-        const newDates=[];
-        let cur_R=new Date(startFrom+"T12:00:00");
-        if(lastComboDate&&lastComboDate>=rDate) cur_R.setDate(cur_R.getDate()+1); // skip last combo date itself
-        while(newDates.length<pCount){
-          if(dowSet_R.size===0||dowSet_R.has(cur_R.getDay())){
-            const ds_R=cur_R.getFullYear()+"-"+String(cur_R.getMonth()+1).padStart(2,"0")+"-"+String(cur_R.getDate()).padStart(2,"0");
-            newDates.push(ds_R);
-          }
-          cur_R.setDate(cur_R.getDate()+1);
-        }
-        // Update each student combo via onUpdateStudent
-        (rCls.students||[]).forEach(sid=>{
-          const st=students.find(s=>s.id===sid);
-          if(!st) return;
-          const combos2=[...(st.combos||[])];
-          let lastIdx=-1;
-          for(let ci=combos2.length-1;ci>=0;ci--){
-            if(combos2[ci].dates&&combos2[ci].packType!=="mensual"){lastIdx=ci;break;}
-          }
-          if(lastIdx===-1) return;
-          const combo=combos2[lastIdx];
-          const combined=[...new Set([...combo.dates,...newDates])].sort();
-          combos2[lastIdx]={...combo,dates:combined};
-          onUpdateStudent({...st,combos:combos2});
-        });
-        // First: un-pause dates >= resumeDate
-        const realId=rCls._seriesId||rCls.id;
-        onSaveClass({...rCls,date:rDate,_resuming:true,cancelled:false,cancelType:null,paused:false,applyToAll:false},true);
-        // Then: add new dates to class occurrences (only pass occurrences, don't overwrite dateCancellations)
-        setTimeout(()=>{
-          const parentCls=(rawClasses||classes).find(c=>c.id===realId);
-          if(parentCls){
-            const occ=[...(parentCls.occurrences||[])];
-            newDates.forEach(d=>{if(!occ.includes(d))occ.push(d);});
-            occ.sort();
-            onSaveClass({...parentCls,occurrences:occ,applyToAll:true,_occOnly:true},true);
-          }
-        },150);
-      }}/>}
+      {showResume&&<ResumeModal cls={showResume} onClose={()=>setShowResume(null)} students={students} classes={classes} onResume={runResumeOperation}/>}
             {showPause&&<PauseModal cls={showPause} onClose={()=>setShowPause(null)} onPause={({cls:pauseCls,resumeDate:rDate})=>{
-        onSaveClass({...pauseCls,cancelled:false,cancelType:"paused",paused:true,applyToAll:false},true);
-        if(rDate) setPendingResume({cls:pauseCls,rDate});
+        // _plannedResumeDate (when given) is recorded durably as
+        // `plannedResume` on the class row in this SAME write — see
+        // handleSaveClass's paused branch and the durable-detection effect
+        // above, which replace the old in-memory-only pendingResume roundtrip.
+        onSaveClass({...pauseCls,cancelled:false,cancelType:"paused",paused:true,applyToAll:false,_plannedResumeDate:rDate||null},true);
       }}/>}
       {showCancel&&<CancelReprogModal cls={showCancel} onClose={()=>setShowCancel(null)} onSave={(u)=>{onSaveClass(u,true);setShowCancel(null);}} students={students} onUpdateStudent={onUpdateStudent}/>}
       {showNew&&<NewClassModal onClose={()=>{setShowNew(false);setGridNewTime(null);setWeekOffset(0);}} onSave={onSaveClass} existingClasses={classes} students={students} dateLabel={viewMode==="month"?selLabel:weekLabel()} onCreateStudent={onAddStudent} prefill={gridNewTime||(viewMode==="month"?{date:selDay}:null)} courts={courts} packages={packages} onAddPackage={(pkg)=>{if(typeof onAddPackage==="function")onAddPackage(pkg);}}/>}
@@ -4094,36 +4786,18 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
       const _pi=dates.map(d=>{const cl=myClasses.find(x=>x.date===d);return{date:d,paused:!!(cl&&(cl.paused||cl.cancelType==="paused"))};});
       const _pCount=_pi.filter(x=>x.paused).length;
       const _npCount=_pi.filter(x=>!x.paused).length;
-      // Economic budget for definitively-cancelled Combo slots — same criterion as
-      // getAccountCounters (never touch that other function, just reuse its logic here
-      // so PagoModal's rows can't diverge from its own summary): any paidCount left
-      // over past the non-cancelled/non-paused slots is what a cancelled slot can draw
-      // on, first-cancelled-first-paid — never double-claims a unit nonPausedBeforeThis
-      // already assigned to a non-cancelled slot.
-      const _nonCancelledNonPausedCount=dates.filter(dd=>{
-        const cl3=myClasses.find(cls=>cls.date===dd);
-        return !(cl3&&(cl3.paused||cl3.cancelType==="paused"))&&!(cl3&&cl3.cancelled&&cl3.cancelType==="cancelled");
-      }).length;
-      const _cancelledLeftoverBudget=Math.max(0,paidCount-_nonCancelledNonPausedCount);
+      // Same terminal-aware interpretation and paid-status assignment getAccountCounters
+      // uses (shared helpers) — list and counters agree; pause never removes a payment.
+      const slotFor=dd=>resolveContractSlotStatus(myClasses,c,dd,myClasses.find(cls=>cls.date===dd));
+      const paymentAt=resolveSlotPayments(dates,c,paidCount,slotFor);
       // Show all dates in the combo, no dynamic extension needed
       // The ResumeModal already adds the replacement dates to combo.dates
       dates.forEach((ds,i)=>{
         const classOnDate=myClasses.find(cl=>cl.date===ds);
-        const isCancelled=!!(classOnDate?.cancelled&&classOnDate?.cancelType==="cancelled");
-        const isReprogWithDate=!!(classOnDate?.cancelled&&classOnDate?.cancelType==="cancelled_reprog"&&classOnDate?.rescheduledTo);
-        const isReprogNoDate=!!(classOnDate?.cancelled&&classOnDate?.cancelType==="cancelled_reprog"&&!classOnDate?.rescheduledTo);
-        const isPaused=!!(classOnDate?.paused||classOnDate?.cancelType==="paused");
+        const slot=slotFor(ds);
+        const {isCancelled,isReprogWithDate,isReprogNoDate,isPaused}=slot;
         const isAnyCancelled=isCancelled||isReprogWithDate||isReprogNoDate;
-        // Count non-paused dates before this one for isPaid
-        const nonPausedBeforeThis=dates.slice(0,i).filter(dd=>{
-          const cl2=myClasses.find(cl=>cl.date===dd);
-          return !(cl2&&(cl2.paused||cl2.cancelType==="paused"))&&!(cl2&&cl2.cancelled&&cl2.cancelType==="cancelled");
-        }).length;
-        const cancelledBeforeThis=isCancelled?dates.slice(0,i).filter(dd=>{
-          const cl2=myClasses.find(cl=>cl.date===dd);
-          return cl2&&cl2.cancelled&&cl2.cancelType==="cancelled";
-        }).length:0;
-        const isPaidDate=isPaused?false:isCancelled?cancelledBeforeThis<_cancelledLeftoverBudget:nonPausedBeforeThis<paidCount;
+        const {isPaid:isPaidDate,displayPaid:displayPaidDate}=paymentAt(i);
         const attEntry=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===ds);
         const wasAusenteDada=attEntry?(attEntry.ausente_dada||[]).includes(s.id):false;
         const wasAusenteReprog=attEntry?(attEntry.ausente_reprog||[]).includes(s.id):false;
@@ -4137,7 +4811,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         let status;
         if(isPaidDate){status=isGiven?"dada":"adar";}
         else{status=isGiven?"dada_unpaid":"pendiente";}
-        result.push({date:ds,status,comboId:c.id,sourceComboIndex,sourceClassId:c.sourceClassId,packType:c.packType||"combo",isGiven,wasPresent,wasAbsent,wasAusenteDada,wasAusenteReprog,isCancelled,isReprogWithDate,isReprogNoDate,isPaused,rescheduledTo:classOnDate?.rescheduledTo||null});
+        result.push({date:ds,status,comboId:c.id,sourceComboIndex,sourceClassId:c.sourceClassId,packType:c.packType||"combo",isGiven,wasPresent,wasAbsent,wasAusenteDada,wasAusenteReprog,isCancelled,isReprogWithDate,isReprogNoDate,isPaused,isCompensated:slot.isCompensated,displayPaid:displayPaidDate,rescheduledTo:slot.rescheduledTo||null,terminalDate:slot.terminalDate,reschedulePath:slot.reschedulePath,terminalStatus:slot.terminalStatus,historyRows:buildSlotHistoryRows(slot,displayPaidDate,isGiven,myClasses,s.id,classOnDate?.timeEnd)});
       });
     });
     // Dedup by (sourceComboIndex + date), NOT date alone — two distinct obligations
@@ -4630,10 +5304,13 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               // Same selection handleConfirm will write — membership in the shared
               // payableRows.slice(0,qty), not a locally-recomputed count.
               const isPaidNow=!isCancelled&&!isPausedItem&&selectedRowKeys.has(item.sourceComboIndex+"|"+item.date);
-              const isPaid=!isPausedItem&&(alreadyPaid||isPaidNow);
+              const isPaid=alreadyPaid||isPaidNow;
               const isGiven=item.isGiven||item.status==="dada_unpaid"||item.status==="dada";
               let leftBg,leftColor,leftLabel;
-              if(isPausedItem){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="⏸ Pausada";}
+              // A slot with a reschedule history reads "Reprogramada" on its own (numbered) row; the
+              // terminal state (Pausada, Realizada…) is shown on the last step of its group.
+              if((item.historyRows||[]).length>1){leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="🔄 Reprogramada";}
+              else if(isPausedItem){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="⏸ Pausada";}
               else if(isCancelled){leftBg="#FFF0F0";leftColor="#C62828";leftLabel="⛔ Cancelada";}
               else if(isReprogWithDate){leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="🔄 Reprogramada";}
               else if(isReprogNoDate){leftBg="#E3F2FD";leftColor="#1565C0";leftLabel="🕐 A Reprogramar";}
@@ -4642,41 +5319,14 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               else if(wasAbsent){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="🚫 Ausente";}
               else if(isGiven){leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="✓ Realizada";}
               else{leftBg="#FFF8E1";leftColor="#F57F17";leftLabel="Programada";}
-              const rightBg=isPausedItem?"#FFF3E0":isPaid?"#E8F5E9":"#FFEBEE";
-              const rightColor=isPausedItem?"#E65100":isPaid?"#2E7D32":"#C62828";
-              const rightLabel=isPausedItem?"⏸ Pausada":isPaid?"✓ Pagada":"Pendiente";
+              const rightBadge=slotPaymentBadge({isPaid:isPaid||!!item.displayPaid,isPaused:isPausedItem},false);
+              const rightBg=rightBadge.bg,rightColor=rightBadge.color,rightLabel=rightBadge.label;
               return (
-                <div key={localI} style={{padding:"8px 0",borderBottom:"1px solid #E3F2FD"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:8}}>
-                    <div style={{width:28,height:28,borderRadius:"50%",background:isPausedItem?"#FFF3E0":isCancelled?"#FFF0F0":isReprogWithDate?"#E8F5E9":isReprogNoDate?"#E3F2FD":C.blueL,border:"2px solid "+(isPausedItem?"#E65100":isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":"#1976D2"),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                      <span style={{fontSize:11,fontWeight:800,color:isPausedItem?"#E65100":isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":C.blue2}}>{localI+1}</span>
-                    </div>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:13,fontWeight:600,color:"#1A237E"}}>{formatDate(item.date)}{item.packType==="individual"&&<span style={{fontSize:9,fontWeight:700,color:"#6B7BAD",background:"#E8EAF6",borderRadius:6,padding:"2px 6px",marginLeft:6}}>Individual</span>}</div>
-                    </div>
-                    <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:leftBg,color:leftColor,fontWeight:700,flexShrink:0}}>{leftLabel}</span>
-                    <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700,flexShrink:0}}>{rightLabel}</span>
-                  </div>
-                  {isReprogWithDate&&item.rescheduledTo&&(()=>{
-                    // Presentation-only sub-row: same obligation as the row above (item.sourceComboIndex+item.date),
-                    // never added to buildAllDates()/allDates/payableRows — no new identity, no new obligation.
-                    const reschClsOnDate=myClasses.find(cl=>cl.date===item.date);
-                    const reschAttEntry=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===item.rescheduledTo);
-                    const reschWasPresent=reschAttEntry?(reschAttEntry.present||[]).includes(s.id):false;
-                    const reschWasAusenteDada=reschAttEntry?(reschAttEntry.ausente_dada||[]).includes(s.id):false;
-                    const reschIsGiven=reschAttEntry?(reschWasPresent||reschWasAusenteDada):isClassDone(item.rescheduledTo,reschClsOnDate?.timeEnd);
-                    const reschBg=reschIsGiven?"#E8F5E9":"#FFF8E1";
-                    const reschColor=reschIsGiven?"#2E7D32":"#F57F17";
-                    const reschLabel=reschIsGiven?"✓ Realizada":"Programada";
-                    return (
-                      <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6,marginLeft:36,paddingLeft:10,borderLeft:"2px solid #A5D6A7"}}>
-                        <div style={{flex:1,minWidth:0,fontSize:12,fontWeight:600,color:"#2E7D32"}}>↳ {formatDate(item.rescheduledTo)}</div>
-                        <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:reschBg,color:reschColor,fontWeight:700,flexShrink:0}}>{reschLabel}</span>
-                        <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700,flexShrink:0}}>{rightLabel}</span>
-                      </div>
-                    );
-                  })()}
-                </div>
+                <SlotGroup key={localI} number={localI+1} item={item} fmt={formatDate} paidNow={isPaidNow} borderColor="#E3F2FD" dateColor="#1A237E"
+                  dateText={formatDate(item.date)}
+                  dateTag={item.packType==="individual"&&<span style={{fontSize:9,fontWeight:700,color:"#6B7BAD",background:"#E8EAF6",borderRadius:6,padding:"2px 6px",marginLeft:6}}>Individual</span>}
+                  circle={{size:28,numSize:11,bg:isPausedItem?"#FFF3E0":isCancelled?"#FFF0F0":isReprogWithDate?"#E8F5E9":isReprogNoDate?"#E3F2FD":C.blueL,border:isPausedItem?"#E65100":isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":"#1976D2",color:isPausedItem?"#E65100":isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":C.blue2}}
+                  left={{bg:leftBg,color:leftColor,label:leftLabel}} right={{bg:rightBg,color:rightColor,label:rightLabel}}/>
               );
                 })}
                 {group.closed&&group.comboObj?.packType==="combo"&&group.comboObj.archived!==true&&(
@@ -5999,36 +6649,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
   // Shared "Mis Clases" card rendering — same logic used for the own classes and for family members' classes
   const renderClassCards=(person,personClasses)=>{
     return [...new Map(personClasses.map(c=>[c.title,c])).values()].map(cls=>{
-      const allDates=(person.combos||[]).filter(c=>c.total>0&&c.packType!=="mensual").flatMap(c=>{
-        const seen=new Set();
-        const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
-        // Same leftover-budget criterion as getAccountCounters/buildAllDates, reused so
-        // this card's economic status can't diverge from the Estado de Cuenta panel
-        // above (Individual not extended, matching those two).
-        const _nonCancelledNonPausedCount=(c.dates||[]).filter(dd=>{
-          const cl3=personClasses.find(cl=>cl.date===dd);
-          return !(cl3&&(cl3.paused||cl3.cancelType==="paused"))&&!(cl3&&cl3.cancelled&&cl3.cancelType==="cancelled");
-        }).length;
-        const _cancelledLeftoverBudget=Math.max(0,paidCount-_nonCancelledNonPausedCount);
-        return (c.dates||[]).filter(d=>{if(seen.has(d))return false;seen.add(d);return true;}).map((d,i)=>{
-          const clsChk=personClasses.find(cl=>cl.date===d);
-          const isPausedChk=!!(clsChk&&(clsChk.paused||clsChk.cancelType==="paused"));
-          const isCancelledClass=!!(clsChk&&clsChk.cancelled&&clsChk.cancelType==="cancelled");
-          const npBefore=(c.dates||[]).slice(0,i).filter(dd=>{const cl3=personClasses.find(cl=>cl.date===dd);return !(cl3&&(cl3.paused||cl3.cancelType==="paused"))&&!(cl3&&cl3.cancelled&&cl3.cancelType==="cancelled");}).length;
-          const cancelledBefore=isCancelledClass?(c.dates||[]).slice(0,i).filter(dd=>{const cl3=personClasses.find(cl=>cl.date===dd);return cl3&&cl3.cancelled&&cl3.cancelType==="cancelled";}).length:0;
-          const isPaid=isPausedChk?false:isCancelledClass?(c.packType==="combo"&&cancelledBefore<_cancelledLeftoverBudget):npBefore<paidCount;
-          const isPast=d<=TODAY_DATE;
-          const clsForDate=personClasses.find(cl=>cl.date===d);
-          const isPaused=!!(clsForDate&&(clsForDate.paused||clsForDate.cancelType==="paused"));
-          const isReprogWithDate=!!(clsForDate&&clsForDate.cancelled&&clsForDate.cancelType==="cancelled_reprog"&&clsForDate.rescheduledTo);
-          const isReprogNoDate=!!(clsForDate&&clsForDate.cancelled&&clsForDate.cancelType==="cancelled_reprog"&&!clsForDate.rescheduledTo);
-          const attEntry=(cls.attendanceLog||[]).find(e=>e.date===d);
-          const isGiven=isPaused?false:isCancelledClass?true:isReprogWithDate?true:isReprogNoDate?false:attEntry?(attEntry.present||[]).includes(person.id)||(attEntry.ausente_dada||[]).includes(person.id):isPast;
-          return {date:d,isPaid:isPaused?false:isPaid,isGiven,isPast,isPaused,isCancelledClass,isReprogWithDate,isReprogNoDate,rescheduledTo:clsForDate&&clsForDate.rescheduledTo||null};
-        });
-      }).sort((a,b)=>a.date.localeCompare(b.date));
-      const seen2=new Set();
-      const deduped=allDates.filter(d=>{if(seen2.has(d.date))return false;seen2.add(d.date);return true;});
+      const deduped=buildPersonSlotRows(person,personClasses,TODAY_DATE);
       return (
         <WhiteCard key={cls.id} style={{marginBottom:12}}>
           <div style={{fontWeight:800,fontSize:15,color:C.text,marginBottom:6}}>{cls.title}</div>
@@ -6041,30 +6662,22 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
             <div>
               {deduped.map((item,i)=>{
                 let leftBg,leftColor,leftLabel;
-                if(item.isPaused){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="Pausada";}
+                if((item.historyRows||[]).length>1){leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="Reprogramada";}
+                else if(item.isPaused){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="Pausada";}
                 else if(item.isCancelledClass){leftBg="#FFF0F0";leftColor="#C62828";leftLabel="Cancelada";}
                 else if(item.isReprogWithDate){leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="Reprogramada";}
                 else if(item.isReprogNoDate){leftBg="#E3F2FD";leftColor="#1565C0";leftLabel="A Reprogramar";}
                 else if(item.isGiven){leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="Realizada";}
                 else{leftBg=C.blueL;leftColor=C.blue2;leftLabel="Programada";}
-                let rightBg,rightColor,rightLabel;
-                if(item.isPaused){rightBg="#FFF3E0";rightColor="#E65100";rightLabel="Pausada";}
-                else if(item.isPaid){rightBg="#E8F5E9";rightColor="#2E7D32";rightLabel="Pagada";}
-                else{rightBg="#FFEBEE";rightColor="#C62828";rightLabel="Pendiente";}
+                const rightBadge=slotPaymentBadge({isPaid:item.displayPaid,isPaused:item.isPaused},true);
+                const rightBg=rightBadge.bg,rightColor=rightBadge.color,rightLabel=rightBadge.label;
                 const cBg=item.isPaused?"#FFF3E0":item.isCancelledClass?"#FFF0F0":item.isReprogWithDate?"#E8F5E9":item.isReprogNoDate?"#E3F2FD":C.blueL;
                 const cCol=item.isPaused?"#E65100":item.isCancelledClass?"#C62828":item.isReprogWithDate?"#2E7D32":item.isReprogNoDate?"#1565C0":C.blue2;
                 return (
-                  <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid "+C.border}}>
-                    <div style={{width:26,height:26,borderRadius:"50%",background:cBg,border:"2px solid "+cCol,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                      <span style={{fontSize:10,fontWeight:800,color:cCol}}>{i+1}</span>
-                    </div>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:13,fontWeight:600,color:C.text}}>{fmtDate(item.date)}</div>
-                      {item.isReprogWithDate&&item.rescheduledTo&&<div style={{fontSize:10,color:"#2E7D32",marginTop:1}}>{"-> "+fmtDate(item.rescheduledTo)}</div>}
-                    </div>
-                    <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:leftBg,color:leftColor,fontWeight:700}}>{leftLabel}</span>
-                    <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:rightBg,color:rightColor,fontWeight:700}}>{rightLabel}</span>
-                  </div>
+                  <SlotGroup key={i} number={i+1} item={item} fmt={fmtDate} compact borderColor={C.border} dateColor={C.text}
+                    dateText={fmtDate(item.date)} dateTag={null}
+                    circle={{size:26,numSize:10,bg:cBg,border:cCol,color:cCol}}
+                    left={{bg:leftBg,color:leftColor,label:leftLabel}} right={{bg:rightBg,color:rightColor,label:rightLabel}}/>
                 );
               })}
             </div>
@@ -6806,11 +7419,115 @@ export default function App() {
   const dataReadyForCurrentIdentity=dataReady&&hydratedIdentityRef.current===user?.id;
   const dataLoadFailedForCurrentIdentity=dataLoadFailed&&hydratedIdentityRef.current===user?.id;
 
+  // Verification finding: setStudents used to reassign a `let writePromise`
+  // INSIDE setStudentsRaw's functional-update callback and read it right
+  // after — reliable only when React happens to invoke that callback
+  // synchronously (an internal optimization React applies only to the first
+  // dispatch to this state since the last committed render, never
+  // guaranteed). Every later dispatch in the same tick — e.g. resuming a
+  // class with 2+ students — or even a single dispatch preceded by ANY prior
+  // update to `students` in the component's lifetime (hydration always
+  // counts) silently returned the initial Promise.resolve({status:
+  // "skipped-no-identity"}) fallback instead of the real
+  // enqueueCoachDataWrite promise, breaking onResume's "wait for students to
+  // confirm before touching classes" atomicity gate in practice. Fix:
+  // `enqueueCoachDataWrite` is now called directly in setStudents' own
+  // synchronous body, never inside a React updater — `latestStudentsRef`
+  // is this function's own synchronous "previous state" source of truth,
+  // so multiple setStudents calls in the same tick (one per student) still
+  // each see the other's result, exactly like a real functional update.
+  const latestStudentsRef=useRef(students);
+  useEffect(()=>{latestStudentsRef.current=students;},[students]); // defensive backstop only — every real writer below goes through applyStudentsLocally, which already keeps this in sync synchronously
+
+  // Verification finding: `latestStudentsRef` was only being kept in sync by
+  // the useEffect above, which runs one render AFTER a state change commits.
+  // The wrapped `setStudents` updates it synchronously itself (see below),
+  // but every RAW write — initial hydration, `reconcileCoachData`'s remote
+  // apply, "Descartar" (resolveConflictDiscardMine/discardQuarantined), and
+  // logout's reset — called `setStudentsRaw` directly, so a `setStudents`
+  // call landing in the same tick as one of those (e.g. right after a coach
+  // switch or a discard) could still resolve `prev` against the stale
+  // pre-switch/pre-discard value. Single synchronous local-apply function,
+  // used by EVERY writer of `students` (wrapped or raw) instead of adding a
+  // timer or a second effect — closes that window at its source.
+  const applyStudentsLocally=(next)=>{
+    latestStudentsRef.current=next;
+    setStudentsRaw(next);
+  };
+
+  // Section 6 (resume atomicity, classes side): the SAME fix as
+  // latestStudentsRef/applyStudentsLocally, mirrored for `classes` — the
+  // resume orchestrator needs setClasses' own returned promise to actually
+  // reflect the real enqueueCoachDataWrite outcome (confirmed/conflict/
+  // retrying/etc.), not just fire-and-forget, so it can decide whether
+  // "classes" genuinely confirmed before ever reporting the resume as done.
+  const latestClassesRef=useRef(classes);
+  useEffect(()=>{latestClassesRef.current=classes;},[classes]); // defensive backstop only
+  const applyClassesLocally=(next)=>{
+    latestClassesRef.current=next;
+    setClassesRaw(next);
+  };
+
+  // Verification finding: this used to mutate `c.dates=...` IN PLACE on a
+  // combo object that could be the SAME reference already sitting in
+  // latestStudentsRef.current/a previous render's state (whenever the caller
+  // passed through an unrelated combo unchanged, e.g. `{...c,dates:newDates}`
+  // reuses `c`'s other fields by reference, and a plain `.map` that returns
+  // `c` itself for untouched students keeps the exact same object). Capping
+  // one student's combo could silently corrupt what looked like an untouched
+  // student elsewhere. Pure now: only ever returns new objects for an
+  // (array,student,combo) actually capped; every unchanged reference is
+  // returned as-is, so callers can rely on referential equality to detect
+  // "nothing changed". Never mutates `next`, `latestStudentsRef.current`, or
+  // any prior object — verified by the deep-freeze test in the offline suite
+  // (freezing the input recursively and asserting applyGuard never throws in
+  // strict mode, which it would if it ever attempted an in-place write).
+  //
+  // Verification finding: this ALSO used to close over the `classes` render
+  // variable — a plain prop/state snapshot from whatever render created this
+  // closure. A pause write landing in the SAME tick (via setClasses, which
+  // updates latestClassesRef.current synchronously through
+  // applyClassesLocally) would not be visible here until the NEXT render,
+  // so applyGuard could compute pausedTerminals against a stale `classes`
+  // and cap incorrectly. Reads latestClassesRef.current instead — always the
+  // freshest committed-or-just-written classes snapshot, never a render
+  // closure — exactly like setStudents/commitStudentsBatch already do for
+  // latestStudentsRef.
+  const applyGuard=(list)=>{
+    if(!Array.isArray(list)) return list;
+    const currentClasses=latestClassesRef.current;
+    return list.map(s=>{
+      if(!s.combos) return s;
+      let changed=false;
+      const combos2=s.combos.map(c=>{
+        if(!(c.dates&&c.total&&c.dates.length>c.total)) return c;
+        const myClasses=currentClasses.filter(cl=>cl.students&&cl.students.includes(s.id));
+        const pausedTerminals=new Set();
+        c.dates.forEach(d0=>{
+          myClasses.forEach(cl=>{
+            const {terminal,cancelInfo,broken}=resolveComboDateStatus(cl.dateCancellations,d0);
+            if(broken||!terminal) return;
+            if(cancelInfo&&cancelInfo.cancelType==="paused") pausedTerminals.add(terminal);
+          });
+        });
+        const maxAllowed=c.total+pausedTerminals.size;
+        if(c.dates.length<=maxAllowed) return c;
+        console.warn("[GUARD] "+s.name+" combo dates "+c.dates.length+" > max "+maxAllowed+". Capping.");
+        changed=true;
+        return {...c,dates:c.dates.slice(0,maxAllowed)};
+      });
+      return changed?{...s,combos:combos2}:s;
+    });
+  };
+
   // Raw (non-persisting) setters, grouped for reconcileCoachData/conflict
   // resolution in coachData.js — they only ever apply data already confirmed
   // safe (remote reconcile, "keep mine"/"discard" conflict resolution),
-  // never go through lsSet/enqueueCoachDataWrite themselves.
-  const rawSetters={setStudentsRaw,setClassesRaw,setExpensesRaw,setCourtsRaw,setPackagesRaw,setFamiliesRaw};
+  // never go through lsSet/enqueueCoachDataWrite themselves. `setStudentsRaw`
+  // here is `applyStudentsLocally`, not the bare useState setter — see its
+  // own comment above; coachData.js only ever looks this up by the key name
+  // "setStudentsRaw", so the key stays the same and nothing there changes.
+  const rawSetters={setStudentsRaw:applyStudentsLocally,setClassesRaw:applyClassesLocally,setExpensesRaw,setCourtsRaw,setPackagesRaw,setFamiliesRaw};
 
   // Wrapped setters that persist to localStorage and enqueue a durable,
   // atomic compare-and-set write (coachData.js) — replaces the old
@@ -6819,44 +7536,30 @@ export default function App() {
   // retrying, conflict detection and crash recovery from this point on.
   // IMPORTANT: keep functional updates. Do not replace prev with closure state.
   // Multiple sequential updates depend on React's latest state.
+  //
+  // Verification finding (see latestStudentsRef's own comment above): resolve
+  // `next` HERE, synchronously, against latestStudentsRef — never inside
+  // setStudentsRaw's updater — so the returned promise is always the real
+  // enqueueCoachDataWrite call, and a second setStudents in the same tick
+  // (e.g. onResume updating a second student) still resolves `v(prev)`
+  // against the first call's result, not a stale value.
   const setStudents=(v)=>{
-    const applyGuard=(next)=>{
-      if(Array.isArray(next)){next.forEach(s=>{(s.combos||[]).forEach(c=>{if(c.dates&&c.total&&c.dates.length>c.total){
-        const pausedInDates=c.dates.filter(d=>{const cls2=classes.find(cl=>cl.students&&cl.students.includes(s.id)&&cl.dateCancellations&&cl.dateCancellations[d]&&cl.dateCancellations[d].cancelType==="paused");return !!cls2;}).length;
-        const maxAllowed=c.total+pausedInDates;
-        if(c.dates.length>maxAllowed){console.warn("[GUARD] "+s.name+" combo dates "+c.dates.length+" > max "+maxAllowed+". Capping.");c.dates=c.dates.slice(0,maxAllowed);}
-      }});});}
-      return next;
-    };
-    if(typeof v==="function"){
-      setStudentsRaw(prev=>{
-        const next=applyGuard(v(prev));
-        lsSet("izi_students",next);
-        if(activeIdentityRef.current===user?.id) enqueueCoachDataWrite(user?.id,"students",next);
-        return next;
-      });
-    } else {
-      const next=applyGuard(v);
-      setStudentsRaw(next);
-      lsSet("izi_students",next);
-      if(activeIdentityRef.current===user?.id) enqueueCoachDataWrite(user?.id,"students",next);
-    }
+    const prev=latestStudentsRef.current;
+    const next=applyGuard(typeof v==="function"?v(prev):v);
+    applyStudentsLocally(next);
+    lsSet("izi_students",next);
+    const writePromise=activeIdentityRef.current===user?.id?enqueueCoachDataWrite(user?.id,"students",next):Promise.resolve({status:"skipped-no-identity"});
+    return writePromise;
   };
   // IMPORTANT: keep functional updates. Do not replace prev with closure state.
   // Multiple sequential updates depend on React's latest state.
   const setClasses=(v)=>{
-    if(typeof v==="function"){
-      setClassesRaw(prev=>{
-        const next=v(prev);
-        lsSet("izi_classes",next);
-        if(activeIdentityRef.current===user?.id) enqueueCoachDataWrite(user?.id,"classes",next);
-        return next;
-      });
-    } else {
-      setClassesRaw(v);
-      lsSet("izi_classes",v);
-      if(activeIdentityRef.current===user?.id) enqueueCoachDataWrite(user?.id,"classes",v);
-    }
+    const prev=latestClassesRef.current;
+    const next=typeof v==="function"?v(prev):v;
+    applyClassesLocally(next);
+    lsSet("izi_classes",next);
+    const writePromise=activeIdentityRef.current===user?.id?enqueueCoachDataWrite(user?.id,"classes",next):Promise.resolve({status:"skipped-no-identity"});
+    return writePromise;
   };
   const setCourts=(v)=>{if(typeof v==="function"){setCourtsRaw(prev=>{const next=v(prev);lsSet("izi_courts",next);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"courts",next);return next;});}else{setCourtsRaw(v);lsSet("izi_courts",v);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"courts",v);}};
   const setPackages=(v)=>{if(typeof v==="function"){setPackagesRaw(prev=>{const next=v(prev);lsSet("izi_packages",next);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"packages",next);return next;});}else{setPackagesRaw(v);lsSet("izi_packages",v);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"packages",v);}};
@@ -7020,8 +7723,8 @@ export default function App() {
           else{
             const cd=cdResult.data;
             const s=cd.students||[];const cl=cd.classes||[];const f=cd.families||[];
-            if(s.length>0){setStudentsRaw(s);}
-            if(cl.length>0){setClassesRaw(cl);}
+            if(s.length>0){applyStudentsLocally(s);}
+            if(cl.length>0){applyClassesLocally(cl);}
             if(f.length>0){setFamiliesRaw(f);}
           }
         }catch(e){
@@ -7185,7 +7888,7 @@ export default function App() {
       // (izi_mode, izi_onboarded, the old non-namespaced izi_students/
       // izi_classes/etc.) should go; the outbox must not.
       clearLocalStateExceptOutbox();
-      setStudentsRaw([]);setClassesRaw([]);setCourtsRaw([]);setPackagesRaw([]);setFamiliesRaw([]);
+      applyStudentsLocally([]);applyClassesLocally([]);setCourtsRaw([]);setPackagesRaw([]);setFamiliesRaw([]);
       setCoachProfileRaw({name:"Coach",sport:"",photo:null});setExpensesRaw([]);
       setDataReady(false);
       setDataLoadFailed(false);
@@ -7226,6 +7929,48 @@ export default function App() {
   ]);
 
   const updateStudent=(u)=>setStudents(p=>p.map(s=>s.id===u.id?u:s));
+  // Verification finding: passing the resume orchestrator's own `students`
+  // PROP (a snapshot from whatever render created the closure) to build the
+  // batch is itself a stale-closure risk — a payment, an attendance mark, or
+  // a remote reconcile that lands AFTER that render but BEFORE this batch
+  // actually commits would be silently overwritten, since the batch's `next`
+  // was computed from the old snapshot, not from what's about to be
+  // replaced. commitStudentsBatch now takes a PRODUCER function instead of a
+  // precomputed array: it reads latestStudentsRef.current itself, calls the
+  // producer with it SYNCHRONOUSLY (so the producer builds `next` — and any
+  // metadata the caller needs back, like a resume operation — from the
+  // actual state about to be committed, not a prop), applies the shared pure
+  // applyGuard, commits via applyStudentsLocally (ref+state together,
+  // synchronously — never inside a React updater), persists locally, and
+  // issues exactly one enqueueCoachDataWrite call. A producer that finds
+  // nothing to change returns null — no state mutation, no network call.
+  const commitStudentsBatch=(producer)=>{
+    const latest=latestStudentsRef.current;
+    const outcome=producer(latest);
+    if(!outcome) return {promise:Promise.resolve({status:"noop"})};
+    const {next:rawNext,...meta}=outcome;
+    const next=applyGuard(rawNext);
+    applyStudentsLocally(next);
+    lsSet("izi_students",next);
+    const promise=activeIdentityRef.current===user?.id?enqueueCoachDataWrite(user?.id,"students",next):Promise.resolve({status:"skipped-no-identity"});
+    return {promise,...meta};
+  };
+
+  // Verification finding: the plannedResume durable-detection effect reacts
+  // to `classes` REACT STATE changing — which happens the instant the pause
+  // write's local optimistic update commits (applyClassesLocally), NOT when
+  // its underlying CAS write actually confirms server-side. Nothing else
+  // forces a re-render when that confirmation lands later (enqueueCoachData-
+  // Write's outbox bookkeeping is plain localStorage/module state, no
+  // setState involved) — so the ONLY way to know a pause write is truly safe
+  // to build a resume on top of is to ask the outbox directly. Read fresh
+  // each call — never memoized/cached — so a write that confirms between two
+  // scans is picked up correctly.
+  const isClassesWriteSettled=()=>{
+    if(!user?.id) return true; // no active identity — nothing pending to wait for
+    const status=getSyncStatus(user.id).classes;
+    return !(status.conflict||status.quarantined||status.volatileUnsafe||status.pendingOwn);
+  };
 
   const sendNotification=(text,type="alert")=>{
     setNotifications(p=>[...p,{id:Date.now(),from:"coach",to:"all",text,time:"Ahora",type,read:false}]);
@@ -7786,8 +8531,17 @@ export default function App() {
   // ║  cd._resuming          → RESUME: un-pauses dates >= editDate       ║
   // ║  cd._reactivating      → REACTIVATE: deletes dateCancellation      ║
   // ║  cd._occOnly           → only update occurrences, skip everything  ║
-  // ║  cd._pauseResumeDate   → pause with auto-resume (used by pause     ║
-  // ║                           interceptor to generate replacements)     ║
+  // ║  cd._pauseResumeDate   → legacy pre-calc auto-resume path; no       ║
+  // ║                           current UI caller sets it (kept for      ║
+  // ║                           documented interceptor compat, not dead- ║
+  // ║                           code-removed this session — do not       ║
+  // ║                           confuse with _plannedResumeDate below)   ║
+  // ║  cd._plannedResumeDate → "pausar con fecha": records a DURABLE      ║
+  // ║                           plannedResume on the class row itself     ║
+  // ║                           (survives F5) — the mount/reconcile       ║
+  // ║                           detection effect in Agenda completes it   ║
+  // ║                           via the shared runResumeOperation, not    ║
+  // ║                           via this pre-calc path                    ║
   // ║                                                                     ║
   // ║  IMPORTANT: If none of these flags are set, the interceptor is      ║
   // ║  SKIPPED and the edit flows to applyEditToClass → updateStudentPacks║
@@ -7854,38 +8608,63 @@ export default function App() {
           }
         }
 
-        setClasses(p=>p.map(c=>{
+        const classesWritePromise=setClasses(p=>p.map(c=>{
           if(c.id!==realId) return c;
           const dc={...(c.dateCancellations||{})};
           let occ=c.occurrences?[...c.occurrences]:[];
-          
+          // plannedResume: durable record of a "pausar con fecha" intention,
+          // living on the CLASS row itself (not in transient React state) so
+          // it survives F5/logout/login — see the mount/reconcile detection
+          // effect in Agenda. Optional field, absent on old data; every
+          // return below threads it through unchanged unless this exact
+          // action creates or completes one.
+          let plannedResume=c.plannedResume;
+
           if(cd.cancelType==="paused"){
             dc[editDate]={cancelType:"paused",rescheduledTo:null};
+            // Verification finding: combo.dates holds each student's ORIGINAL
+            // contracted dates and is never updated by a reprogramación (that
+            // only ever touches dateCancellations). A date reprogrammed
+            // forward (possibly through a chain, X→Y→Z) still sits in
+            // combo.dates at its original position — matching future
+            // c.occurrences against the raw combo.dates values silently
+            // stops finding anything once every contracted date has either
+            // elapsed or been reprogrammed past today. Resolve each
+            // contracted date to its effective (post-reschedule) terminal
+            // first — combo.dates itself is read-only here, never modified.
             const allComboDates=new Set();
-            (c.students||[]).forEach(sid=>{const st=students.find(s=>s.id===sid);if(st)(st.combos||[]).forEach(combo=>{(combo.dates||[]).forEach(d=>allComboDates.add(d));});});
+            (c.students||[]).forEach(sid=>{const st=students.find(s=>s.id===sid);if(st)(st.combos||[]).forEach(combo=>{
+              resolveEffectiveComboDates(combo.dates,c.dateCancellations).forEach(d=>allComboDates.add(d));
+            });});
             const rDate=cd._pauseResumeDate;
             (c.occurrences||[]).forEach(d=>{
               const shouldPause=rDate?(d>=editDate&&d<rDate):(d>=editDate);
               if(shouldPause&&allComboDates.has(d)) dc[d]={cancelType:"paused",rescheduledTo:null};
             });
             if(_replacements.length>0) occ=[...new Set([...occ,..._replacements])].sort();
+            // Section 4: "pausar con fecha" now records its intent durably,
+            // in this SAME write, instead of only in a transient pendingResume
+            // React state that a reload could lose before it ever ran. One
+            // planned resume per class at a time — a new one (a fresh pause
+            // action with a date) replaces whatever was there, since the
+            // prior one, if any, must have already been about a pause this
+            // new action is superseding.
+            if(cd._plannedResumeDate){
+              plannedResume={id:crypto.randomUUID(),classId:realId,resumeDate:cd._plannedResumeDate,requestedAt:Date.now(),completed:false};
+            }
           } else if(cd._resuming){
-            const beforeKeys=Object.keys(dc).filter(d=>dc[d]?.cancelType==="paused");
-            Object.keys(dc).forEach(d=>{if(d>=editDate&&dc[d]?.cancelType==="paused") delete dc[d];});
-            const afterKeys=Object.keys(dc).filter(d=>dc[d]?.cancelType==="paused");
-            const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,dateCancellations:_dc2,...rest}=cd;
-            const restHasDC='dateCancellations' in rest;
-            const restDCKeys=restHasDC?Object.keys(rest.dateCancellations||{}).filter(d=>rest.dateCancellations[d]?.cancelType==="paused").length:"N/A";
-            console.log("[_resuming]",{editDate,pausedBefore:beforeKeys.length,pausedAfter:afterKeys.length,restHasDC,restDCPausedCount:restDCKeys});
-            return {...c,...rest,id:realId,dateCancellations:dc,occurrences:occ};
+            return applyResumeToClassRow({c,cd,realId,editDate,dc,occ,plannedResume});
           } else if(cd.cancelled){
             dc[editDate]={cancelType:cd.cancelType||"cancelled",rescheduledTo:cd.rescheduledTo||null};
           } else {
             delete dc[editDate];
           }
-          if(!c.occurrences||c.occurrences.length===0) return {...c,...cd,id:realId,dateCancellations:dc};
-          const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,_pauseResumeDate:_prd,_reactivating:_ra,...rest}=cd;
-          return {...c,...rest,id:realId,dateCancellations:dc,occurrences:occ};
+          if(!c.occurrences||c.occurrences.length===0){
+            const {_plannedResumeDate:_prdate2,...cdClean}=cd;
+            return {...c,...cdClean,id:realId,dateCancellations:dc,plannedResume};
+          }
+          const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,_pauseResumeDate:_prd,_reactivating:_ra,_plannedResumeDate:_prdate3,...rest}=cd;
+          return {...c,...rest,id:realId,dateCancellations:dc,occurrences:occ,plannedResume};
         }));
 
         // Update student combo dates with pre-calculated replacement dates
@@ -7903,7 +8682,7 @@ export default function App() {
             return {...s,combos:combos2};
           }));
         }
-        return;
+        return classesWritePromise;
       }
 
       applyEditToClass(cd, realId);
@@ -8068,7 +8847,7 @@ export default function App() {
         {tab==="dashboard"&&!isFirstTime&&<Dashboard students={students} classes={xClasses} onNavigate={handleNavigate} onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)} expenses={expenses} coachProfile={coachProfile} onRefresh={handleRefresh}/>}
         {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onAddStudentDirect={(s)=>setStudents(p=>[...p,s])} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={xClasses} onInvite={()=>setShowInvite(true)} userId={user?.id} onInviteStudent={(s)=>setInviteTarget(s)} onRefresh={handleRefresh} families={families} setFamilies={setFamilies}/>}
         {inviteTarget&&<InviteModal student={inviteTarget} userId={user?.id} coachName={coachProfile.name} onClose={()=>setInviteTarget(null)}/>}
-        {tab==="agenda"&&<Agenda students={students} classes={xClasses} rawClasses={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])} onRefresh={handleRefresh}/>}
+        {tab==="agenda"&&<Agenda students={students} classes={xClasses} rawClasses={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onUpdateStudentsBatch={commitStudentsBatch} isClassesWriteSettled={isClassesWriteSettled} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])} onRefresh={handleRefresh}/>}
         {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification} userId={user?.id} unreadChats={unreadChats} onMarkRead={(sid)=>setUnreadChats(p=>{const n={...p};delete n[String(sid)];return n;})}/>}
         {tab==="cobros"&&<Finances students={students} classes={xClasses} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance} families={families}/>}
         {tab==="finanzas"&&<Finances students={students} classes={xClasses} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages}/>}
