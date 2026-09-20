@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import { supabase } from "./services/supabaseClient.js";
 import {
   loadAllFromSupabase,
@@ -3584,27 +3584,46 @@ function ReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent }) {
   );
 }
 
-// Reporte mensual de asistencia por alumno — read-only. Same visual language and canvas + Web Share
-// mechanism as the payment receipt (PaymentCard); it never calls onAttendance/onUpdate/onSave, so
-// opening, generating, sharing or cancelling cannot write attendanceLog or anything else.
-// entries: [{date:"YYYY-MM-DD", className, time}] already filtered/deduped/sorted by the caller.
+// Registro de Asistencia report — ONE model, ONE PNG renderer, shared by the header's Descargar and
+// Compartir (preview modal) so both produce the exact same file. Read-only: nothing here calls
+// onAttendance/onUpdate/onSave, so downloading, sharing, opening or cancelling cannot write anything.
 const ATT_REPORT_WEEKDAYS=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+const ATT_REPORT_MONTHS_SHORT=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+const ATT_REPORT_DESIGN_W=440;
 // Weekday/month come from the calendar date string itself (UTC math), never from the device timezone.
-const attReportRowTitle=(ds,i)=>{
+const attReportParts=(ds)=>{
   const [y,m,d]=ds.split("-").map(Number);
-  return (i+1)+". "+ATT_REPORT_WEEKDAYS[new Date(Date.UTC(y,m-1,d)).getUTCDay()]+" "+d+" de "+MONTHS[m-1];
+  return {short:d+" "+ATT_REPORT_MONTHS_SHORT[m-1]+" "+y,weekday:ATT_REPORT_WEEKDAYS[new Date(Date.UTC(y,m-1,d)).getUTCDay()],monthLabel:MONTHS[m-1].toUpperCase()+" "+y};
 };
-const attReportRowSub=(e)=>(e.className||"")+(e.time?" / "+e.time:"");
 
-function AttendanceReceiptModal({ studentName, year, month, entries, onClose }) {
-  const [busy,setBusy]=useState(false);
-  const busyRef=useRef(false);
-  const [error,setError]=useState("");
-  const monthLabel=MONTHS[month].toUpperCase()+" "+year;
-  const nameUp=(studentName||"").toUpperCase();
+// attLogs = the rows Registro de Asistencia renders. "Presente" is whatever that screen marks as
+// presente (status==="presente"); nothing here re-interprets it. Deduped per real occurrence (series id
+// + date), newest first, same-day classes by time then name, grouped by month (newest first).
+function buildAttendanceReport(attLogs) {
+  const seen=new Set();
+  const rows=[];
+  attLogs.forEach(l=>{
+    if(l.status!=="presente") return;
+    const k=l.cid+"|"+l.date;
+    if(seen.has(k)) return;
+    seen.add(k);
+    rows.push({date:l.date,className:l.className||"",time:l.time||""});
+  });
+  rows.sort((a,b)=>b.date.localeCompare(a.date)||a.time.localeCompare(b.time)||a.className.localeCompare(b.className));
+  const groups=[];
+  rows.forEach(r=>{
+    const p=attReportParts(r.date);
+    const row={short:p.short,weekday:p.weekday,className:r.className};
+    const last=groups[groups.length-1];
+    if(last&&last.label===p.monthLabel) last.rows.push(row); else groups.push({label:p.monthLabel,rows:[row]});
+  });
+  return {total:rows.length,groups};
+}
 
-  const buildBlob=()=>new Promise((resolve,reject)=>{
-    const W=600, S=2, PAD=40;
+// The only canvas renderer of the report (Descargar and Compartir both use it).
+function renderAttendanceReportBlob(studentName, report) {
+  return new Promise((resolve,reject)=>{
+    const W=720, PAD=32, XD=150, XC=250, XS=590;
     const canvas=document.createElement("canvas");
     const wrap=(ctx,text,maxW)=>{
       const out=[]; let cur="";
@@ -3622,15 +3641,14 @@ function AttendanceReceiptModal({ studentName, year, month, entries, onClose }) 
       return out.length?out:[""];
     };
     const m=canvas.getContext("2d");
-    m.font="900 44px Arial"; const nameLines=wrap(m,nameUp,W-2*PAD);
-    m.font="bold 16px Arial"; const titleLines=entries.map((e,i)=>wrap(m,attReportRowTitle(e.date,i),400));
-    m.font="bold 14px Arial"; const subLines=entries.map(e=>wrap(m,attReportRowSub(e),400));
-    const headerH=100+(nameLines.length-1)*52+44;
-    const rowH=entries.map((_,i)=>18+titleLines[i].length*22+subLines[i].length*20+14);
-    const rowsH=rowH.reduce((a,b)=>a+b,0);
-    const barY=headerH+56;
-    const rowsY=barY+34+12;
-    const canvasH=rowsY+rowsH+60;
+    m.font="bold 26px Arial"; const nameLines=wrap(m,studentName||"",W-2*PAD);
+    m.font="13px Arial";
+    const layout=report.groups.map(g=>g.rows.map(r=>{const lines=wrap(m,r.className,XS-XC-12);return {lines,h:Math.max(44,27+(lines.length-1)*18+17)};}));
+    const headerH=48+(nameLines.length-1)*32+30+22+26;
+    const COLH=30, BARH=32;
+    const bodyH=layout.reduce((a,g)=>a+BARH+g.reduce((b,r)=>b+r.h,0),0);
+    const canvasH=headerH+COLH+bodyH+56;
+    const S=W*canvasH*4>16000000?1:2; // stay under mobile canvas-area limits on very long histories
     canvas.width=W*S; canvas.height=canvasH*S;
     const ctx=canvas.getContext("2d");
     ctx.scale(S,S);
@@ -3638,100 +3656,142 @@ function AttendanceReceiptModal({ studentName, year, month, entries, onClose }) 
     const grad=ctx.createLinearGradient(0,0,W,headerH);
     grad.addColorStop(0,"#0D1B4B"); grad.addColorStop(1,"#1A3DB5");
     ctx.fillStyle=grad; ctx.fillRect(0,0,W,headerH);
-    ctx.textAlign="center";
-    ctx.fillStyle="#8FA6FF"; ctx.font="bold 15px Arial";
-    ctx.fillText("COMPROBANTE DE ASISTENCIA",300,44);
-    ctx.fillStyle="#ffffff"; ctx.font="900 44px Arial";
-    nameLines.forEach((ln,i)=>ctx.fillText(ln,300,100+i*52));
-    ctx.fillStyle="#6B7BAD"; ctx.font="bold 13px Arial";
-    ctx.fillText("FECHAS DE CLASE",300,headerH+36);
-    ctx.fillStyle="#1F5391";
-    ctx.beginPath(); ctx.roundRect(PAD,barY,W-2*PAD,34,8); ctx.fill();
-    ctx.fillStyle="#ffffff"; ctx.font="bold 14px Arial";
-    ctx.fillText(monthLabel.split("").join(String.fromCharCode(8202)),300,barY+22);
-    let y=rowsY;
-    entries.forEach((e,i)=>{
-      ctx.textAlign="left";
-      let ty=y+18+16;
-      ctx.fillStyle="#0D1B4B"; ctx.font="bold 16px Arial";
-      titleLines[i].forEach(ln=>{ctx.fillText(ln,PAD,ty);ty+=22;});
-      ty-=22; ty+=20;
-      ctx.fillStyle="#8A94B0"; ctx.font="bold 14px Arial";
-      subLines[i].forEach(ln=>{ctx.fillText(ln,PAD+18,ty);ty+=20;});
-      const cy=y+rowH[i]/2-4;
-      ctx.fillStyle="#EDFBEC";
-      ctx.beginPath(); ctx.roundRect(W-PAD-44,cy-14,44,28,14); ctx.fill();
-      ctx.strokeStyle="#2E7D32"; ctx.lineWidth=2.4; ctx.lineCap="round"; ctx.lineJoin="round";
-      ctx.beginPath(); ctx.moveTo(W-PAD-32,cy); ctx.lineTo(W-PAD-25,cy+6); ctx.lineTo(W-PAD-12,cy-6); ctx.stroke();
-      ctx.strokeStyle="#EEF2FF"; ctx.lineWidth=1;
-      ctx.beginPath(); ctx.moveTo(PAD,y+rowH[i]-4); ctx.lineTo(W-PAD,y+rowH[i]-4); ctx.stroke();
-      y+=rowH[i];
+    ctx.textAlign="left";
+    ctx.fillStyle="#ffffff"; ctx.font="bold 26px Arial";
+    nameLines.forEach((ln,i)=>ctx.fillText(ln,PAD,48+i*32));
+    const sy=48+(nameLines.length-1)*32+30;
+    ctx.fillStyle="rgba(255,255,255,0.75)"; ctx.font="15px Arial";
+    ctx.fillText("Registro de Asistencia · izicoach",PAD,sy);
+    ctx.fillStyle="rgba(255,255,255,0.65)"; ctx.font="13px Arial";
+    ctx.fillText("Total: "+report.total+" clase"+(report.total!==1?"s":"")+" asistida"+(report.total!==1?"s":""),PAD,sy+22);
+    ctx.fillStyle="#EEF2FF"; ctx.fillRect(0,headerH,W,COLH);
+    ctx.fillStyle="#0D1B4B"; ctx.font="bold 11px Arial";
+    ctx.fillText("FECHA",PAD,headerH+19); ctx.fillText("DÍA",XD,headerH+19); ctx.fillText("CLASE",XC,headerH+19); ctx.fillText("ESTADO",XS,headerH+19);
+    let y=headerH+COLH;
+    report.groups.forEach((g,gi)=>{
+      ctx.fillStyle="#1F5391"; ctx.fillRect(0,y,W,BARH);
+      ctx.fillStyle="#ffffff"; ctx.font="bold 13px Arial"; ctx.textAlign="left";
+      ctx.fillText(g.label.split("").join(String.fromCharCode(8202)),PAD,y+21);
+      y+=BARH;
+      g.rows.forEach((r,ri)=>{
+        const {lines,h}=layout[gi][ri];
+        ctx.fillStyle=ri%2===0?"#F8F9FF":"#ffffff"; ctx.fillRect(0,y,W,h);
+        ctx.fillStyle="#0D1B4B"; ctx.font="13px Arial";
+        ctx.fillText(r.short,PAD,y+27); ctx.fillText(r.weekday,XD,y+27);
+        lines.forEach((ln,li)=>ctx.fillText(ln,XC,y+27+li*18));
+        ctx.fillStyle="#EDFBEC";
+        ctx.beginPath(); ctx.roundRect(XS,y+11,W-PAD-XS,22,11); ctx.fill();
+        ctx.fillStyle="#2E7D32"; ctx.font="bold 12px Arial"; ctx.textAlign="center";
+        ctx.fillText("✓ Presente",XS+(W-PAD-XS)/2,y+27); ctx.textAlign="left";
+        ctx.strokeStyle="#EEF2FF"; ctx.lineWidth=1;
+        ctx.beginPath(); ctx.moveTo(0,y+h); ctx.lineTo(W,y+h); ctx.stroke();
+        y+=h;
+      });
     });
     ctx.textAlign="center"; ctx.fillStyle="#9BACCB"; ctx.font="bold 12px Arial";
-    ctx.fillText("izicoach",300,canvasH-22);
+    ctx.fillText("izicoach",W/2,canvasH-22);
     canvas.toBlob(b=>b?resolve(b):reject(new Error("toBlob")),"image/png");
   });
+}
 
-  const handleShare=async()=>{
-    if(busyRef.current||!entries.length) return;
+const attReportFileName=(studentName)=>"registro-asistencia-"+((studentName||"alumno").normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"")||"alumno")+".png";
+
+function saveAttendanceBlob(blob, fileName) {
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url; a.download=fileName;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
+// Web Share with the file when supported; otherwise (or on a non-cancel share failure) download it.
+async function shareAttendanceBlob(blob, fileName) {
+  const file=new File([blob],fileName,{type:"image/png"});
+  if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){
+    try{
+      await navigator.share({files:[file],title:"Registro de Asistencia"});
+      return;
+    }catch(e){
+      if(e&&e.name==="AbortError") return; // user dismissed the native sheet — not an error
+    }
+  }
+  saveAttendanceBlob(blob,fileName);
+}
+
+// One busy guard for both controls, so a download and a share can never run at the same time.
+function useAttendanceReportExport(studentName, report) {
+  const [busy,setBusy]=useState(false);
+  const busyRef=useRef(false);
+  const [error,setError]=useState("");
+  const run=async(deliver)=>{
+    if(busyRef.current||!report.total) return;
     busyRef.current=true; setBusy(true); setError("");
     try{
-      const blob=await buildBlob();
-      const slug=(studentName||"alumno").normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"")||"alumno";
-      const fileName="asistencia-"+slug+"-"+year+"-"+String(month+1).padStart(2,"0")+".png";
-      const file=new File([blob],fileName,{type:"image/png"});
-      if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){
-        try{
-          await navigator.share({files:[file],title:"Comprobante de asistencia"});
-          return;
-        }catch(e){
-          if(e&&e.name==="AbortError") return; // user dismissed the native sheet — not an error
-          // any other share failure falls through to the PNG download below
-        }
-      }
-      const url=URL.createObjectURL(blob);
-      const a=document.createElement("a");
-      a.href=url; a.download=fileName;
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      setTimeout(()=>URL.revokeObjectURL(url),1000);
+      const blob=await renderAttendanceReportBlob(studentName,report);
+      await deliver(blob,attReportFileName(studentName));
     }catch{
       setError("No se pudo generar la imagen. Intentá de nuevo.");
     }finally{
       busyRef.current=false; setBusy(false);
     }
   };
+  return {busy,error,download:()=>run(saveAttendanceBlob),share:()=>run(shareAttendanceBlob)};
+}
 
+// Preview of the same report model (the PNG is drawn by renderAttendanceReportBlob, not from this DOM).
+function AttendanceReceiptModal({ studentName, report, busy, error, onShare, onClose }) {
+  const scrollRef=useRef(null);
+  const innerRef=useRef(null);
+  const [fit,setFit]=useState({scale:1,h:null});
+
+  // The card keeps its designed width and is scaled as a whole to fit narrow screens.
+  useLayoutEffect(()=>{
+    const measure=()=>{
+      if(!scrollRef.current||!innerRef.current) return;
+      const scale=Math.min(1,scrollRef.current.clientWidth/ATT_REPORT_DESIGN_W);
+      setFit({scale,h:innerRef.current.offsetHeight*scale});
+    };
+    measure();
+    window.addEventListener("resize",measure);
+    return ()=>window.removeEventListener("resize",measure);
+  },[report]);
+
+  const COLS="92px 76px 1fr 74px";
   return (
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.6)",zIndex:1099,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 20px"}} onClick={onClose}>
-      <div style={{width:"100%",maxWidth:380,maxHeight:"100%",display:"flex",flexDirection:"column",padding:"16px 0",boxSizing:"border-box"}} onClick={e=>e.stopPropagation()}>
-        <div style={{flex:"0 1 auto",minHeight:0,overflowY:"auto",borderRadius:20,boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
-          <div style={{background:"#fff",overflow:"hidden"}}>
-            <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"20px 20px 24px",textAlign:"center"}}>
-              <div style={{fontSize:13,color:"#8FA6FF",letterSpacing:1,marginBottom:8}}>COMPROBANTE DE ASISTENCIA</div>
-              <div style={{fontSize:28,fontWeight:900,color:"#fff",lineHeight:1.15,overflowWrap:"anywhere"}}>{nameUp}</div>
-            </div>
-            <div style={{padding:20}}>
-              <div style={{textAlign:"center",fontSize:11,fontWeight:700,color:"#6B7BAD",marginBottom:10}}>FECHAS DE CLASE</div>
-              <div style={{background:"#1F5391",borderRadius:8,padding:"8px 12px",textAlign:"center",fontSize:12,fontWeight:800,color:"#fff",letterSpacing:2,marginBottom:6}}>{monthLabel}</div>
-              {entries.map((e,i)=>(
-                <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:"1px solid #EEF2FF"}}>
-                  <div style={{flex:1,minWidth:0,textAlign:"left"}}>
-                    <div style={{fontSize:14,fontWeight:700,color:"#0D1B4B",overflowWrap:"anywhere"}}>{attReportRowTitle(e.date,i)}</div>
-                    <div style={{fontSize:12,fontWeight:700,color:"#8A94B0",marginTop:2,paddingLeft:14,overflowWrap:"anywhere"}}>{attReportRowSub(e)}</div>
-                  </div>
-                  <div style={{width:36,height:24,borderRadius:12,background:"#EDFBEC",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2E7D32" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                  </div>
+      <div style={{width:"100%",maxWidth:ATT_REPORT_DESIGN_W,maxHeight:"100%",display:"flex",flexDirection:"column",padding:"16px 0",boxSizing:"border-box"}} onClick={e=>e.stopPropagation()}>
+        <div ref={scrollRef} style={{flex:"0 1 auto",minHeight:0,overflowY:"auto",scrollbarGutter:"stable",borderRadius:20,boxShadow:"0 20px 60px rgba(0,0,0,0.3)",background:"#fff"}}>
+          <div style={{width:"100%",height:fit.h==null?undefined:fit.h,overflow:"hidden"}}>
+            <div ref={innerRef} style={{width:ATT_REPORT_DESIGN_W,background:"#fff",textAlign:"left",transform:"scale("+fit.scale+")",transformOrigin:"top left"}}>
+              <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"20px 20px 22px"}}>
+                <div style={{fontSize:22,fontWeight:800,color:"#fff",lineHeight:1.2,overflowWrap:"anywhere"}}>{studentName}</div>
+                <div style={{fontSize:13,color:"rgba(255,255,255,0.75)",marginTop:6}}>Registro de Asistencia · izicoach</div>
+                <div style={{fontSize:12,color:"rgba(255,255,255,0.65)",marginTop:3}}>{"Total: "+report.total+" clase"+(report.total!==1?"s":"")+" asistida"+(report.total!==1?"s":"")}</div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:COLS,padding:"8px 16px",background:"#EEF2FF",fontSize:11,fontWeight:700,color:"#0D1B4B"}}>
+                <div>FECHA</div><div>DÍA</div><div>CLASE</div><div>ESTADO</div>
+              </div>
+              {report.groups.map(g=>(
+                <div key={g.label}>
+                  <div style={{background:"#1F5391",color:"#fff",padding:"8px 16px",fontSize:12,fontWeight:800,letterSpacing:2}}>{g.label}</div>
+                  {g.rows.map((r,i)=>(
+                    <div key={i} style={{display:"grid",gridTemplateColumns:COLS,alignItems:"center",padding:"12px 16px",background:i%2===0?"#F8F9FF":"#fff",borderBottom:"1px solid #EEF2FF",fontSize:13,color:"#0D1B4B"}}>
+                      <div>{r.short}</div>
+                      <div>{r.weekday}</div>
+                      <div style={{minWidth:0,overflowWrap:"anywhere",paddingRight:8}}>{r.className}</div>
+                      <div style={{fontSize:11,fontWeight:700,color:"#2E7D32",background:"#EDFBEC",borderRadius:11,padding:"3px 0",textAlign:"center"}}>✓ Presente</div>
+                    </div>
+                  ))}
                 </div>
               ))}
-              <div style={{textAlign:"center",marginTop:16,fontSize:11,color:"#9BACCB",fontWeight:700,letterSpacing:1}}>izicoach</div>
+              <div style={{textAlign:"center",padding:"16px 0 18px",fontSize:11,color:"#9BACCB",fontWeight:700,letterSpacing:1}}>izicoach</div>
             </div>
           </div>
         </div>
         {error&&<div style={{marginTop:10,fontSize:12,fontWeight:600,color:"#fff",textAlign:"center"}}>{error}</div>}
         <div style={{display:"flex",gap:10,marginTop:12,flexShrink:0}}>
           <button onClick={onClose} style={{flex:1,padding:"13px",borderRadius:12,border:"none",background:"rgba(255,255,255,0.2)",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:700}}>Cerrar</button>
-          <button onClick={handleShare} disabled={busy} style={{flex:2,padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#2E7D32,#65CE5A)",color:"#fff",cursor:busy?"default":"pointer",opacity:busy?0.7:1,fontSize:14,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+          <button onClick={onShare} disabled={busy} style={{flex:2,padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#2E7D32,#65CE5A)",color:"#fff",cursor:busy?"default":"pointer",opacity:busy?0.7:1,fontSize:14,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
             Compartir
           </button>
@@ -5558,7 +5618,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
   const [showPago,setShowPago]=useState(false);
   const [showHistory,setShowHistory]=useState(false);
   const [showAtt,setShowAtt]=useState(false);
-  const [attReport,setAttReport]=useState(null);
+  const [showAttReport,setShowAttReport]=useState(false);
   const [suspended,setSuspended]=useState(s.suspended||false);
   const toggleSuspended=()=>{
     const newVal=!suspended;
@@ -5588,13 +5648,13 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
     logged.forEach(entry=>{
       const d=new Date(entry.date+"T12:00:00");
       const isAusenteDada=entry.ausente_dada&&entry.ausente_dada.includes(s.id);
-      attLogs.push({date:entry.date,day:entry.day||"",month:MONTHS[d.getMonth()],year:d.getFullYear(),dayNum:d.getDate(),className:cls.title,time:cls.time,status:isAusenteDada?"ausente_dada":"presente"});
+      attLogs.push({date:entry.date,day:entry.day||"",month:MONTHS[d.getMonth()],year:d.getFullYear(),dayNum:d.getDate(),className:cls.title,cid:cls._seriesId||cls.id,time:cls.time,status:isAusenteDada?"ausente_dada":"presente"});
     });
     // Also include past classes with NO attendance record (default = present)
     if(cls.date<TODAY_DATE&&!cls.paused&&cls.cancelType!=="paused"&&!cls.cancelled&&!(cls.attendanceLog||[]).find(e=>e.date===cls.date)){
       const d=new Date(cls.date+"T12:00:00");
       const wD=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
-      attLogs.push({date:cls.date,day:wD[d.getDay()],month:MONTHS[d.getMonth()],year:d.getFullYear(),dayNum:d.getDate(),className:cls.title,time:cls.time,status:"presente"});
+      attLogs.push({date:cls.date,day:wD[d.getDay()],month:MONTHS[d.getMonth()],year:d.getFullYear(),dayNum:d.getDate(),className:cls.title,cid:cls._seriesId||cls.id,time:cls.time,status:"presente"});
     }
     // Include paused classes
     if(cls.paused||cls.cancelType==="paused"){
@@ -5612,24 +5672,9 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
   attLogs.sort((a,b)=>b.date.localeCompare(a.date));
   const byMonth={};
   attLogs.forEach(l=>{const k=l.month+" "+l.year;if(!byMonth[k])byMonth[k]=[];byMonth[k].push(l);});
-  // Monthly attendance report source: ONLY saved-present attendanceLog entries (never the
-  // "past class with no record defaults to present" rows above), one per real occurrence
-  // (series id + date), across every class/group of the student.
-  const reportByMonth={};
-  const reportSeen=new Set();
-  classes.forEach(cls=>{
-    if(!cls.students||!cls.students.includes(s.id)) return;
-    (cls.attendanceLog||[]).forEach(entry=>{
-      if(!(entry.present&&entry.present.includes(s.id))||!/^\d{4}-\d{2}-\d{2}$/.test(entry.date||"")) return;
-      const k=(cls._seriesId||cls.id)+"|"+entry.date;
-      if(reportSeen.has(k)) return;
-      reportSeen.add(k);
-      const mk=entry.date.slice(0,7);
-      if(!reportByMonth[mk]) reportByMonth[mk]=[];
-      reportByMonth[mk].push({date:entry.date,className:cls.title,time:cls.time||""});
-    });
-  });
-  Object.values(reportByMonth).forEach(list=>list.sort((a,b)=>a.date.localeCompare(b.date)||(a.time||"").localeCompare(b.time||"")||(a.className||"").localeCompare(b.className||"")));
+  // Single report model for BOTH Descargar and Compartir (built from the same attLogs the screen renders).
+  const attReport=buildAttendanceReport(attLogs);
+  const attExport=useAttendanceReportExport(s.name,attReport);
   const ATT_STATUS_LABEL={
     presente:{text:"✓ Presente",short:"✓",color:"#2E7D32",bg:"#EDFBEC"},
     ausente_dada:{text:"Ausente",short:"Ausente",color:"#E65100",bg:"#FFF3E0"},
@@ -6116,57 +6161,16 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
           <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
             <button onClick={()=>setShowAtt(false)} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
             <div style={{flex:1}}><div style={{fontWeight:800,fontSize:16,color:C.white}}>Registro de Asistencia</div><div style={{fontSize:12,color:C.muted}}>{s.name}</div></div>
-            <button onClick={async()=>{
-              const mN=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
-              const rowH=44; const headerH=130; const footerH=40;
-              const canvas=document.createElement("canvas");
-              canvas.width=600; canvas.height=headerH+attLogs.length*rowH+footerH+20;
-              const ctx=canvas.getContext("2d");
-              ctx.fillStyle="#fff"; ctx.fillRect(0,0,canvas.width,canvas.height);
-              // Header
-              const grad=ctx.createLinearGradient(0,0,600,headerH);
-              grad.addColorStop(0,"#0D1B4B"); grad.addColorStop(1,"#1A3DB5");
-              ctx.fillStyle=grad; ctx.fillRect(0,0,600,headerH);
-              ctx.fillStyle="#fff"; ctx.font="bold 22px Arial"; ctx.textAlign="left";
-              ctx.fillText(s.name,30,45);
-              ctx.fillStyle="rgba(255,255,255,0.7)"; ctx.font="14px Arial";
-              ctx.fillText("Registro de Asistencia · izicoach",30,70);
-              ctx.fillStyle="rgba(255,255,255,0.5)"; ctx.font="12px Arial";
-              ctx.fillText("Total: "+attLogs.length+" clases asistidas",30,95);
-              // Column headers
-              ctx.fillStyle="#EEF2FF"; ctx.fillRect(0,headerH,600,28);
-              ctx.fillStyle="#0D1B4B"; ctx.font="bold 11px Arial"; ctx.textAlign="left";
-              ctx.fillText("FECHA",30,headerH+19);
-              ctx.fillText("DÍA",160,headerH+19);
-              ctx.fillText("CLASE",260,headerH+19);
-              ctx.fillText("ESTADO",440,headerH+19);
-              // Rows
-              attLogs.forEach((e,i)=>{
-                const y=headerH+28+i*rowH;
-                ctx.fillStyle=i%2===0?"#F8F9FF":"#fff"; ctx.fillRect(0,y,600,rowH);
-                const d=new Date(e.date+"T12:00:00");
-                ctx.fillStyle="#0D1B4B"; ctx.font="13px Arial"; ctx.textAlign="left";
-                ctx.fillText(d.getDate()+" "+mN[d.getMonth()]+" "+d.getFullYear(),30,y+26);
-                ctx.fillText(e.day||"",160,y+26);
-                ctx.fillText((e.className||"").slice(0,22),260,y+26);
-                const stPng=ATT_STATUS_LABEL[e.status]||ATT_STATUS_LABEL.presente;
-                ctx.fillStyle=stPng.color;
-                ctx.font="bold 11px Arial";
-                ctx.fillText(stPng.text,440,y+26);
-                ctx.strokeStyle="#EEF2FF"; ctx.lineWidth=1;
-                ctx.beginPath(); ctx.moveTo(0,y+rowH); ctx.lineTo(600,y+rowH); ctx.stroke();
-              });
-              // Footer
-              ctx.fillStyle="#9BACCB"; ctx.font="11px Arial"; ctx.textAlign="center";
-              ctx.fillText("izicoach · Generado el "+TODAY_DATE,300,canvas.height-12);
-              const a=document.createElement("a");
-              a.href=canvas.toDataURL("image/png");
-              a.download="asistencia-"+s.name+".png";
-              a.click();
-            }} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:36,height:36,cursor:"pointer",color:C.white,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+            {attReport.total>0&&(<>
+            <button onClick={attExport.download} disabled={attExport.busy} aria-label="Descargar" title="Descargar" style={{background:C.whiteA,border:"none",borderRadius:"50%",width:36,height:36,cursor:attExport.busy?"default":"pointer",opacity:attExport.busy?0.6:1,color:C.white,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             </button>
+              <button onClick={()=>setShowAttReport(true)} aria-label="Compartir" title="Compartir" style={{background:C.whiteA,border:"none",borderRadius:"50%",width:36,height:36,cursor:"pointer",color:C.white,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+              </button>
+            </>)}
           </div>
+          {attExport.error&&!showAttReport&&<div style={{background:"#FFF0F0",color:"#C62828",fontSize:12,fontWeight:600,padding:"8px 16px",textAlign:"center"}}>{attExport.error}</div>}
           <div style={{flex:1,overflowY:"auto",padding:16}}>
             {attLogs.length===0?(
               <div style={{textAlign:"center",padding:"40px 0"}}><div style={{fontSize:36,marginBottom:8}}>📋</div><div style={{color:C.mutedDark,fontSize:14}}>Sin registros de asistencia aún</div></div>
@@ -6181,17 +6185,6 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
                     <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
                       <span style={{background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",color:C.white,padding:"4px 14px",borderRadius:20,fontSize:12,fontWeight:700}}>{month}</span>
                       <span style={{fontSize:12,color:C.mutedDark}}>{entries.length+" clase"+(entries.length>1?"s":"")}</span>
-                      {(()=>{
-                        const mk=entries[0].date.slice(0,7);
-                        const rep=reportByMonth[mk];
-                        if(!rep||!rep.length) return null;
-                        return (
-                          <button onClick={()=>setAttReport({year:+mk.slice(0,4),month:+mk.slice(5,7)-1,entries:rep})} style={{marginLeft:"auto",background:C.blueL,border:"1px solid "+C.border,borderRadius:10,padding:"6px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
-                            <span style={{fontSize:11,fontWeight:700,color:C.blue2}}>Compartir</span>
-                          </button>
-                        );
-                      })()}
                     </div>
                     {entries.map((e,i)=>(
                       <WhiteCard key={i} style={{marginBottom:8,padding:"12px 14px"}}>
@@ -6216,7 +6209,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
               </div>
             )}
           </div>
-          {attReport&&<AttendanceReceiptModal studentName={s.name} year={attReport.year} month={attReport.month} entries={attReport.entries} onClose={()=>setAttReport(null)}/>}
+          {showAttReport&&<AttendanceReceiptModal studentName={s.name} report={attReport} busy={attExport.busy} error={attExport.error} onShare={attExport.share} onClose={()=>setShowAttReport(false)}/>}
         </div>
       )}
     </>
