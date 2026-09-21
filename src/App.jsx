@@ -753,6 +753,91 @@ const guardEndOfPackageWrite=({series,students,slotDate,expectedDate,todayDate,k
   return (r.ok&&r.date===expectedDate)?null:{status:"end-of-package-unavailable"};
 };
 
+// ---- "Volver a fecha original" (Agenda, original reprogrammed card) ----
+// Undoes ONE direct reprogramming X -> Z of a series: the only thing it ever removes is dateCancellations[X].
+// Pure and read-only; `todayDate` is always passed in (recomputed fresh by callers, never the module constant).
+// Returns {ok:true,kind:"ok",originDate,destDate,studentIds} or {ok:false,kind,reason,...} where
+//   kind "readonly" = not a reversible shape at all (legacy series, no/pending entry, multi-step chain, cycle, invalid data):
+//                     the card stays read-only, no menu;
+//   kind "blocked"  = a direct X -> Z relation that cannot be undone right now: the action shows disabled + reason.
+const todayIso=()=>isoOfDate(new Date());
+const REVERT_REPROG_MESSAGES={
+  attendance:"No se puede volver: ya hay asistencia registrada en la fecha original o en la nueva fecha.",
+  paused:"No se puede volver mientras haya una pausa o reanudación que involucre esta clase.",
+  "past-origin":"No se puede volver: la fecha original ya pasó.",
+  "past-destination":"No se puede volver: la nueva fecha es hoy o ya pasó.",
+  "shared-destination":"No se puede volver: otra clase también fue reprogramada a la misma nueva fecha.",
+  "origin-occupied":"No se puede volver: otra clase fue reprogramada a la fecha original.",
+  "destination-cancelled":"No se puede volver: la nueva fecha figura como cancelada.",
+  "write-pending":"Hay cambios pendientes de sincronizar. Esperá unos segundos e intentá de nuevo.",
+  "destination-changed":"La reprogramación cambió. Cerrá y volvé a abrir la clase.",
+};
+const revertReprogMessage=(reason)=>REVERT_REPROG_MESSAGES[reason]||"Esta clase ya no puede volver a su fecha original.";
+const resolveRevertReprogTarget=({series,students,originDate,todayDate})=>{
+  const readonly=(reason)=>({ok:false,kind:"readonly",reason});
+  if(!series||!isValidIsoDate(originDate)||!isValidIsoDate(todayDate)) return readonly("invalid");
+  // Only the current (new) class format: occurrences + cancelledDates + dateCancellations.
+  if(!Object.prototype.hasOwnProperty.call(series,"cancelledDates")||!Array.isArray(series.occurrences)||!series.occurrences.includes(originDate)) return readonly("not-applicable");
+  const dc=series.dateCancellations;
+  if(!dc||typeof dc!=="object") return readonly("not-applicable");
+  const own=dc[originDate];
+  if(!own||own.cancelType!=="cancelled_reprog"||!own.rescheduledTo) return readonly("not-applicable"); // pending (no destination) is out of scope
+  const destDate=own.rescheduledTo;
+  if(!isValidIsoDate(destDate)||destDate===originDate) return readonly("invalid");
+  const trace=traceRescheduleHistory(dc,originDate);
+  if(trace.broken||trace.path.length!==2) return readonly("chain"); // cycle or more than one hop
+  const blocked=(reason)=>({ok:false,kind:"blocked",reason,originDate,destDate});
+  const destEntry=dc[destDate];
+  if(destEntry){
+    if(destEntry.cancelType==="paused") return blocked("paused");
+    if(destEntry.cancelType==="cancelled") return blocked("destination-cancelled");
+    return readonly("chain"); // the destination is itself pending a reprogramming
+  }
+  // Attendance on either date, for ANY student (the log is per series/date).
+  if((series.attendanceLog||[]).some(e=>e&&(e.date===originDate||e.date===destDate))) return blocked("attendance");
+  // Pauses: any active (uncompensated) pause in the series, a pending plannedResume, or a resume operation of one
+  // of its students that involves either date.
+  if(Object.values(dc).some(e=>e&&e.cancelType==="paused"&&!e.compensated)) return blocked("paused");
+  if(series.plannedResume&&!series.plannedResume.completed) return blocked("paused");
+  for(const sid of series.students||[]){
+    const st=(students||[]).find(s=>s.id===sid);
+    if(!st) continue;
+    for(const combo of (st.combos||[])){
+      if(combo.sourceClassId!==undefined&&combo.sourceClassId!==series.id) continue;
+      for(const op of (Array.isArray(combo.resumeOperations)?combo.resumeOperations:[])){
+        const touched=[...(op.pausedDates||[]),...(op.replacementDates||[])];
+        if(touched.includes(originDate)||touched.includes(destDate)) return blocked("paused");
+      }
+    }
+  }
+  if(originDate<todayDate) return blocked("past-origin");
+  if(destDate<=todayDate) return blocked("past-destination");
+  // Conflicts: another reprogramming that lands on the same destination, or on the original date.
+  const others=Object.entries(dc).filter(([d,e])=>d!==originDate&&e&&e.cancelType==="cancelled_reprog"&&e.rescheduledTo);
+  if(others.some(([,e])=>e.rescheduledTo===destDate)) return blocked("shared-destination");
+  if(others.some(([,e])=>e.rescheduledTo===originDate)) return blocked("origin-occupied");
+  return {ok:true,kind:"ok",originDate,destDate,studentIds:[...(series.students||[])]};
+};
+// Write-time guard: re-runs the resolver against the LATEST state; refuses (returns the outcome to hand back to the
+// caller) unless the very relation the user confirmed (same origin, same destination) is still revertible. null = safe.
+const guardRevertReprogWrite=({series,students,originDate,expectedDest,todayDate})=>{
+  const r=resolveRevertReprogTarget({series,students,originDate,todayDate});
+  if(r.ok) return r.destDate===expectedDest?null:{status:"revert-unavailable",reason:"destination-changed"};
+  return {status:"revert-unavailable",reason:r.reason};
+};
+// Class-row update for a revert, kept pure so it can be verified in isolation. Removes ONLY dateCancellations[originDate]
+// (the whole key when nothing remains) and recomputes `rescheduled` only if the row already carries it. Never mutates
+// its input and never copies card/internal fields into the row.
+const applyRevertReprogToClassRow=(c,originDate)=>{
+  const dc={...(c.dateCancellations||{})};
+  delete dc[originDate];
+  let next;
+  if(Object.keys(dc).length>0) next={...c,dateCancellations:dc};
+  else { const {dateCancellations:_removed,...withoutDc}=c; next=withoutDc; }
+  if(Object.prototype.hasOwnProperty.call(c,"rescheduled")) next={...next,rescheduled:Object.values(dc).some(e=>e&&e.cancelType==="cancelled_reprog"&&!!e.rescheduledTo)};
+  return next;
+};
+
 // Defense against a resume that would (or did) place a replacement on a date another slot already
 // occupies. Invariants of ONE resumeOperation, read against the combo that holds it: unique replacement dates,
 // one per paused date, all on/after the resume date, all present in combo.dates, none landing on a
@@ -3687,6 +3772,72 @@ function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent,
   );
 }
 
+// "Volver a fecha original" panel of an ORIGINAL reprogrammed Agenda card (month and week share it). Eligibility is
+// re-read on every render with a fresh "today"; confirming re-validates again in handleSaveClass.
+function RevertReprogModal({ cls, series, students=[], onClose, onSave, isSettled }) {
+  const [confirming,setConfirming]=useState(false);
+  const [note,setNote]=useState("");
+  const savingRef=useRef(false);
+  const rv=resolveRevertReprogTarget({series,students,originDate:cls.date,todayDate:todayIso()});
+  const pending=!!isSettled&&!isSettled();
+  const canRevert=rv.ok&&!pending;
+  const reason=rv.ok?(pending?"write-pending":null):rv.reason;
+  const origin=cls.date;
+  const dest=rv.destDate||cls.rescheduledTo||null;
+  const names=(series&&series.students||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean);
+  const handleConfirm=()=>{
+    if(savingRef.current) return;
+    savingRef.current=true;
+    const r=onSave({_seriesId:cls._seriesId||cls.id,date:origin,_revertReprog:{origin,dest}},true);
+    if(r&&r.status==="revert-unavailable"){
+      savingRef.current=false; setConfirming(false); setNote(revertReprogMessage(r.reason));
+      return;
+    }
+    onClose();
+  };
+  return (
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.45)",zIndex:99,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 16px"}} onClick={onClose}>
+      <div style={{background:C.white,borderRadius:24,padding:"20px 20px 24px",width:"100%",boxShadow:"0 20px 60px rgba(0,0,0,0.25)"}} onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+          <div>
+            <div style={{fontWeight:900,fontSize:20,color:C.text}}>{cls.title}</div>
+            <div style={{fontSize:13,color:C.mutedDark,marginTop:2}}>{cls.time+(cls.timeEnd?" – "+cls.timeEnd:"")} · {cls.court}</div>
+          </div>
+          <button onClick={onClose} style={{width:36,height:36,borderRadius:"50%",background:C.bg,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.mutedDark} strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        {dest&&<div style={{fontSize:12,color:"#2E7D32",marginBottom:10}}>📅 Reprogramada al {fmtDate(dest)}</div>}
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:18}}>
+          {names.map(st=>(
+            <div key={st.id} style={{display:"flex",alignItems:"center",gap:5,background:C.blueL,borderRadius:20,padding:"4px 10px 4px 4px"}}>
+              <div style={{width:22,height:22,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:800,color:C.white}}>{st.avatar[0]}</div>
+              <span style={{fontSize:12,color:C.blue2,fontWeight:700}}>{st.name.split(" ")[0]}</span>
+            </div>
+          ))}
+        </div>
+        {confirming&&canRevert?(
+          <>
+            <div style={{fontSize:13,color:C.text,marginBottom:6,fontWeight:600}}>La clase dejará {fmtDate(dest)} y volverá a {fmtDate(origin)}.</div>
+            <div style={{fontSize:12,color:C.mutedDark,marginBottom:14}}>Alumnos: {names.map(st=>st.name).join(", ")}</div>
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={()=>setConfirming(false)} style={{flex:1,padding:"13px",borderRadius:14,border:"1.5px solid #DDE3F0",background:"#fff",cursor:"pointer",fontSize:13,color:"#6B7BAD",fontWeight:700}}>Cancelar</button>
+              <button onClick={handleConfirm} style={{flex:2,padding:"13px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#1565C0,#42A5F5)",color:"#fff",cursor:"pointer",fontSize:13,fontWeight:800}}>Confirmar</button>
+            </div>
+          </>
+        ):(
+          <>
+            <button onClick={canRevert?()=>{setNote("");setConfirming(true);}:null} disabled={!canRevert} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"13px",borderRadius:14,border:"none",background:canRevert?"linear-gradient(135deg,#1565C0,#42A5F5)":"#E0E0E0",color:canRevert?"#fff":"#9E9E9E",fontSize:13,cursor:canRevert?"pointer":"not-allowed",fontWeight:700,boxShadow:canRevert?"0 4px 12px rgba(0,0,0,0.15)":"none"}}>
+              ↩ Volver a fecha original{canRevert?"":" 🔒"}
+            </button>
+            {(reason||note)&&<div style={{fontSize:12,color:"#C62828",marginTop:10}}>{note||revertReprogMessage(reason)}</div>}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent }) {
   const [newDate,setNewDate]=useState("");
   const [newTime,setNewTime]=useState(cls.time||"08:00");
@@ -4446,6 +4597,18 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
   // Auto-open reprog modal if navigated from dashboard
   useEffect(()=>{if(pendingReprog){setShowCancel(pendingReprog);onClearPendingReprog&&onClearPendingReprog();}},[pendingReprog]); // class to reschedule
 
+  // "Volver a fecha original": only an ORIGINAL card that today reads as history-reprog (read-only) and whose relation is
+  // a direct X -> Z (revertible now or blocked with a reason) gets "Opciones"; every other shape stays read-only as before.
+  const revertInfoOf=(c,agMenu)=>{
+    if(!agMenu.readOnly||agMenu.kind!=="history-reprog") return null;
+    const r=resolveRevertReprogTarget({series:(rawClasses||classes).find(c2=>c2.id===(c._seriesId||c.id)),students,originDate:c.date,todayDate:todayIso()});
+    return r.kind==="readonly"?null:r;
+  };
+  const renderRevertModal=(c)=>{
+    if(!revertInfoOf(c,resolveAgendaMenu(c,resolveAgendaCardStatus(c,students,classes,TODAY_DATE),WEEK_AGO))) return null;
+    return <RevertReprogModal key={c._virtualId||c.id} cls={c} series={(rawClasses||classes).find(c2=>c2.id===(c._seriesId||c.id))} students={students} isSettled={isClassesWriteSettled} onSave={onSaveClass} onClose={()=>setHighlightCls(null)}/>;
+  };
+
   const ClassCard=({c})=>{
     const log=(c.attendanceLog||[]).find(e=>e.date===c.date);
     const dadaCount=(log?.ausente_dada||[]).length;
@@ -4589,13 +4752,15 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
               const isCancelled=c.cancelled&&c.cancelType==="cancelled";
               const agSt=resolveAgendaCardStatus(c,students,classes,TODAY_DATE);
               const agMenu=resolveAgendaMenu(c,agSt,WEEK_AGO);
+              const rvInfo=revertInfoOf(c,agMenu);
+              const canOpenMenu=!agMenu.readOnly||!!rvInfo;
               const reprogTo=c.rescheduledTo||agSt.reprogSettledTo;
               const isReprogWithDate=c.cancelled&&c.cancelType==="cancelled_reprog"&&reprogTo;
               const isReprogNoDate=c.cancelled&&c.cancelType==="cancelled_reprog"&&!reprogTo;
               const isPaused=c.paused||c.cancelType==="paused";
               const cardBg=isPaused?"#FFF3E0":isCancelled?"#FFF0F0":isReprogWithDate?"#E8F5E9":isReprogNoDate?"#E3F2FD":isNextComboPending(c,students)?"#F5F5F5":C.white;
               return (
-              <div key={c._virtualId||c.id} onClick={agMenu.readOnly?undefined:()=>setHighlightCls((c._virtualId||c.id)===highlightCls?null:(c._virtualId||c.id))} style={{background:cardBg,borderRadius:16,padding:"12px 14px",marginBottom:10,boxShadow:highlightCls===(c._virtualId||c.id)?"0 4px 16px rgba(44,94,247,0.18)":"0 2px 10px rgba(44,94,247,0.07)",border:"1.5px solid "+(highlightCls===(c._virtualId||c.id)?C.blue2:isPaused?"#FFB74D":isCancelled?"#FFCDD2":isReprogWithDate?"#A5D6A7":isReprogNoDate?"#90CAF9":isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:agMenu.readOnly?"default":"pointer",opacity:isNextComboPending(c,students)?0.75:1,transition:"box-shadow 0.15s,border 0.15s"}}>
+              <div key={c._virtualId||c.id} onClick={canOpenMenu?()=>setHighlightCls((c._virtualId||c.id)===highlightCls?null:(c._virtualId||c.id)):undefined} style={{background:cardBg,borderRadius:16,padding:"12px 14px",marginBottom:10,boxShadow:highlightCls===(c._virtualId||c.id)?"0 4px 16px rgba(44,94,247,0.18)":"0 2px 10px rgba(44,94,247,0.07)",border:"1.5px solid "+(highlightCls===(c._virtualId||c.id)?C.blue2:isPaused?"#FFB74D":isCancelled?"#FFCDD2":isReprogWithDate?"#A5D6A7":isReprogNoDate?"#90CAF9":isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:canOpenMenu?"pointer":"default",opacity:isNextComboPending(c,students)?0.75:1,transition:"box-shadow 0.15s,border 0.15s"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:4}}>
@@ -4610,7 +4775,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                       <span style={{fontSize:12,color:C.mutedDark}}>{c.time+(c.timeEnd?" - "+c.timeEnd:"")} · {c.court}</span>
                     </div>
                   </div>
-                  {!agMenu.readOnly&&<div style={{flexShrink:0}}>
+                  {canOpenMenu&&<div style={{flexShrink:0}}>
                     <div style={{display:"flex",alignItems:"center",gap:4,background:highlightCls===(c._virtualId||c.id)?C.blue2:"#F0F2FF",borderRadius:20,padding:"5px 10px"}}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill={highlightCls===(c._virtualId||c.id)?"#fff":C.blue2}><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
                       <span style={{fontSize:10,fontWeight:700,color:highlightCls===(c._virtualId||c.id)?"#fff":C.blue2}}>{highlightCls===(c._virtualId||c.id)?"Cerrar":"Opciones"}</span>
@@ -4633,7 +4798,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
           {highlightCls&&(()=>{
             const c=classes.find(x=>(x._virtualId||x.id)===highlightCls);
             if(!c) return null;
-            if(resolveAgendaMenu(c,resolveAgendaCardStatus(c,students,classes,TODAY_DATE),WEEK_AGO).readOnly) return null;
+            if(resolveAgendaMenu(c,resolveAgendaCardStatus(c,students,classes,TODAY_DATE),WEEK_AGO).readOnly) return renderRevertModal(c);
             return (
               <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.45)",zIndex:99,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 16px"}} onClick={()=>setHighlightCls(null)}>
                 <div style={{background:C.white,borderRadius:24,padding:"20px 20px 24px",width:"100%",boxShadow:"0 20px 60px rgba(0,0,0,0.25)"}} onClick={e=>e.stopPropagation()}>
@@ -4804,16 +4969,20 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                     const colL=`calc(${LEFT}px + (100% - ${LEFT}px - ${RIGHT}px) / ${c.totalCols} * ${c.col} + ${c.col*2}px)`;
                     const agSt=resolveAgendaCardStatus(c,students,classes,TODAY_DATE);
                     const agMenu=resolveAgendaMenu(c,agSt,WEEK_AGO);
+                    const rvInfo=revertInfoOf(c,agMenu);
+                    const canOpenMenu=!agMenu.readOnly||!!rvInfo;
                     const reprogTo=c.rescheduledTo||agSt.reprogSettledTo;
                     return (
-                      <div key={c._virtualId||c.id} onClick={agMenu.readOnly?undefined:()=>setHighlightCls((c._virtualId||c.id)===highlightCls?null:(c._virtualId||c.id))}
-                        style={{position:"absolute",top:topPx,left:colL,width:colW,height:heightPx,background:c.paused||c.cancelType==="paused"?"#FFF3E0":c.cancelled&&c.cancelType==="cancelled"?"#FFF0F0":c.cancelled&&c.cancelType==="cancelled_reprog"&&reprogTo?"#E8F5E9":c.cancelled&&c.cancelType==="cancelled_reprog"?"#E3F2FD":isNextComboPending(c,students)?"#F5F5F5":C.white,borderRadius:12,padding:"6px 10px",border:"1.5px solid "+(highlightCls===(c._virtualId||c.id)?C.blue2:isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:agMenu.readOnly?"default":"pointer",boxShadow:"0 2px 8px rgba(44,94,247,0.10)",overflow:"hidden",borderLeft:"4px solid "+(c.paused||c.cancelType==="paused"?"#E65100":c.cancelled&&c.cancelType==="cancelled"?"#C62828":c.cancelled&&c.cancelType==="cancelled_reprog"&&reprogTo?"#2E7D32":c.cancelled&&c.cancelType==="cancelled_reprog"?"#1565C0":isNextComboPending(c,students)?"#BDBDBD":C.blue2),zIndex:2,opacity:isNextComboPending(c,students)?0.7:1}}>
+                      <div key={c._virtualId||c.id} onClick={canOpenMenu?()=>setHighlightCls((c._virtualId||c.id)===highlightCls?null:(c._virtualId||c.id)):undefined}
+                        style={{position:"absolute",top:topPx,left:colL,width:colW,height:heightPx,background:c.paused||c.cancelType==="paused"?"#FFF3E0":c.cancelled&&c.cancelType==="cancelled"?"#FFF0F0":c.cancelled&&c.cancelType==="cancelled_reprog"&&reprogTo?"#E8F5E9":c.cancelled&&c.cancelType==="cancelled_reprog"?"#E3F2FD":isNextComboPending(c,students)?"#F5F5F5":C.white,borderRadius:12,padding:"6px 10px",border:"1.5px solid "+(highlightCls===(c._virtualId||c.id)?C.blue2:isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:canOpenMenu?"pointer":"default",boxShadow:"0 2px 8px rgba(44,94,247,0.10)",overflow:"hidden",borderLeft:"4px solid "+(c.paused||c.cancelType==="paused"?"#E65100":c.cancelled&&c.cancelType==="cancelled"?"#C62828":c.cancelled&&c.cancelType==="cancelled_reprog"&&reprogTo?"#2E7D32":c.cancelled&&c.cancelType==="cancelled_reprog"?"#1565C0":isNextComboPending(c,students)?"#BDBDBD":C.blue2),zIndex:2,opacity:isNextComboPending(c,students)?0.7:1}}>
                         <div style={{display:"flex",alignItems:"center",gap:4,overflow:"hidden"}}>
                           <div style={{fontSize:13,fontWeight:800,color:c.paused||c.cancelType==="paused"?"#E65100":c.cancelled&&c.cancelType==="cancelled"?"#C62828":c.cancelled&&c.cancelType==="cancelled_reprog"&&reprogTo?"#2E7D32":c.cancelled&&c.cancelType==="cancelled_reprog"?"#1565C0":isNextComboPending(c,students)?"#9E9E9E":C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",flex:1}}>{c.title}{c.paused||c.cancelType==="paused"?" (Pausada)":c.cancelled&&c.cancelType==="cancelled"?" (Cancelada)":c.cancelled&&c.cancelType==="cancelled_reprog"&&reprogTo?" (Reprogramada)":c.cancelled&&c.cancelType==="cancelled_reprog"?" (A Reprogramar)":""}</div>
                           {agendaPaymentChip(agSt.payment,9)}
                           {isNextComboPending(c,students)&&<span style={{fontSize:9,padding:"2px 5px",borderRadius:8,background:"#EEEEEE",color:"#757575",fontWeight:700,flexShrink:0}}>Sin pagar</span>}
+                          {rvInfo&&<span style={{fontSize:9,padding:"2px 6px",borderRadius:8,background:highlightCls===(c._virtualId||c.id)?C.blue2:"#F0F2FF",color:highlightCls===(c._virtualId||c.id)?"#fff":C.blue2,fontWeight:700,flexShrink:0}}>{highlightCls===(c._virtualId||c.id)?"Cerrar":"Opciones"}</span>}
                         </div>
                         <div style={{fontSize:11,color:C.mutedDark,marginTop:1}}>{c.time+(c.timeEnd?" – "+c.timeEnd:"")} · {c.court}</div>
+                        {c.cancelled&&c.cancelType==="cancelled_reprog"&&reprogTo&&<div style={{fontSize:10,color:"#2E7D32",marginTop:1}}>📅 Reprogramada al {fmtDate(reprogTo)}</div>}
                         {(()=>{const log=(c.attendanceLog||[]).find(e=>e.date===c.date);if(!log)return null;const dC=(log.ausente_dada||[]).length;const nC=(log.ausente_reprog||[]).length;if(!dC&&!nC)return null;return(<div style={{display:"flex",gap:4,marginTop:4}}>{dC>0&&<span style={{fontSize:11,padding:"3px 8px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ Ausente-Dada</span>}{nC>0&&<span style={{fontSize:11,padding:"3px 8px",borderRadius:10,background:"#FFF8E1",color:"#F57F17",fontWeight:700}}>↩ A Reprogramar</span>}</div>);})()}
                         {heightPx>52&&<div style={{display:"flex",gap:3,marginTop:4,flexWrap:"wrap"}}>
                           {(c.students||[]).map(sid=>{const st=students.find(s=>s.id===sid);if(!st)return null;const attSt=getAttendanceChipStatus(c,sid);const attStyle=attSt&&ATT_CHIP_STYLE[attSt];return (
@@ -4831,7 +5000,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
               {highlightCls&&(()=>{
                 const c=classes.find(x=>(x._virtualId||x.id)===highlightCls);
                 if(!c) return null;
-                if(resolveAgendaMenu(c,resolveAgendaCardStatus(c,students,classes,TODAY_DATE),WEEK_AGO).readOnly) return null;
+                if(resolveAgendaMenu(c,resolveAgendaCardStatus(c,students,classes,TODAY_DATE),WEEK_AGO).readOnly) return renderRevertModal(c);
                 return (
                   <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.45)",zIndex:99,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 16px"}} onClick={()=>setHighlightCls(null)}>
                     <div style={{background:C.white,borderRadius:24,padding:"20px 20px 24px",width:"100%",boxShadow:"0 20px 60px rgba(0,0,0,0.25)"}} onClick={e=>e.stopPropagation()}>
@@ -8980,6 +9149,17 @@ export default function App() {
   // ╚══════════════════════════════════════════════════════════════════════╝
 
   const handleSaveClass=(cd,isEdit=false)=>{
+    if(isEdit&&cd._revertReprog){
+      // "Volver a fecha original": its own branch — never the generic interceptor below (no card fields are merged
+      // into the series row). Re-validated HERE against the LATEST classes/students (refs, same synchronous tick as
+      // the write) and a fresh "today"; a pending/conflicted classes write blocks it. Removes only dateCancellations[origin].
+      const realId=cd._seriesId||cd.id;
+      const {origin,dest}=cd._revertReprog;
+      if(isClassesWriteSettled&&!isClassesWriteSettled()) return {status:"revert-unavailable",reason:"write-pending"};
+      const blocked=guardRevertReprogWrite({series:latestClassesRef.current.find(c2=>c2.id===realId),students:latestStudentsRef.current,originDate:origin,expectedDest:dest,todayDate:todayIso()});
+      if(blocked) return blocked;
+      return setClasses(p=>p.map(c=>c.id===realId?applyRevertReprogToClassRow(c,origin):c));
+    }
     if(isEdit){
       // Resolve virtual id to real series id
       const realId=cd._seriesId||cd.id;
