@@ -567,6 +567,119 @@ const computeResumeReplacementDates=({combos,dates,dc,dowSet,resumeDate,pCount})
   }
   return out.length<pCount?null:out;
 };
+// ---- "Mover al final del paquete": first free grey occurrence after the package (pure, read-only) ----
+// Moves ONE contractual class of a "combo" to the first grey occurrence of the SAME series that lies after
+// the effective end of every combo the series' students hold for that slot. Never creates occurrences,
+// never touches combos/students; the only write a caller makes is dateCancellations[terminalDate] =
+// {cancelType:"cancelled_reprog", rescheduledTo:date}, exactly like a manual reprogramación.
+//   series   = the RAW class row (occurrences, dateCancellations, attendanceLog, students, id)
+//   slotDate = the date the user acted on (a live slot, or any step of a chain whose terminal is pending)
+//   knownSeriesIds = optional Set with the ids of the existing classes (see the sourceClassId rule below)
+// Returns {ok:true,date,terminalDate,sourceClassId,affectedComboRefs,limitDate} | {ok:false,reason} with
+// reason: no-series | not-eligible | not-combo | ambiguous | attended | elapsed | paused | no-slot.
+const END_OF_PACKAGE_SCAN_LIMIT=1500;
+const resolveEndOfPackageTarget=({series,students,slotDate,todayDate,knownSeriesIds})=>{
+  const fail=(reason)=>({ok:false,reason});
+  if(!series||!slotDate||!Array.isArray(series.occurrences)||series.occurrences.length===0) return fail("no-series");
+  const dc=series.dateCancellations||{};
+  const seriesId=series.id;
+  // 1) Per student: the ONE combo of this series (or a legacy combo with no sourceClassId) that holds the slot.
+  const affected=[];
+  for(const sid of series.students||[]){
+    const st=(students||[]).find(s=>s.id===sid);
+    if(!st) continue;
+    const cands=[];
+    (st.combos||[]).forEach((combo,comboIndex)=>{
+      if(!Array.isArray(combo.dates)) return;
+      // Another series' combo is excluded only when its sourceClassId really names ANOTHER existing class
+      // (knownSeriesIds). An orphan id (no such class) is legacy data: associated by dates, like an
+      // undefined one, and still blocked as ambiguous when it is not the only candidate. Nothing is repaired.
+      if(combo.sourceClassId!==undefined&&combo.sourceClassId!==seriesId&&(!knownSeriesIds||knownSeriesIds.has(combo.sourceClassId))) return;
+      const slots=combo.dates.filter(d0=>traceRescheduleHistory(dc,d0).path.includes(slotDate));
+      if(slots.length>1) cands.push({ambiguous:true});
+      else if(slots.length===1) cands.push({combo,comboIndex,studentId:sid,slot:slots[0]});
+    });
+    if(cands.length===0) continue;
+    if(cands.length>1||cands[0].ambiguous) return fail("ambiguous");
+    affected.push(cands[0]);
+  }
+  if(affected.length===0) return fail("not-eligible");
+  if(affected.some(a=>(a.combo.packType||"combo")!=="combo")) return fail("not-combo");
+  // 2) The slot itself: a live date (acting on its current terminal) or a pending "A Reprogramar" chain.
+  let terminalDate=null,pending=null;
+  for(const a of affected){
+    const r=resolveComboDateStatus(dc,a.slot);
+    if(r.broken||!r.terminal) return fail("not-eligible");
+    const info=r.cancelInfo;
+    const isLive=info===null;
+    const isPending=!!info&&info.cancelType==="cancelled_reprog"&&!info.rescheduledTo;
+    if(!isLive&&!isPending) return fail("not-eligible"); // paused, compensated, definitive cancellation
+    if(isLive&&r.terminal!==slotDate) return fail("not-eligible"); // historical step of a chain
+    if(terminalDate!==null&&(terminalDate!==r.terminal||pending!==isPending)) return fail("ambiguous");
+    terminalDate=r.terminal; pending=isPending;
+  }
+  const loggedDates=new Set((series.attendanceLog||[]).map(e=>e.date));
+  if(!pending){
+    const entry=(series.attendanceLog||[]).find(e=>e.date===terminalDate);
+    if(todayDate&&terminalDate<todayDate){
+      // A past class with no explicit record counts as Presente by default: blocked. With a record it is
+      // movable only when EVERY affected student is explicitly "Ausente — No Dada" (attendanceLog.ausente_reprog:
+      // the class was not given and owes a makeup) and the date is inside the manual-reprogram window (7 days).
+      if(!entry) return fail("elapsed");
+      const notGiven=affected.every(a=>(entry.ausente_reprog||[]).includes(a.studentId)&&!(entry.present||[]).includes(a.studentId)&&!(entry.ausente_dada||[]).includes(a.studentId));
+      if(!notGiven) return fail("attended");
+      const limit=new Date(todayDate+"T12:00:00"); limit.setDate(limit.getDate()-7);
+      if(terminalDate<isoOfDate(limit)) return fail("elapsed");
+    } else if(entry) return fail("attended"); // today / future: any record blocks, as before
+  }
+  // 3) An active (uncompensated) contractual pause after the slot blocks the operation.
+  for(const a of affected){
+    const ops=a.combo.resumeOperations||[];
+    for(const d0 of a.combo.dates){
+      const r=resolveComboDateStatus(dc,d0);
+      if(r.broken||!r.terminal||!r.cancelInfo||r.cancelInfo.cancelType!=="paused") continue;
+      const compensated=!!r.cancelInfo.compensated||ops.some(op=>(op.pausedDates||[]).includes(r.terminal));
+      if(!compensated&&r.terminal>terminalDate) return fail("paused");
+    }
+  }
+  // 4) Effective end of each affected combo (pending slots have no terminal and are left out of the max)
+  //    and every date those combos occupy (slot paths, combo.dates, resume operations).
+  const occupied=new Set();
+  let limitDate="";
+  for(const a of affected){
+    (a.combo.dates||[]).forEach(d=>occupied.add(d));
+    collectSlotPathDates(a.combo.dates,dc).forEach(d=>occupied.add(d));
+    (a.combo.resumeOperations||[]).forEach(op=>{(op.replacementDates||[]).forEach(d=>occupied.add(d));(op.pausedDates||[]).forEach(d=>occupied.add(d));});
+    for(const d0 of a.combo.dates){
+      const r=resolveComboDateStatus(dc,d0);
+      if(r.broken||!r.terminal) continue;
+      const info=r.cancelInfo;
+      if(info&&info.cancelType==="cancelled_reprog"&&!info.rescheduledTo) continue;
+      if(r.terminal>limitDate) limitDate=r.terminal;
+    }
+  }
+  const chainTargets=new Set(Object.values(dc).map(e=>e&&e.rescheduledTo).filter(Boolean));
+  // 5) First grey occurrence of THIS series that is free for every affected student.
+  const occurrences=[...new Set(series.occurrences)].sort();
+  let scanned=0;
+  for(const g of occurrences){
+    if(++scanned>END_OF_PACKAGE_SCAN_LIMIT) break;
+    if(g<=limitDate||(todayDate&&g<=todayDate)) continue;
+    if(occupied.has(g)||dc[g]||chainTargets.has(g)||loggedDates.has(g)) continue;
+    const grey=affected.every(a=>isNextComboPending({date:g,students:[a.studentId],dateCancellations:dc,_isRescheduledInstance:false},students));
+    if(!grey) continue;
+    return {ok:true,date:g,terminalDate,sourceClassId:seriesId,limitDate,affectedComboRefs:affected.map(a=>({studentId:a.studentId,comboIndex:a.comboIndex,comboId:a.combo.id}))};
+  }
+  return fail("no-slot");
+};
+// Write-time guard: re-runs the resolver against the LATEST state and refuses (returns the outcome to
+// hand back to the caller) unless the very date the user confirmed is still the target. Never picks
+// another date. null = safe to write.
+const guardEndOfPackageWrite=({series,students,slotDate,expectedDate,todayDate,knownSeriesIds})=>{
+  const r=resolveEndOfPackageTarget({series,students,slotDate,todayDate,knownSeriesIds});
+  return (r.ok&&r.date===expectedDate)?null:{status:"end-of-package-unavailable"};
+};
+
 // Defense against a resume that would (or did) place a replacement on a date another slot already
 // occupies. Invariants of ONE resumeOperation, read against the combo that holds it: unique replacement dates,
 // one per paused date, all on/after the resume date, all present in combo.dates, none landing on a
@@ -3334,8 +3447,16 @@ function PauseModal({ cls, onClose, onPause }) {
 }
 
 
-function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent }) {
-  const [selected,setSelected]=useState(cls.cancelled&&cls.cancelType==="cancelled_reprog"&&!cls.rescheduledTo?"reprog":null); // null, "cancel", "reprog"
+// Secondary action of the reprogram panel ("Reprogramar luego", "Mover al final del paquete", "Volver…"):
+// ONE style so every secondary button always matches (44px minimum touch target).
+const reprogSecondaryBtnStyle=(active,disabled)=>({width:"100%",minHeight:44,padding:"10px",borderRadius:10,border:active?"2px solid #1565C0":"1.5px solid #90CAF9",background:active?"#E3F2FD":"#fff",color:"#1565C0",fontSize:12,cursor:disabled?"default":"pointer",fontWeight:700,...(disabled?{opacity:0.55}:{})});
+// Three levels: (1) the "Reprogramar / Cancelar" button of the Agenda menu, (2) this window's "choose" stage
+// ("Cancelar clase" | "Reprogramar"), (3) the "Reprogramar clase" panel. A class already A Reprogramar
+// opens straight at level 3 as "Asignar fecha".
+function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent, series, knownSeriesIds }) {
+  const isAssigningDate0=cls.cancelled&&cls.cancelType==="cancelled_reprog"&&!cls.rescheduledTo;
+  const [stage,setStage]=useState(isAssigningDate0?"reprog":"choose"); // "choose" | "reprog"
+  const [selected,setSelected]=useState(isAssigningDate0?"reprog":null); // null, "cancel", "reprog"
   const [newDate,setNewDate]=useState("");
   const [newTime,setNewTime]=useState(cls.time||"08:00");
 
@@ -3354,14 +3475,40 @@ function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent 
   const [reprogLater,setReprogLater]=useState(false);
   const isAssigningDate=cls.cancelled&&cls.cancelType==="cancelled_reprog"&&!cls.rescheduledTo;
 
+  // "Mover al final del paquete": the target is only CALCULATED here (preview); nothing is written until
+  // the user confirms, and handleSaveClass re-validates it against the latest state before writing.
+  const [endChoice,setEndChoice]=useState(null); // {date,terminalDate} once the user picked it
+  const [eopNote,setEopNote]=useState("");
+  const savingRef=useRef(false);
+  const eop=resolveEndOfPackageTarget({series,students,slotDate:cls.date,todayDate:TODAY_DATE,knownSeriesIds});
+  const showEop=eop.ok||eop.reason==="no-slot"||eop.reason==="paused";
+  const eopPaused=!eop.ok&&eop.reason==="paused";
+  const pickEndOfPackage=()=>{
+    setReprogLater(false); setNewDate("");
+    if(eop.ok){ setEndChoice({date:eop.date,terminalDate:eop.terminalDate}); setEopNote(""); }
+    else if(eop.reason==="no-slot") setEopNote("No hay un turno disponible después del paquete.");
+  };
+
   const handleConfirm=()=>{
+    if(selected==="reprog"&&endChoice){
+      if(savingRef.current) return;
+      savingRef.current=true;
+      // Same payload as a manual reprogramación, aimed at the slot's CURRENT terminal date; attendanceLog untouched.
+      const r=onSave({...cls,date:endChoice.terminalDate,cancelled:true,cancelType:"cancelled_reprog",rescheduledTo:endChoice.date,rescheduled:true,applyToAll:false,_endOfPackage:endChoice.date},true);
+      if(r&&r.status==="end-of-package-unavailable"){
+        savingRef.current=false; setEndChoice(null); setEopNote("Ese turno ya no está disponible. Elegí otra fecha.");
+        return;
+      }
+      onClose();
+      return;
+    }
     if(selected==="cancel"){
       onSave({...cls,cancelled:true,cancelType:"cancelled",rescheduledTo:null,applyToAll:false},true);
       onClose();
     } else if(selected==="reprog"&&reprogLater){
       onSave({...cls,cancelled:true,cancelType:"cancelled_reprog",rescheduledTo:null,applyToAll:false},true);
       onClose();
-    } else if(selected==="reprog"&&targetDate){
+    } else if(selected==="reprog"&&newDate&&targetDate){
       const oldDate=cls.date;
       const updatedLog=(cls.attendanceLog||[]).map(e=>e.date===oldDate?{...e,ausente_reprog:[],rescheduled_to:targetDate}:e);
       onSave({...cls,cancelled:true,cancelType:"cancelled_reprog",rescheduledTo:targetDate,rescheduled:true,attendanceLog:updatedLog,applyToAll:false},true);
@@ -3369,6 +3516,16 @@ function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent 
       // The rescheduled class appears on the new date as a normal class instance
       onClose();
     }
+  };
+
+  const confirmDisabled=stage==="choose"?selected!=="cancel":(!newDate&&!endChoice&&!reprogLater);
+  // "Volver" at level 3 goes back to the choose stage (nothing is written); everywhere else it closes.
+  const handleBack=()=>{
+    if(stage==="reprog"&&!isAssigningDate){
+      setStage("choose"); setSelected(null); setNewDate(""); setReprogLater(false); setEndChoice(null); setEopNote("");
+      return;
+    }
+    onClose();
   };
 
   const handleReprogLater=()=>{
@@ -3380,50 +3537,45 @@ function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent 
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.5)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
       <div style={{background:"#F5F7FF",borderRadius:"24px 24px 0 0",padding:"28px 20px",paddingBottom:"calc(40px + env(safe-area-inset-bottom, 34px))",width:"100%",maxHeight:"90vh",overflowY:"auto",boxSizing:"border-box"}}>
         <div style={{width:40,height:4,borderRadius:2,background:"#DDE3F0",margin:"0 auto 20px"}}></div>
-        <div style={{fontWeight:900,fontSize:19,color:"#0D1B4B",marginBottom:4}}>{isAssigningDate?"Asignar fecha":"Reprogramar / Cancelar"}</div>
+        <div style={{fontWeight:900,fontSize:19,color:"#0D1B4B",marginBottom:4}}>{stage==="choose"?"Reprogramar / Cancelar":isAssigningDate?"Asignar fecha":"Reprogramar clase"}</div>
         <div style={{fontSize:13,color:"#6B7BAD",marginBottom:20}}>{cls.title} · {fmtDate(cls.date)} · {cls.time}</div>
 
-        {/* Options - hidden when assigning date to existing A Reprogramar */}
-        {!isAssigningDate&&(
-        <>
-        {/* Option 1: Cancel */}
-        <div onClick={()=>setSelected("cancel")} style={{display:"flex",alignItems:"center",gap:14,padding:"16px",borderRadius:14,border:"2px solid "+(selected==="cancel"?"#C62828":"#FFCDD2"),background:selected==="cancel"?"#FFF0F0":"#fff",marginBottom:10,cursor:"pointer",transition:"all 0.15s"}}>
-          <div style={{width:22,height:22,borderRadius:"50%",border:"2px solid "+(selected==="cancel"?"#C62828":"#ccc"),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-            {selected==="cancel"&&<div style={{width:12,height:12,borderRadius:"50%",background:"#C62828"}}></div>}
-          </div>
-          <div style={{flex:1}}>
-            <div style={{fontWeight:700,fontSize:14,color:"#C62828"}}>⛔ Cancelar clase</div>
-            <div style={{fontSize:12,color:"#6B7BAD",marginTop:2}}>Se cancela y se cobra. Cuenta como realizada.</div>
-          </div>
-        </div>
+        {stage==="choose"?(
+          <>
+            {/* Level 2 — Option 1: Cancel (definitive cancellation, confirmed with the button below) */}
+            <div onClick={()=>setSelected("cancel")} style={{display:"flex",alignItems:"center",gap:14,padding:"16px",borderRadius:14,border:"2px solid "+(selected==="cancel"?"#C62828":"#FFCDD2"),background:selected==="cancel"?"#FFF0F0":"#fff",marginBottom:10,cursor:"pointer",transition:"all 0.15s"}}>
+              <div style={{width:22,height:22,borderRadius:"50%",border:"2px solid "+(selected==="cancel"?"#C62828":"#ccc"),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                {selected==="cancel"&&<div style={{width:12,height:12,borderRadius:"50%",background:"#C62828"}}></div>}
+              </div>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,fontSize:14,color:"#C62828"}}>⛔ Cancelar clase</div>
+                <div style={{fontSize:12,color:"#6B7BAD",marginTop:2}}>Se cancela y se cobra. Cuenta como realizada.</div>
+              </div>
+            </div>
 
-        {/* Option 2: Cancel + Reprog */}
-        <div onClick={()=>setSelected("reprog")} style={{display:"flex",alignItems:"center",gap:14,padding:"16px",borderRadius:14,border:"2px solid "+(selected==="reprog"?"#1565C0":"#90CAF9"),background:selected==="reprog"?"#E3F2FD":"#fff",marginBottom:10,cursor:"pointer",transition:"all 0.15s"}}>
-          <div style={{width:22,height:22,borderRadius:"50%",border:"2px solid "+(selected==="reprog"?"#1565C0":"#ccc"),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-            {selected==="reprog"&&<div style={{width:12,height:12,borderRadius:"50%",background:"#1565C0"}}></div>}
-          </div>
-          <div style={{flex:1}}>
-            <div style={{fontWeight:700,fontSize:14,color:"#1565C0"}}>🔄 Cancelar y Reprogramar</div>
-            <div style={{fontSize:12,color:"#6B7BAD",marginTop:2}}>Se cancela y se reprograma a otra fecha.</div>
-          </div>
-        </div>
-        </>
-        )}
-
-        {/* Reprog date picker - appears when reprog selected or assigning date */}
-        {selected==="reprog"&&(
+            {/* Level 2 — Option 2: goes on to the "Reprogramar clase" panel (level 3) */}
+            <div onClick={()=>{setSelected("reprog");setStage("reprog");}} style={{display:"flex",alignItems:"center",gap:14,padding:"16px",borderRadius:14,border:"2px solid #90CAF9",background:"#fff",marginBottom:10,cursor:"pointer",transition:"all 0.15s"}}>
+              <div style={{width:22,height:22,borderRadius:"50%",border:"2px solid #ccc",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}></div>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,fontSize:14,color:"#1565C0"}}>🔄 Reprogramar</div>
+                <div style={{fontSize:12,color:"#6B7BAD",marginTop:2}}>La clase se reprogramará en otra fecha</div>
+              </div>
+            </div>
+          </>
+        ):(
+          /* Level 3 — "Reprogramar clase": manual date, "Mover al final del paquete", "Reprogramar" (sin fecha) */
           <div style={{background:"#fff",borderRadius:14,padding:"16px",marginBottom:10,border:"1px solid #90CAF9"}}>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
               <div>
                 <label style={{fontSize:12,color:"#1565C0",fontWeight:700,display:"block",marginBottom:6}}>Nueva fecha</label>
-                <input type="date" value={newDate} onChange={e=>setNewDate(e.target.value)} style={{width:"100%",padding:"12px",borderRadius:10,border:"none",fontSize:13,boxSizing:"border-box",background:"#E3F2FD",color:"#0D1B4B",outline:"none"}}/>
+                <input type="date" value={newDate} onChange={e=>{setNewDate(e.target.value);setEndChoice(null);setEopNote("");}} style={{width:"100%",padding:"12px",borderRadius:10,border:"none",fontSize:13,boxSizing:"border-box",background:"#E3F2FD",color:"#0D1B4B",outline:"none"}}/>
               </div>
               <div>
                 <label style={{fontSize:12,color:"#1565C0",fontWeight:700,display:"block",marginBottom:6}}>Nueva hora</label>
                 <input type="time" value={newTime} onChange={e=>setNewTime(e.target.value)} style={{width:"100%",padding:"12px",borderRadius:10,border:"none",fontSize:13,boxSizing:"border-box",background:"#E3F2FD",color:"#0D1B4B",outline:"none"}}/>
               </div>
             </div>
-            {targetLabel&&<div style={{fontSize:12,color:"#2E7D32",background:"#E8F5E9",borderRadius:10,padding:"10px 12px",marginBottom:10}}>📅 Se moverá al <b>{targetLabel}</b> a las <b>{newTime}</b></div>}
+            {newDate&&targetLabel&&<div style={{fontSize:12,color:"#2E7D32",background:"#E8F5E9",borderRadius:10,padding:"10px 12px",marginBottom:10}}>📅 Se moverá al <b>{targetLabel}</b> a las <b>{newTime}</b></div>}
             <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
               {clsStudents.map(st=>(
                 <div key={st.id} style={{display:"flex",alignItems:"center",gap:4,background:"#E3F2FD",borderRadius:20,padding:"3px 8px 3px 4px",fontSize:11,color:"#1565C0",fontWeight:600}}>
@@ -3432,17 +3584,29 @@ function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent 
                 </div>
               ))}
             </div>
-            {!isAssigningDate&&<button onClick={()=>setReprogLater(!reprogLater)} style={{width:"100%",padding:"10px",borderRadius:10,border:reprogLater?"2px solid #1565C0":"1.5px solid #90CAF9",background:reprogLater?"#E3F2FD":"#fff",color:"#1565C0",fontSize:12,cursor:"pointer",fontWeight:700}}>
-              {reprogLater?"✓ ":""}🕐 Reprogramar luego (sin fecha)
-            </button>}
+            {endChoice?(
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                <button onClick={handleConfirm} style={{width:"100%",minHeight:44,textAlign:"left",fontSize:12,color:"#2E7D32",background:"#E8F5E9",border:"none",borderRadius:10,padding:"10px 12px",cursor:"pointer"}}>📅 Se moverá al final del paquete: <b>{fmtDate(endChoice.date)}</b> a las <b>{cls.time}</b></button>
+                <button onClick={()=>{setEndChoice(null);setEopNote("");}} style={reprogSecondaryBtnStyle(false,false)}>Volver a elegir fecha manualmente</button>
+              </div>
+            ):(
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {!newDate&&showEop&&<button onClick={pickEndOfPackage} disabled={eopPaused} style={reprogSecondaryBtnStyle(false,eopPaused)}>Mover al final del paquete</button>}
+                {!newDate&&eopPaused&&<div style={{fontSize:12,color:"#C62828"}}>No se puede mover al final mientras el paquete está pausado.</div>}
+                {!newDate&&eopNote&&<div style={{fontSize:12,color:"#C62828"}}>{eopNote}</div>}
+                {!isAssigningDate&&<button onClick={()=>setReprogLater(!reprogLater)} style={reprogSecondaryBtnStyle(reprogLater,false)}>
+                  {reprogLater?"✓ ":""}Reprogramar luego (Sin Fechas)
+                </button>}
+              </div>
+            )}
           </div>
         )}
 
         {/* Confirm + Back buttons */}
         <div style={{display:"flex",gap:10,marginTop:6}}>
-          <button onClick={onClose} style={{flex:1,padding:"14px",borderRadius:14,border:"1.5px solid #DDE3F0",background:"#fff",cursor:"pointer",fontSize:14,color:"#6B7BAD",fontWeight:700}}>Volver</button>
-          <button onClick={handleConfirm} disabled={!selected||(selected==="reprog"&&!targetDate&&!reprogLater)} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:!selected?"#ccc":selected==="cancel"?"linear-gradient(135deg,#C62828,#E53935)":"linear-gradient(135deg,#1565C0,#42A5F5)",color:"#fff",cursor:selected?"pointer":"not-allowed",fontSize:14,fontWeight:800,opacity:(!selected||(selected==="reprog"&&!targetDate&&!reprogLater))?0.5:1}}>
-            {isAssigningDate?"📅 Asignar fecha":selected==="cancel"?"⛔ Confirmar cancelación":selected==="reprog"?(reprogLater?"🕐 Confirmar sin fecha":"📅 Confirmar reprogramación"):"Elegí una opción"}
+          <button onClick={handleBack} style={{flex:1,padding:"14px",borderRadius:14,border:"1.5px solid #DDE3F0",background:"#fff",cursor:"pointer",fontSize:14,color:"#6B7BAD",fontWeight:700}}>Volver</button>
+          <button onClick={handleConfirm} disabled={confirmDisabled} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:selected==="cancel"?"linear-gradient(135deg,#C62828,#E53935)":confirmDisabled?"#ccc":"linear-gradient(135deg,#1565C0,#42A5F5)",color:"#fff",cursor:confirmDisabled?"not-allowed":"pointer",fontSize:14,fontWeight:800,opacity:confirmDisabled?0.5:1}}>
+            {selected==="cancel"?"⛔ Confirmar cancelación":stage==="choose"?"Elegí una opción":isAssigningDate?"📅 Asignar fecha":reprogLater?"🕐 Confirmar sin fecha":"🗓️ Confirmar reprogramación"}
           </button>
         </div>
       </div>
@@ -4704,7 +4868,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
         // above, which replace the old in-memory-only pendingResume roundtrip.
         onSaveClass({...pauseCls,cancelled:false,cancelType:"paused",paused:true,applyToAll:false,_plannedResumeDate:rDate||null},true);
       }}/>}
-      {showCancel&&<CancelReprogModal cls={showCancel} onClose={()=>setShowCancel(null)} onSave={(u)=>{onSaveClass(u,true);setShowCancel(null);}} students={students} onUpdateStudent={onUpdateStudent}/>}
+      {showCancel&&<CancelReprogModal cls={showCancel} series={(rawClasses||classes).find(c2=>c2.id===(showCancel._seriesId||showCancel.id))} knownSeriesIds={new Set((rawClasses||classes).map(c2=>c2.id))} onClose={()=>setShowCancel(null)} onSave={(u)=>{const r=onSaveClass(u,true);if(u._endOfPackage&&r&&r.status==="end-of-package-unavailable") return r;setShowCancel(null);return r;}} students={students} onUpdateStudent={onUpdateStudent}/>}
       {showNew&&<NewClassModal onClose={()=>{setShowNew(false);setGridNewTime(null);setWeekOffset(0);}} onSave={onSaveClass} existingClasses={classes} students={students} dateLabel={viewMode==="month"?selLabel:weekLabel()} onCreateStudent={onAddStudent} prefill={gridNewTime||(viewMode==="month"?{date:selDay}:null)} courts={courts} packages={packages} onAddPackage={(pkg)=>{if(typeof onAddPackage==="function")onAddPackage(pkg);}}/>}
       {att&&<AttModal att={att} students={students} onAttendance={onAttendance} onClose={()=>setAtt(null)}/>}
     </div>
@@ -8764,6 +8928,13 @@ export default function App() {
 
       // Handle per-date cancellation/pause for recurring classes
       if((cd.cancelled===true||cd.cancelType==="paused"||cd._resuming||cd._reactivating)&&editDate){
+        // "Mover al final del paquete": the destination the user confirmed is re-validated here against the
+        // LATEST classes/students (refs, same synchronous tick as the write below). If it is no longer the
+        // free target, nothing is written and no other date is picked.
+        if(cd._endOfPackage){
+          const blocked=guardEndOfPackageWrite({series:latestClassesRef.current.find(c2=>c2.id===realId),students:latestStudentsRef.current,slotDate:editDate,expectedDate:cd._endOfPackage,todayDate:TODAY_DATE,knownSeriesIds:new Set(latestClassesRef.current.map(c2=>c2.id))});
+          if(blocked) return blocked;
+        }
         // Pre-calculate replacement dates BEFORE any state updates
         let _replacements=[];
         if(cd.cancelType==="paused"&&cd._pauseResumeDate){
@@ -8844,7 +9015,7 @@ export default function App() {
             const {_plannedResumeDate:_prdate2,...cdClean}=cd;
             return {...c,...cdClean,id:realId,dateCancellations:dc,plannedResume};
           }
-          const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,_pauseResumeDate:_prd,_reactivating:_ra,_plannedResumeDate:_prdate3,...rest}=cd;
+          const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,_pauseResumeDate:_prd,_reactivating:_ra,_plannedResumeDate:_prdate3,_endOfPackage:_eop,...rest}=cd;
           return {...c,...rest,id:realId,dateCancellations:dc,occurrences:occ,plannedResume};
         }));
 
