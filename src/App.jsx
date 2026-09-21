@@ -540,6 +540,81 @@ const collectSlotPathDates=(dates,dc)=>{
   (dates||[]).forEach(d0=>{ traceRescheduleHistory(dc,d0).path.forEach(d=>occupied.add(d)); });
   return occupied;
 };
+// Every date a combo occupies: its own dates, every step/terminal of their reschedule chains, and the dates its
+// resume operations paused or replaced. Single definition shared by "Mover al final del paquete" (occupied set)
+// and getComboEffectiveEnd, so "what the package occupies" is never defined twice.
+const collectComboOccupiedDates=(combo,dc)=>{
+  const occupied=new Set();
+  const dates=Array.isArray(combo.dates)?combo.dates:[];
+  dates.forEach(d=>occupied.add(d));
+  collectSlotPathDates(dates,dc).forEach(d=>occupied.add(d));
+  (Array.isArray(combo.resumeOperations)?combo.resumeOperations:[]).forEach(op=>{(op.replacementDates||[]).forEach(d=>occupied.add(d));(op.pausedDates||[]).forEach(d=>occupied.add(d));});
+  return occupied;
+};
+const isValidIsoDate=(d)=>{
+  if(typeof d!=="string"||!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+  const x=new Date(d+"T12:00:00");
+  return !isNaN(x.getTime())&&isoOfDate(x)===d;
+};
+// Effective end of a combo = the latest date it occupies (collectComboOccupiedDates): each contracted date followed
+// through its dateCancellations chain to the terminal, plus the replacement dates of the combo's OWN resume operations.
+// A pending reprogramming (no destination) and a definitive cancellation keep their own date. `dcCandidates` = the
+// dateCancellations objects that may describe this combo's slots (normally one). Never guesses: returns
+// {ok:true,end} (end null when the combo holds no dates) or {ok:false,reason:"invalid-combo"|"broken-chain"|"invalid-date"|"ambiguous"}.
+const getComboEffectiveEnd=(combo,dcCandidates)=>{
+  if(!combo||typeof combo!=="object") return {ok:false,reason:"invalid-combo"};
+  const cands=Array.isArray(dcCandidates)&&dcCandidates.length>0?dcCandidates:[{}];
+  const ends=[];
+  for(const dc of cands){
+    for(const d0 of (Array.isArray(combo.dates)?combo.dates:[])){
+      if(traceRescheduleHistory(dc,d0).broken) return {ok:false,reason:"broken-chain"};
+    }
+    let end=null;
+    for(const d of collectComboOccupiedDates(combo,dc)){
+      if(!isValidIsoDate(d)) return {ok:false,reason:"invalid-date"};
+      if(end===null||d>end) end=d;
+    }
+    ends.push(end);
+  }
+  if(ends.some(e=>e!==ends[0])) return {ok:false,reason:"ambiguous"};
+  return {ok:true,end:ends[0]};
+};
+// dateCancellations that can describe a combo's slots — the same lookup resolveContractSlotStatus uses (the
+// combo.sourceClassId series first, else the card on each contracted date), deduped by series.
+const getComboDcCandidates=(myClasses,combo)=>{
+  const list=myClasses||[];
+  const bySeries=new Map();
+  const add=cl=>{if(cl&&cl.dateCancellations){const k=cl._seriesId!==undefined?cl._seriesId:cl.id;if(!bySeries.has(k)) bySeries.set(k,cl.dateCancellations);}};
+  if(combo&&combo.sourceClassId!==undefined){
+    const series=list.find(cl=>cl.id===combo.sourceClassId||cl._seriesId===combo.sourceClassId);
+    if(series&&series.dateCancellations){add(series);return [...bySeries.values()];}
+  }
+  (combo&&Array.isArray(combo.dates)?combo.dates:[]).forEach(d0=>add(list.find(cl=>cl.date===d0)));
+  return [...bySeries.values()];
+};
+const renewalBlockedMessage=(reason)=>{
+  if(reason==="no-calendar") return "No se pudieron generar las fechas del combo nuevo: la clase del alumno no tiene días válidos en el calendario. No se creó el combo nuevo.";
+  return "No se pudo determinar con seguridad el final del combo anterior (reprogramaciones inconsistentes o ambiguas). No se creó el combo nuevo.";
+};
+// Dates of a renewed combo: the next `combo.total` class days strictly after the previous combo's EFFECTIVE end
+// (never its last original date — a reprogrammed slot can end later). Both "Renovar combo" entry points of Cobros
+// call this, so they can never disagree. Returns {ok:true,dates} | {ok:false,reason}; on failure the caller creates
+// nothing. An empty / weekday-less `dowSet` is "no-calendar" (checked up front — nothing is scanned); with at least
+// one valid weekday every date is found within 7 days, so the scan is bounded by total*7.
+const buildRenewalDates=({combo,dcCandidates,dowSet,fallbackDate})=>{
+  const endInfo=getComboEffectiveEnd(combo,dcCandidates);
+  if(!endInfo.ok) return endInfo;
+  if(![...dowSet].some(n=>Number.isInteger(n)&&n>=0&&n<=6)) return {ok:false,reason:"no-calendar"};
+  const dates=[];
+  const cur=new Date((endInfo.end||fallbackDate)+"T12:00:00");
+  cur.setDate(cur.getDate()+1);
+  for(let scanned=0;dates.length<combo.total;scanned++){
+    if(scanned>combo.total*7+7) return {ok:false,reason:"no-calendar"};
+    if(dowSet.has(cur.getDay())) dates.push(isoOfDate(cur));
+    cur.setDate(cur.getDate()+1);
+  }
+  return {ok:true,dates};
+};
 // Replacement dates for a resume: the same walk as always (weekday of the class, starting at the
 // resume date, or right after the combo's last date when that is later) but never on a date that
 // is already taken — a slot's original/step/terminal date (a paused terminal on/after the resume
@@ -647,9 +722,7 @@ const resolveEndOfPackageTarget=({series,students,slotDate,todayDate,knownSeries
   const occupied=new Set();
   let limitDate="";
   for(const a of affected){
-    (a.combo.dates||[]).forEach(d=>occupied.add(d));
-    collectSlotPathDates(a.combo.dates,dc).forEach(d=>occupied.add(d));
-    (a.combo.resumeOperations||[]).forEach(op=>{(op.replacementDates||[]).forEach(d=>occupied.add(d));(op.pausedDates||[]).forEach(d=>occupied.add(d));});
+    collectComboOccupiedDates(a.combo,dc).forEach(d=>occupied.add(d));
     for(const d0 of a.combo.dates){
       const r=resolveComboDateStatus(dc,d0);
       if(r.broken||!r.terminal) continue;
@@ -5387,16 +5460,9 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             const DAY_MAP2={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
             const clsDays=myClasses.length>0?myClasses[0].days:[];
             const dowSet=new Set(clsDays.map(d=>DAY_MAP2[d]));
-            const lastDate=lastC.dates&&lastC.dates.length>0?lastC.dates[lastC.dates.length-1]:"";
-            const newDates=[];
-            let cur=new Date((lastDate||TODAY)+"T12:00:00");
-            cur.setDate(cur.getDate()+1);
-            while(newDates.length<lastC.total){
-              if(dowSet.size===0||dowSet.has(cur.getDay())){
-                newDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
-              }
-              cur.setDate(cur.getDate()+1);
-            }
+            const renewal=buildRenewalDates({combo:lastC,dcCandidates:getComboDcCandidates(myClasses,lastC),dowSet,fallbackDate:TODAY});
+            if(!renewal.ok){alert(renewalBlockedMessage(renewal.reason));return;}
+            const newDates=renewal.dates;
             const newCombo={id:updatedCombos.length+1,total:lastC.total,packType:lastC.packType||"combo",used:0,paid:false,paidCount:0,date:newDates[0]||TODAY,amount:lastC.amount,dates:newDates,payments:[]};
             onUpdate({...s,combos:[...updatedCombos,newCombo]});
             onClose();
@@ -6035,20 +6101,13 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
           })();
           const handleRenew=()=>{
             if(lastComboS){
-              // Generate next dates after last combo date
-              const lastDate=lastComboS.dates&&lastComboS.dates.length>0?lastComboS.dates[lastComboS.dates.length-1]:TODAY_DATE;
+              // Generate next dates after the last combo's EFFECTIVE end (reschedule chains included)
               const clsDays=myClassesH.length>0?myClassesH[0].days:[];
               const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
               const dowSet=new Set(clsDays.map(d=>DAY_MAP[d]));
-              const nextDates=[];
-              let cur=new Date(lastDate+"T12:00:00");
-              cur.setDate(cur.getDate()+1);
-              while(nextDates.length<lastComboS.total){
-                if(dowSet.size===0||dowSet.has(cur.getDay())){
-                  nextDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
-                }
-                cur.setDate(cur.getDate()+1);
-              }
+              const renewal=buildRenewalDates({combo:lastComboS,dcCandidates:getComboDcCandidates(myClassesH,lastComboS),dowSet,fallbackDate:TODAY_DATE});
+              if(!renewal.ok){alert(renewalBlockedMessage(renewal.reason));return;}
+              const nextDates=renewal.dates;
               // sourceClassId: preserve the exact origin of the combo being renewed
               // when known (same obligation/class/series continuing); only infer from
               // the student's own classes when it's legacy AND unambiguous (exactly
