@@ -4422,24 +4422,25 @@ const attendanceCycleFor=(students,classRealId,classDate,sid)=>{
 // Class-card attendance SUMMARY badge counts — for Agenda's month/week card renderers (never
 // AttModal's per-student chips, which already read attendanceCycleFor/labelFor correctly and are
 // unaffected). A mensual student (per THIS class's resolveStudentComboForClass, same per-student
-// decision attendanceCycleFor uses — never a global text replacement) has only Presente/Ausente:
-// both their ausente_dada AND any historical ausente_reprog (from before this app version, or a
-// legacy combo shape) collapse into the same simple "ausente" bucket, counted separately from
-// combo/individual's own real two-state distinction. A mixed class (some mensual, some combo/
-// individual, in the SAME attendanceLog entry) keeps every bucket independent, so a genuine combo/
+// decision attendanceCycleFor uses — never a global text replacement) contributes NO badge here at
+// all — neither their ausente_dada nor any historical ausente_reprog (from before this app version,
+// or a legacy combo shape) is counted; the class header simply carries no attendance badge when
+// every absence in the log belongs to mensual students. Combo/individual keep their own real
+// two-state distinction, counted independently, in the SAME attendanceLog entry — a genuine combo/
 // individual "Ausente — Dada"/"A Reprogramar" alert is never hidden just because the class also
-// happens to have a mensual student absent that day. Pure; read-only; returns zero counts (never
-// null) for a missing log so callers can render unconditionally.
+// happens to have a mensual student absent that day. attendanceLog itself is never touched — this
+// only changes what the header aggregate counts, not what's stored. Pure; read-only; returns zero
+// counts (never null) for a missing log so callers can render unconditionally.
 const resolveClassAttendanceBadgeCounts=(students,classRealId,classDate,log)=>{
   const isMensual=(sid)=>{
     const st=(students||[]).find(s=>s.id===sid);
     const combo=resolveStudentComboForClass(st,classRealId,classDate);
     return !!(combo&&combo.packType==="mensual");
   };
-  let ausente=0,ausenteDada=0,aReprogramar=0;
-  (log?.ausente_dada||[]).forEach(sid=>{if(isMensual(sid))ausente++;else ausenteDada++;});
-  (log?.ausente_reprog||[]).forEach(sid=>{if(isMensual(sid))ausente++;else aReprogramar++;});
-  return {ausente,ausenteDada,aReprogramar};
+  let ausenteDada=0,aReprogramar=0;
+  (log?.ausente_dada||[]).forEach(sid=>{if(!isMensual(sid))ausenteDada++;});
+  (log?.ausente_reprog||[]).forEach(sid=>{if(!isMensual(sid))aReprogramar++;});
+  return {ausenteDada,aReprogramar};
 };
 function AttModal({ att, students, onAttendance, onClose }) {
   const classRealId=att._seriesId||att.id;
@@ -4878,7 +4879,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
 
   const ClassCard=({c})=>{
     const log=(c.attendanceLog||[]).find(e=>e.date===c.date);
-    const {ausente:ausenteCount,ausenteDada:dadaCount,aReprogramar:reprogCount}=resolveClassAttendanceBadgeCounts(students,c._seriesId||c.id,c.date,log);
+    const {ausenteDada:dadaCount,aReprogramar:reprogCount}=resolveClassAttendanceBadgeCounts(students,c._seriesId||c.id,c.date,log);
     // Determine cancel/reprog/paused state
     const isCancelled=c.cancelled&&c.cancelType==="cancelled";
     const isReprogWithDate=c.cancelled&&c.cancelType==="cancelled_reprog"&&c.rescheduledTo;
@@ -4898,12 +4899,11 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
         </div>
         <span style={{background:C.blueL,color:C.blue2,fontSize:11,padding:"4px 10px",borderRadius:20,fontWeight:600,height:"fit-content"}}>{c.days.join(" · ")}</span>
       </div>
-      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:(ausenteCount||dadaCount||reprogCount)?6:12}}>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:(dadaCount||reprogCount)?6:12}}>
         {c.students.map(sid=>{const st=students.find(s=>s.id===sid);return st?(<div key={sid} style={{display:"flex",alignItems:"center",gap:6,background:C.blueL,borderRadius:20,padding:"4px 10px 4px 6px",fontSize:12,color:C.blue2,fontWeight:600}}><div style={{width:20,height:20,borderRadius:"50%",background:C.blue2,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,color:C.white,fontWeight:700}}>{st.avatar[0]}</div>{st.name.split(" ")[0]}</div>):null;})}
       </div>
-      {(ausenteCount>0||dadaCount>0||reprogCount>0)&&(
+      {(dadaCount>0||reprogCount>0)&&(
         <div style={{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap"}}>
-          {ausenteCount>0&&<span style={{fontSize:11,padding:"3px 10px",borderRadius:20,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ {ausenteCount} Ausente</span>}
           {dadaCount>0&&<span style={{fontSize:11,padding:"3px 10px",borderRadius:20,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ {dadaCount} Ausente-Dada</span>}
           {reprogCount>0&&<span style={{fontSize:11,padding:"3px 10px",borderRadius:20,background:"#FFF8E1",color:"#F57F17",fontWeight:700}}>↩ {reprogCount} A Reprogramar</span>}
         </div>
@@ -5034,7 +5034,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                       <div style={{fontWeight:800,fontSize:15,color:isPaused?"#E65100":isCancelled?"#C62828":isReprogNoDate?"#1565C0":isReprogWithDate?"#2E7D32":isNextComboPending(c,students)?"#9E9E9E":C.text}}>{c.title}{isPaused?" (Pausada)":isCancelled?" (Cancelada)":isReprogWithDate?" (Reprogramada)":isReprogNoDate?" (A Reprogramar)":""}</div>
                       {agendaPaymentChip(agSt.payment,10)}
                       {isNextComboPending(c,students)&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#EEEEEE",color:"#757575",fontWeight:700}}>Sin pagar</span>}
-                      {(()=>{const log=(c.attendanceLog||[]).find(e=>e.date===c.date);if(!log)return null;const {ausente,ausenteDada,aReprogramar}=resolveClassAttendanceBadgeCounts(students,c._seriesId||c.id,c.date,log);if(!ausente&&!ausenteDada&&!aReprogramar)return null;return(<>{ausente>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ Ausente</span>}{ausenteDada>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ Ausente-Dada</span>}{aReprogramar>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF8E1",color:"#F57F17",fontWeight:700}}>↩ A Reprogramar</span>}</>);})()}
+                      {(()=>{const log=(c.attendanceLog||[]).find(e=>e.date===c.date);if(!log)return null;const {ausenteDada,aReprogramar}=resolveClassAttendanceBadgeCounts(students,c._seriesId||c.id,c.date,log);if(!ausenteDada&&!aReprogramar)return null;return(<>{ausenteDada>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ Ausente-Dada</span>}{aReprogramar>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF8E1",color:"#F57F17",fontWeight:700}}>↩ A Reprogramar</span>}</>);})()}
                     </div>
                     {isReprogWithDate&&reprogTo&&<div style={{fontSize:11,color:"#2E7D32",marginBottom:4}}>📅 Reprogramada al {fmtDate(reprogTo)}</div>}
                     <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
@@ -5250,7 +5250,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                         </div>
                         <div style={{fontSize:11,color:C.mutedDark,marginTop:1}}>{c.time+(c.timeEnd?" – "+c.timeEnd:"")} · {c.court}</div>
                         {c.cancelled&&c.cancelType==="cancelled_reprog"&&reprogTo&&<div style={{fontSize:10,color:"#2E7D32",marginTop:1}}>📅 Reprogramada al {fmtDate(reprogTo)}</div>}
-                        {(()=>{const log=(c.attendanceLog||[]).find(e=>e.date===c.date);if(!log)return null;const {ausente,ausenteDada,aReprogramar}=resolveClassAttendanceBadgeCounts(students,c._seriesId||c.id,c.date,log);if(!ausente&&!ausenteDada&&!aReprogramar)return null;return(<div style={{display:"flex",gap:4,marginTop:4,flexWrap:"wrap"}}>{ausente>0&&<span style={{fontSize:11,padding:"3px 8px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ Ausente</span>}{ausenteDada>0&&<span style={{fontSize:11,padding:"3px 8px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ Ausente-Dada</span>}{aReprogramar>0&&<span style={{fontSize:11,padding:"3px 8px",borderRadius:10,background:"#FFF8E1",color:"#F57F17",fontWeight:700}}>↩ A Reprogramar</span>}</div>);})()}
+                        {(()=>{const log=(c.attendanceLog||[]).find(e=>e.date===c.date);if(!log)return null;const {ausenteDada,aReprogramar}=resolveClassAttendanceBadgeCounts(students,c._seriesId||c.id,c.date,log);if(!ausenteDada&&!aReprogramar)return null;return(<div style={{display:"flex",gap:4,marginTop:4,flexWrap:"wrap"}}>{ausenteDada>0&&<span style={{fontSize:11,padding:"3px 8px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ Ausente-Dada</span>}{aReprogramar>0&&<span style={{fontSize:11,padding:"3px 8px",borderRadius:10,background:"#FFF8E1",color:"#F57F17",fontWeight:700}}>↩ A Reprogramar</span>}</div>);})()}
                         {heightPx>52&&<div style={{display:"flex",gap:3,marginTop:4,flexWrap:"wrap"}}>
                           {(c.students||[]).map(sid=>{const st=students.find(s=>s.id===sid);if(!st)return null;const attSt=getAttendanceChipStatus(c,sid);const attStyle=attSt&&ATT_CHIP_STYLE[attSt];return (
                             <div key={sid} style={{display:"flex",alignItems:"center",gap:3,background:attStyle?attStyle.bg:C.blueL,borderRadius:20,padding:"2px 6px 2px 3px"}}>
