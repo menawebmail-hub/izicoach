@@ -694,9 +694,53 @@ const resolvePausedDatesForResume=(cls,students,resumeDate)=>{
   return pausedDates.filter(d=>d<resumeDate);
 };
 
+// ---- Class weekday validation (pure) — the single source of truth for "does this set of days
+// let a date generator find anything at all". Centralizes what several call sites (NewClassModal,
+// EditClassScreen, createNewClass, updateStudentPacks, PagoModal) each used to check inline via
+// `days.length===0`, which only catches a genuinely empty array — never a corrupted one (unknown
+// strings, blanks, duplicates). Any of those, once mapped through a day-name lookup, produces a
+// Set containing `undefined` — non-empty, so a naive `dowSet.size===0` guard downstream never
+// fires, yet `dowSet.has(realDayNumber)` is never true either: a `while` loop scanning day-by-day
+// for a match then never terminates. normalizeValidClassDays keeps only names the app's own
+// calendar recognizes (the canonical format used everywhere `days` already appears: an array of
+// "Dom"/"Lun"/"Mar"/"Mié"/"Jue"/"Vie"/"Sáb"; "Mie" without the accent — the alias
+// RESUME_DAY_MAP already tolerates — is accepted too and normalized to "Mié"), preserves input
+// order, and drops duplicates — so every dowSet built from its output is guaranteed to contain
+// only real 0-6 day numbers or be genuinely empty, never a false-non-empty trap.
+const CLASS_DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+const CLASS_DAY_ALIASES={"Mie":"Mié"};
+const normalizeValidClassDays=(days)=>{
+  if(!Array.isArray(days)) return [];
+  const seen=new Set();
+  const out=[];
+  days.forEach(d=>{
+    if(typeof d!=="string") return;
+    const trimmed=d.trim();
+    const canonical=CLASS_DAY_ALIASES[trimmed]||trimmed;
+    if(!Object.prototype.hasOwnProperty.call(CLASS_DAY_MAP,canonical)) return;
+    if(seen.has(canonical)) return;
+    seen.add(canonical);
+    out.push(canonical);
+  });
+  return out;
+};
+const hasValidClassDays=(days)=>normalizeValidClassDays(days).length>0;
+// Same canonical map, as a Set<number> ready for a date-scanning loop — guaranteed either empty
+// (no valid days: callers must stop before scanning, never loop hoping to find a match) or
+// containing only real 0-6 weekday numbers (a bounded scan is always guaranteed to find enough
+// matches within any 7-day window).
+const classDowSetFrom=(days)=>new Set(normalizeValidClassDays(days).map(d=>CLASS_DAY_MAP[d]));
+const NO_VALID_CLASS_DAYS_MESSAGE="Seleccioná al menos un día de clase.";
+const NO_CALENDAR_PAGO_MESSAGE="Esta clase no tiene días configurados. Editá la clase y seleccioná al menos un día antes de continuar.";
+const NO_CALENDAR_REPROG_MESSAGE="Esta clase no tiene días configurados. Editá la clase y seleccioná al menos un día antes de reprogramarla.";
+
 // ---- Resume replacement dates: collision-free generation and audit (pure) ----
 const RESUME_DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mie":3,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
-const resumeDowSet=(days)=>new Set((days||[]).map(d=>RESUME_DAY_MAP[d]));
+// Filters unrecognized entries BEFORE building the Set — an unmapped name must never leave a
+// `undefined` inside dowSet (that would make computeResumeReplacementDates's own dowSet.size===0
+// check never fire while also never matching a real weekday, the exact infinite/never-terminating
+// trap this whole file's date generators are being hardened against).
+const resumeDowSet=(days)=>new Set((days||[]).filter(d=>Object.prototype.hasOwnProperty.call(RESUME_DAY_MAP,d)).map(d=>RESUME_DAY_MAP[d]));
 const isoOfDate=(x)=>x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");
 // Every date a contracted slot occupies: its original date, each reschedule step and the terminal.
 const collectSlotPathDates=(dates,dc)=>{
@@ -787,6 +831,10 @@ const buildRenewalDates=({combo,dcCandidates,dowSet,fallbackDate})=>{
 // un-pauses it. Returns null when not enough free dates exist inside a bounded window.
 // `combos` = every non-mensual combo of the student, `dates` = the target combo's dates.
 const computeResumeReplacementDates=({combos,dates,dc,dowSet,resumeDate,pCount})=>{
+  // No valid weekday to scan for — never fall back to "match every day" (an invented calendar);
+  // null is this function's own established "couldn't find enough dates" signal, so every caller
+  // already handles this the same way it handles a genuinely too-narrow bounded window.
+  if(dowSet.size===0) return null;
   const occupied=new Set();
   (combos||[]).forEach(c=>{ (c.dates||[]).forEach(d=>occupied.add(d)); collectSlotPathDates(c.dates,dc).forEach(d=>occupied.add(d)); });
   const lastComboDate=(dates||[]).reduce((m,d)=>(m===null||d>m)?d:m,null);
@@ -801,7 +849,7 @@ const computeResumeReplacementDates=({combos,dates,dc,dowSet,resumeDate,pCount})
   const out=[];
   for(let guard=0;out.length<pCount&&guard<1500;guard++){
     const ds=isoOfDate(cur);
-    if((dowSet.size===0||dowSet.has(cur.getDay()))&&isFree(ds)) out.push(ds);
+    if(dowSet.has(cur.getDay())&&isFree(ds)) out.push(ds);
     cur.setDate(cur.getDate()+1);
   }
   return out.length<pCount?null:out;
@@ -2468,7 +2516,6 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
   const [allStudents,setAllStudents]=useState(initialStudents);
   const iS={width:"100%",padding:"12px 14px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",background:C.blueL,color:C.text,outline:"none"};
 
-  const DAY_MAP={"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6,"Dom":0};
   const mNShort=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
   const wDShort=["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
 
@@ -2480,8 +2527,11 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
       const pkg=packages.find(p=>String(p.id)===String(x.pack));
       return x.pack!=="individual"&&pkg?.type!=="individual"&&x.pack!=="";
     });
-    if(hasCombo&&days.length===0){
-      alert("Para clases con combo, seleccioná al menos un día de la semana.");return;
+    // Centralized — never just days.length===0, which misses an array full of unrecognized
+    // names/blanks (those would still pass a bare length check, then map to a Set containing
+    // undefined that a while-loop-based generator could scan forever without ever matching).
+    if(hasCombo&&!hasValidClassDays(days)){
+      alert(NO_VALID_CLASS_DAYS_MESSAGE);return;
     }
     // No Expiration input anymore: individual/one-time classes get a
     // single occurrence on startDate (finalOccurrences stays empty,
@@ -2491,8 +2541,8 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
     // student's own package dates (projectedClassDates in
     // createNewClass) never depended on this and are unaffected.
     let finalOccurrences=[];
-    if(hasCombo&&days.length>0){
-      const dowSet=new Set(days.map(d=>DAY_MAP[d]));
+    if(hasCombo&&hasValidClassDays(days)){
+      const dowSet=classDowSetFrom(days);
       const result=[];
       let cur=new Date(startDate+"T12:00:00");
       const end=new Date(new Date(startDate+"T12:00:00").setMonth(new Date(startDate+"T12:00:00").getMonth()+6));
@@ -3619,13 +3669,29 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
       </div>
       <div style={{flexShrink:0,padding:"12px 16px calc(16px + env(safe-area-inset-bottom,0px))",background:C.bg}}>
         <button onClick={()=>{
+          // Enforced here, the actual save handler — never just the day-toggle buttons' own state
+          // or a disabled-button hint — matching NewClassModal's identical hasCombo predicate: any
+          // currently-assigned student whose package isn't individual (combo, mensual, or the
+          // unidentified-mensual sentinel — none of which are "individual") makes this class
+          // recurring, and a recurring class can never be saved with zero valid days. If the
+          // professor removed every day, the previous class (cls) is untouched: no onSave call, no
+          // occurrence regeneration, no partial write of any kind.
+          const hasRecurringObligation=clsSt.some(sid=>{
+            const sp=studentPacks[sid];
+            if(!sp) return false;
+            const pkg=packages.find(p=>String(p.id)===String(sp.pack));
+            return sp.pack!=="individual"&&pkg?.type!=="individual"&&sp.pack!=="";
+          });
+          if(hasRecurringObligation&&!hasValidClassDays(days)){
+            alert(NO_VALID_CLASS_DAYS_MESSAGE);
+            return;
+          }
           // Regenerate occurrences if days changed OR if current occurrences are too few for the days selected
           let newOccurrences=cls.occurrences||[];
           const daysChanged=JSON.stringify(days)!==JSON.stringify(cls.days);
           const tooFewOccurrences=days.length>0&&newOccurrences.length<days.length*4; // less than ~1 month of classes
-          if((daysChanged||tooFewOccurrences)&&days.length>0){
-            const DAY_MAP2={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
-            const dowSet=new Set(days.map(d=>DAY_MAP2[d]));
+          if((daysChanged||tooFewOccurrences)&&hasValidClassDays(days)){
+            const dowSet=classDowSetFrom(days);
             const result=[];
             const sd=cls.startDate||cls.date;
             const ed=cls.endDate;
@@ -3903,17 +3969,35 @@ function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent,
   const [newDate,setNewDate]=useState("");
   const [newTime,setNewTime]=useState(cls.time||"08:00");
 
-  const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
-  const classDowSet=new Set((cls.days||[]).map(d=>DAY_MAP[d]));
+  const clsStudents=(cls.students||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean);
+  // Same recurrence signal used elsewhere (EditClassScreen's hasRecurringObligation): any
+  // currently-assigned student whose resolved combo for THIS class isn't individual makes the
+  // class recurring — a genuine single-date individual class (no such student) is never blocked
+  // just for having days:[], preserving its exact current auto-suggest behavior below.
+  const clsRealId0=cls._seriesId||cls.id;
+  const isRecurringClass=clsStudents.some(st=>{
+    const combo=resolveStudentComboForClass(st,clsRealId0,cls.date);
+    return !!(combo&&combo.packType!=="individual");
+  });
+  const classDowSet=classDowSetFrom(cls.days);
+  // Recurring + no valid weekday: an explicit no-calendar result, never a guessed "tomorrow" —
+  // the exact fallback this session's fix eliminates from every other date generator. A
+  // legitimate single-date individual class (isRecurringClass===false) keeps the pre-existing
+  // "match any day" behavior for its own auto-suggestion, completely unchanged.
   const getNextClassDate=(fromDate)=>{
+    if(isRecurringClass&&classDowSet.size===0) return {status:"no-calendar"};
     const d=new Date(fromDate+"T12:00:00");d.setDate(d.getDate()+1);
-    for(let i=0;i<14;i++){if(classDowSet.size===0||classDowSet.has(d.getDay())) return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");d.setDate(d.getDate()+1);}
-    return null;
+    for(let i=0;i<14;i++){
+      if(classDowSet.size===0||classDowSet.has(d.getDay())) return {status:"ok",date:d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")};
+      d.setDate(d.getDate()+1);
+    }
+    return {status:"not-found"};
   };
-  const nextAuto=getNextClassDate(cls.date);
+  const nextAutoResult=getNextClassDate(cls.date);
+  const isNoCalendar=nextAutoResult.status==="no-calendar";
+  const nextAuto=nextAutoResult.status==="ok"?nextAutoResult.date:null;
   const targetDate=newDate||nextAuto;
   const targetLabel=targetDate?fmtDate(targetDate):null;
-  const clsStudents=(cls.students||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean);
 
   const [reprogLater,setReprogLater]=useState(false);
   const isAssigningDate=cls.cancelled&&cls.cancelType==="cancelled_reprog"&&!cls.rescheduledTo;
@@ -3933,6 +4017,14 @@ function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent,
   };
 
   const handleConfirm=()=>{
+    // Re-checked here, the actual enforcement point — never just confirmDisabled above. A manual
+    // newDate or "Mover al final del paquete" (its own independent target, unrelated to
+    // getNextClassDate) always take priority and are never blocked by this; only a reprog attempt
+    // that would have to fall back to the now-absent auto-suggested date is refused.
+    if(selected==="reprog"&&!newDate&&!endChoice&&!reprogLater&&isNoCalendar){
+      alert(NO_CALENDAR_REPROG_MESSAGE);
+      return;
+    }
     if(selected==="reprog"&&endChoice){
       if(savingRef.current) return;
       savingRef.current=true;
@@ -4019,6 +4111,7 @@ function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent,
               </div>
             </div>
             {newDate&&targetLabel&&<div style={{fontSize:12,color:"#2E7D32",background:"#E8F5E9",borderRadius:10,padding:"10px 12px",marginBottom:10}}>📅 Se moverá al <b>{targetLabel}</b> a las <b>{newTime}</b></div>}
+            {!newDate&&isNoCalendar&&<div style={{fontSize:12,color:"#E65100",background:"#FFF3E0",borderRadius:10,padding:"10px 12px",marginBottom:10}}>{NO_CALENDAR_REPROG_MESSAGE}</div>}
             <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
               {clsStudents.map(st=>(
                 <div key={st.id} style={{display:"flex",alignItems:"center",gap:4,background:"#E3F2FD",borderRadius:20,padding:"3px 8px 3px 4px",fontSize:11,color:"#1565C0",fontWeight:600}}>
@@ -4132,26 +4225,39 @@ function ReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent }) {
   const currentDate=new Date(cls.date+"T12:00:00");
   const currentLabel=currentDate.getDate()+" de "+mN[currentDate.getMonth()]+" "+currentDate.getFullYear();
 
-  const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
-  const classDowSet=new Set((cls.days||[]).map(d=>DAY_MAP[d]));
+  const clsStudents=(cls.students||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean);
+  // Same recurrence signal as CancelReprogModal: any currently-assigned student whose resolved
+  // combo for THIS class isn't individual makes the class recurring. A genuine single-date
+  // individual class keeps its exact current auto-suggest behavior below, unchanged.
+  const clsRealId0=cls._seriesId||cls.id;
+  const isRecurringClass=clsStudents.some(st=>{
+    const combo=resolveStudentComboForClass(st,clsRealId0,cls.date);
+    return !!(combo&&combo.packType!=="individual");
+  });
+  const classDowSet=classDowSetFrom(cls.days);
+  // Recurring + no valid weekday: an explicit no-calendar result, never a guessed "tomorrow" that
+  // — unlike CancelReprogModal — this component's handleConfirm actually WRITES as the new class
+  // date when the coach never picks a manual one. targetDate below becomes null in that case,
+  // which the pre-existing `if(!targetDate) return;` guard in handleConfirm already refuses.
   const getNextClassDate=(fromDate)=>{
+    if(isRecurringClass&&classDowSet.size===0) return {status:"no-calendar"};
     const d=new Date(fromDate+"T12:00:00");
     d.setDate(d.getDate()+1);
     for(let i=0;i<14;i++){
       if(classDowSet.size===0||classDowSet.has(d.getDay())){
-        return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+        return {status:"ok",date:d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")};
       }
       d.setDate(d.getDate()+1);
     }
-    return null;
+    return {status:"not-found"};
   };
 
-  const nextAuto=getNextClassDate(cls.date);
+  const nextAutoResult=getNextClassDate(cls.date);
+  const isNoCalendar=nextAutoResult.status==="no-calendar";
+  const nextAuto=nextAutoResult.status==="ok"?nextAutoResult.date:null;
   const targetDate=newDate||nextAuto;
   const targetDateObj=targetDate?new Date(targetDate+"T12:00:00"):null;
   const targetLabel=targetDateObj?targetDateObj.getDate()+" de "+mN[targetDateObj.getMonth()]+" "+targetDateObj.getFullYear():null;
-
-  const clsStudents=(cls.students||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean);
 
   const handleNotify=()=>{
     // Mark as notified — in a real app this would send messages
@@ -4159,6 +4265,11 @@ function ReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent }) {
   };
 
   const handleConfirm=()=>{
+    // Re-checked here, the actual enforcement point — never just the disabled-ness of a button.
+    // isNoCalendar with no manual newDate means targetDate is already null, so the existing
+    // `!targetDate` guard below refuses the write on its own; this branch only exists to show the
+    // comprehensible message instead of silently doing nothing.
+    if(!newDate&&isNoCalendar){ alert(NO_CALENDAR_REPROG_MESSAGE); return; }
     if(!targetDate) return;
     const oldDate=cls.date;
     const updatedLog=(cls.attendanceLog||[]).map(e=>
@@ -4215,7 +4326,7 @@ function ReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent }) {
           <div style={{fontSize:12,color:"#E65100",lineHeight:1.5}}>
             {targetLabel
               ?<>La clase se moverá al <b>{targetLabel}</b> a las <b>{newTime}</b>. Las fechas del combo en Cobros se actualizarán.</>
-              :"Elegí una nueva fecha o se usará la siguiente clase programada."
+              :isNoCalendar?NO_CALENDAR_REPROG_MESSAGE:"Elegí una nueva fecha o se usará la siguiente clase programada."
             }
           </div>
         </div>
@@ -5174,7 +5285,22 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                     const needsRenewal=isNextComboPending(clsForCheck,students);
                     if(!needsRenewal) return null;
                     const handleRenovar=()=>{
-                      const DAY_MAP2={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+                      // Fail-fast, before any onUpdateStudent write below: if this class has a
+                      // student with a renewable class-package combo but no valid weekly calendar,
+                      // the loop below would otherwise silently write a new combo with dates:[]
+                      // (an invented "renewal" the class was never actually configured to support).
+                      // Checked once here, for the whole class, so an invalid calendar blocks every
+                      // student's renewal rather than only the per-student date list coming up empty.
+                      const classDowSetRenovar=classDowSetFrom(c.days||[]);
+                      const hasRenewableCombo=(c.students||[]).some(sid=>{
+                        const st=students.find(s=>s.id===sid);
+                        if(!st) return false;
+                        return (st.combos||[]).some(x=>x.total>0&&x.packType!=="mensual"&&x.packType!=="individual");
+                      });
+                      if(hasRenewableCombo&&classDowSetRenovar.size===0){
+                        alert(NO_CALENDAR_PAGO_MESSAGE);
+                        return;
+                      }
                       onUpdateStudent&&(c.students||[]).forEach(sid=>{
                         const st=students.find(s=>s.id===sid);
                         if(!st) return;
@@ -5187,13 +5313,22 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                         const realOcc=(parentCls?.occurrences||[]).filter(d=>d>=selDay);
                         const newDates=realOcc.slice(0,lastCombo.total);
                         if(newDates.length===0){
-                          const dowSet=new Set((c.days||[]).map(d=>DAY_MAP2[d]));
-                          let cur=new Date(selDay+"T12:00:00");
-                          while(newDates.length<lastCombo.total){
-                            if(dowSet.size===0||dowSet.has(cur.getDay())){
-                              newDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+                          // classDowSetFrom filters through normalizeValidClassDays — guaranteed
+                          // real weekday numbers or genuinely empty, never a Set{undefined} that
+                          // would scan forever without matching. No valid calendar: never fall
+                          // back to "match every day" — leave newDates empty rather than inventing
+                          // a calendar this class was never actually configured with.
+                          const dowSet=classDowSetFrom(c.days||[]);
+                          if(dowSet.size>0){
+                            let cur=new Date(selDay+"T12:00:00");
+                            // Bounded like buildRenewalDates: with a real weekday, lastCombo.total
+                            // matches always land within lastCombo.total*7 days.
+                            for(let scanned=0;newDates.length<lastCombo.total&&scanned<=lastCombo.total*7+7;scanned++){
+                              if(dowSet.has(cur.getDay())){
+                                newDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+                              }
+                              cur.setDate(cur.getDate()+1);
                             }
-                            cur.setDate(cur.getDate()+1);
                           }
                         }
                         const newCombo={id:combos.length+1,total:lastCombo.total,packType:lastCombo.packType||"combo",used:0,paid:false,paidCount:0,date:newDates[0]||selDay,amount:lastCombo.amount,dates:newDates,payments:[]};
@@ -5672,8 +5807,14 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   const classDays=myClasses.length>0?myClasses[0].days:[];
   const classTime=myClasses.length>0?myClasses[0].time:"";
   const classCourt=myClasses.length>0?myClasses[0].court:"";
-  const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
-  const classDowSet=new Set(classDays.map(d=>DAY_MAP[d]));
+  // classDowSetFrom filters through normalizeValidClassDays first — guaranteed either genuinely
+  // empty or containing only real 0-6 day numbers, never a false-non-empty Set{undefined} that
+  // would make every while loop below scan forever without ever matching a real date.
+  const classDowSet=classDowSetFrom(classDays);
+  // True only when this student's own class has no day a date generator can ever match — gates
+  // the "no puede continuar" message and blocks confirming a class-based payment below; mensual
+  // payments don't need a weekly calendar at all, so they're never blocked by this.
+  const classHasNoCalendar=myClasses.length>0&&!hasValidClassDays(classDays);
 
   const attendedDates=new Set();
   classes.forEach(cls=>{
@@ -5685,10 +5826,16 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   const paidCoveredDates=new Set();
   allCombos.forEach(c=>{
     if(!c.paid||!c.total) return;
+    // No valid calendar — never invent "every day is a class day" (that WAS this loop's fallback);
+    // a combo with no matchable weekday simply covers no projected dates, same as buildRenewalDates
+    // treating an empty/invalid dowSet as no-calendar rather than match-anything.
+    if(classDowSet.size===0) return;
     const startD=new Date((c.date||"2026-01-01")+"T12:00:00");
     let cur=new Date(startD); let count=0;
-    while(count<c.total){
-      if(classDowSet.size===0||classDowSet.has(cur.getDay())){
+    // Bounded exactly like buildRenewalDates: with at least one valid weekday, c.total matches are
+    // always found within c.total*7 days — the +7 slack is defensive, never load-bearing.
+    for(let scanned=0;count<c.total&&scanned<=c.total*7+7;scanned++){
+      if(classDowSet.has(cur.getDay())){
         const ds=cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0");
         paidCoveredDates.add(ds); count++;
       }
@@ -5806,15 +5953,20 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   // For new combo projection (mora + future)
   const buildProjectedDates=(qty)=>{
     const dates=[];
+    // No valid weekday to scan for — an explicit empty result, never a loop that scans hoping to
+    // find a match (that never comes) and never a "match every day" invented calendar. The UI
+    // surfaces classHasNoCalendar separately to explain the empty result and block confirming.
+    if(classDowSet.size===0) return dates;
     if(moraCount>0){
       const allCovered=[...paidCoveredDates].sort();
       const lastPaid=allCovered.length>0?allCovered[allCovered.length-1]:TODAY;
       let cur=new Date(lastPaid+"T12:00:00");
       cur.setDate(cur.getDate()+1);
       let added=0;
-      while(added<moraCount){
+      // Bounded like buildRenewalDates — with a real weekday every match lands within 7 days.
+      for(let scanned=0;added<moraCount&&scanned<=moraCount*7+7;scanned++){
         const ds=cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0");
-        if(classDowSet.size===0||classDowSet.has(cur.getDay())){
+        if(classDowSet.has(cur.getDay())){
           dates.push({date:ds,mora:added>=qty,wasMora:added<qty});
           added++;
         }
@@ -5827,9 +5979,9 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
       let cur=new Date(lastDone+"T12:00:00");
       cur.setDate(cur.getDate()+1);
       let added=0;
-      while(added<extraNeeded){
+      for(let scanned=0;added<extraNeeded&&scanned<=extraNeeded*7+7;scanned++){
         const ds=cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0");
-        if(classDowSet.size===0||classDowSet.has(cur.getDay())){
+        if(classDowSet.has(cur.getDay())){
           dates.push({date:ds,mora:false,wasMora:false});
           added++;
         }
@@ -5842,6 +5994,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   const projDates=buildProjectedDates(parseInt(localClasses)||0);
 
   const handleGoToReview=()=>{
+    if(pagoTipo==="clases"&&classHasNoCalendar){alert(NO_CALENDAR_PAGO_MESSAGE);return;}
     if(pagoTipo==="clases"&&(!localClasses||parseInt(localClasses)<=0)){
       alert("Ingresá la cantidad de clases usando el stepper ◀ ▶");return;
     }
@@ -5852,6 +6005,10 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   };
 
   const handleConfirm=()=>{
+    // Re-checked here too — the handler is the enforcement point, never just the button/step gate
+    // above; a payload reaching this function some other way (stale state, a direct call) is
+    // refused the same way, before touching updatedCombos/onUpdate/addIncome.
+    if(pagoTipo==="clases"&&classHasNoCalendar){alert(NO_CALENDAR_PAGO_MESSAGE);return;}
     if(pagoTipo==="clases"&&(!localClasses||parseInt(localClasses)<=0)){alert("Ingresá la cantidad de clases.");return;}
     if(!localAmount||parseInt(localAmount)<=0){alert("Ingresá el monto.");return;}
     const qty=parseInt(localClasses)||0;
@@ -5968,9 +6125,12 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         <div style={{fontSize:14,color:"#5C7A9F",marginBottom:isComplete?20:0}}>{s.name}</div>
         {isComplete&&(
           <button onClick={()=>{
-            const DAY_MAP2={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
             const clsDays=myClasses.length>0?myClasses[0].days:[];
-            const dowSet=new Set(clsDays.map(d=>DAY_MAP2[d]));
+            // classDowSetFrom, not a raw DAY_MAP lookup — an unrecognized day name here would
+            // otherwise produce a non-empty Set{undefined} that buildRenewalDates' own
+            // dowSet.size===0 no-calendar check can never catch (the same root-cause bug already
+            // fixed at every other date generator in this file).
+            const dowSet=classDowSetFrom(clsDays);
             const renewal=buildRenewalDates({combo:lastC,dcCandidates:getComboDcCandidates(myClasses,lastC),dowSet,fallbackDate:TODAY});
             if(!renewal.ok){alert(renewalBlockedMessage(renewal.reason));return;}
             const newDates=renewal.dates;
@@ -6118,6 +6278,11 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
           </div>
 
           {/* Fields */}
+          {pagoTipo==="clases"&&classHasNoCalendar&&(
+            <div style={{gridColumn:"1/-1",background:"#FFF3E0",borderRadius:10,padding:"10px 14px",marginBottom:10,fontSize:12,fontWeight:700,color:"#E65100"}}>
+              {NO_CALENDAR_PAGO_MESSAGE}
+            </div>
+          )}
           {pagoTipo==="clases"?(
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
               <div>
@@ -6125,12 +6290,14 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
                 {(()=>{
                   // Cap = payableRows.length: every currently pending, payable row
                   // across ALL obligations (Combo + Individual), not just one combo.
-                  const maxUnpaid=payableRows.length;
+                  // Never above 0 when the class has no valid calendar — the +7 slack in the
+                  // date-generation caps only protects a scan that has somewhere real to look.
+                  const maxUnpaid=classHasNoCalendar?0:payableRows.length;
                   return (
                     <div style={{display:"flex",alignItems:"center",background:C.blueL,borderRadius:12,overflow:"hidden"}}>
                       <button onClick={()=>setLocalClasses(Math.max(0,(parseInt(localClasses)||0)-1))} style={{width:44,height:46,border:"none",background:"#2C5EF7",color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>◀</button>
                       <div style={{flex:1,textAlign:"center",fontSize:22,fontWeight:800,color:"#1A237E"}}>{parseInt(localClasses)||0}</div>
-                      <button onClick={()=>setLocalClasses(Math.min(maxUnpaid,(parseInt(localClasses)||0)+1))} style={{width:44,height:46,border:"none",background:"#2C5EF7",color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>▶</button>
+                      <button onClick={()=>setLocalClasses(Math.min(maxUnpaid,(parseInt(localClasses)||0)+1))} disabled={classHasNoCalendar} style={{width:44,height:46,border:"none",background:classHasNoCalendar?"#B0BEC5":"#2C5EF7",color:"#fff",fontSize:20,cursor:classHasNoCalendar?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>▶</button>
                     </div>
                   );
                 })()}
@@ -6377,7 +6544,6 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
   const [histTab,setHistTab]=useState(0);
   const [showComprobante,setShowComprobante]=useState(null);
   const [showRecordatorio,setShowRecordatorio]=useState(false);
-  const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
   const myClassesH=classes.filter(c=>c.students&&c.students.includes(s.id));
   const classDays=myClassesH.length>0?myClassesH[0].days:[];
   const classTime=myClassesH.length>0?myClassesH[0].time:"";
@@ -6623,8 +6789,10 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             if(lastComboS){
               // Generate next dates after the last combo's EFFECTIVE end (reschedule chains included)
               const clsDays=myClassesH.length>0?myClassesH[0].days:[];
-              const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
-              const dowSet=new Set(clsDays.map(d=>DAY_MAP[d]));
+              // classDowSetFrom, not a raw DAY_MAP lookup — see the identical fix a few lines
+              // above in PaymentCard's own renewal button for why a raw lookup can hide an
+              // invalid calendar from buildRenewalDates' dowSet.size===0 check.
+              const dowSet=classDowSetFrom(clsDays);
               const renewal=buildRenewalDates({combo:lastComboS,dcCandidates:getComboDcCandidates(myClassesH,lastComboS),dowSet,fallbackDate:TODAY_DATE});
               if(!renewal.ok){alert(renewalBlockedMessage(renewal.reason));return;}
               const nextDates=renewal.dates;
@@ -9202,6 +9370,17 @@ export default function App() {
       alert("El paquete de "+(invalidStudent?.name||"un alumno")+" no tiene una cantidad de clases válida. Revisá el paquete en Configuración.");
       return false;
     }
+    // Second fail-fast pre-validation, same rationale as above and same enforcement point — before
+    // ANY of setClasses/setStudents/addIncome runs, never just relying on NewClassModal's own UI
+    // gate (a direct or manipulated call to this handler must be refused exactly the same way).
+    // Any selected combo/mensual student makes this a recurring class; days:[] or a set of
+    // unrecognized names (both would otherwise let a date generator scan forever or invent
+    // consecutive days) must never reach class/combo creation.
+    const hasRecurringSd=(cd.studentData||[]).some(sd=>sd.pack!=="individual");
+    if(hasRecurringSd&&!hasValidClassDays(cd.days)){
+      alert(NO_VALID_CLASS_DAYS_MESSAGE);
+      return false;
+    }
     // Store a single class definition with occurrences array
     const dates=cd.occurrences&&cd.occurrences.length>0?cd.occurrences:[cd.date||TODAY_DATE];
     const newClass={
@@ -9238,22 +9417,21 @@ export default function App() {
         const projectedClassDates=isIndividual?[...dates]:(()=>{
           const ds=[];
           if(!pn) return ds;
-          if(cd.days&&cd.days.length>0){
-            const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
-            const dowSet=new Set(cd.days.map(d=>DAY_MAP[d]));
-            let cur=new Date((cd.date||TODAY_DATE)+"T12:00:00");
-            while(ds.length<pn){
-              if(dowSet.has(cur.getDay())){
-                ds.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
-              }
-              cur.setDate(cur.getDate()+1);
-            }
-          } else {
-            let cur=new Date((cd.date||TODAY_DATE)+"T12:00:00");
-            for(let i=0;i<pn;i++){
+          // classDowSetFrom filters through normalizeValidClassDays — guaranteed real weekday
+          // numbers or genuinely empty, never a Set{undefined} that would scan forever without
+          // matching. No valid calendar here is a NewClassModal-level bug (it blocks saving a
+          // combo student without valid days before this ever runs) reaching this defensively —
+          // return no dates rather than inventing consecutive calendar days as a fallback.
+          const dowSet=classDowSetFrom(cd.days);
+          if(dowSet.size===0) return ds;
+          let cur=new Date((cd.date||TODAY_DATE)+"T12:00:00");
+          // Bounded like buildRenewalDates: with a real weekday, pn matches always land within
+          // pn*7 days.
+          for(let scanned=0;ds.length<pn&&scanned<=pn*7+7;scanned++){
+            if(dowSet.has(cur.getDay())){
               ds.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
-              cur.setDate(cur.getDate()+1);
             }
+            cur.setDate(cur.getDate()+1);
           }
           return ds;
         })();
@@ -9406,6 +9584,25 @@ export default function App() {
       try {
       const realId=cd._seriesId||cd.id;
       const editedClass=classes.find(c=>c.id===realId)||cd;
+      // Fail-fast, before setStudents/addIncome runs — never just a per-student no-op deep
+      // inside the map below. Adding a combo OR mensual (non-individual) student's package to
+      // this class only makes sense if the class itself has a configured weekly calendar.
+      // Business rule: mensual billing uses cobroDia, but the CLASS a mensual student is enrolled
+      // in still meets weekly, on cls.days — Agenda/Asistencia generation for that class depends on
+      // it exactly like a combo class does, so a mensual assignment needs a valid calendar just as
+      // much. Only a genuine individual (single-date, no weekly recurrence) selection is exempt.
+      // Guards a direct/manipulated call to this handler exactly like createNewClass's own
+      // pre-validation does, independent of whatever EditClassScreen's UI already checked.
+      const hasRecurringSp=Object.values(cd.studentPacks).some(sp=>{
+        if(!sp||!sp.pack) return false;
+        const pkg=packages.find(pk=>String(pk.id)===String(sp.pack));
+        const isIndividual=sp.pack==="individual"||pkg?.type==="individual";
+        return !isIndividual;
+      });
+      if(hasRecurringSp&&!hasValidClassDays(editedClass.days)){
+        alert(NO_VALID_CLASS_DAYS_MESSAGE);
+        return;
+      }
       // Populated (at most once per student) by the map below, then read AFTER setStudents returns —
       // never call addIncome from inside a state updater. This app's setStudents wrapper invokes its
       // updater function synchronously, exactly once (never React's own double-invoke), so this array
@@ -9620,14 +9817,22 @@ export default function App() {
             const total=qty||8;
             const newDates=realOcc.slice(0,total);
             if(newDates.length===0){
-              const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
-              const dowSet=new Set((editedClass.days||[]).map(d=>DAY_MAP[d]));
-              let cur=new Date(startDate+"T12:00:00");
-              while(newDates.length<total){
-                if(dowSet.size===0||dowSet.has(cur.getDay())){
-                  newDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+              // classDowSetFrom filters through normalizeValidClassDays — guaranteed real weekday
+              // numbers or genuinely empty, never a Set{undefined} that would scan forever without
+              // ever matching. No valid calendar: never fall back to "match every day" (that WAS
+              // this loop's `dowSet.size===0` behavior) — leave newDates empty rather than
+              // inventing a calendar the class was never actually configured with.
+              const dowSet=classDowSetFrom(editedClass.days||[]);
+              if(dowSet.size>0){
+                let cur=new Date(startDate+"T12:00:00");
+                // Bounded like buildRenewalDates: with a real weekday, `total` matches always land
+                // within total*7 days.
+                for(let scanned=0;newDates.length<total&&scanned<=total*7+7;scanned++){
+                  if(dowSet.has(cur.getDay())){
+                    newDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+                  }
+                  cur.setDate(cur.getDate()+1);
                 }
-                cur.setDate(cur.getDate()+1);
               }
             }
             combos.push({
@@ -9795,15 +10000,24 @@ export default function App() {
             const lastCDArr=[...allCDPre].sort();
             const lcdPre=lastCDArr[lastCDArr.length-1]||"";
             const startPre=lcdPre&&lcdPre>=rDatePre?lcdPre:rDatePre;
-            const DAY_MAP_PRE={"Dom":0,"Lun":1,"Mar":2,"Mie":3,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
-            const dowPre=new Set((clsPre.days||[]).map(d=>DAY_MAP_PRE[d]));
-            let curPre=new Date(startPre+"T12:00:00");
-            if(lcdPre&&lcdPre>=rDatePre) curPre.setDate(curPre.getDate()+1);
-            while(_replacements.length<pausedPre.length){
-              if(dowPre.size===0||dowPre.has(curPre.getDay())){
-                _replacements.push(curPre.getFullYear()+"-"+String(curPre.getMonth()+1).padStart(2,"0")+"-"+String(curPre.getDate()).padStart(2,"0"));
+            // classDowSetFrom filters through normalizeValidClassDays — guaranteed real weekday
+            // numbers or genuinely empty, never a Set{undefined} that would scan forever without
+            // ever matching (this loop was previously unbounded — the exact infinite-loop risk
+            // this session's fix targets). No valid calendar: never fall back to "match every
+            // day" — leave _replacements empty rather than inventing dates this class's own
+            // configuration never actually supports.
+            const dowPre=classDowSetFrom(clsPre.days||[]);
+            if(dowPre.size>0){
+              let curPre=new Date(startPre+"T12:00:00");
+              if(lcdPre&&lcdPre>=rDatePre) curPre.setDate(curPre.getDate()+1);
+              // Bounded like buildRenewalDates: with a real weekday, pausedPre.length matches
+              // always land within pausedPre.length*7 days.
+              for(let scanned=0;_replacements.length<pausedPre.length&&scanned<=pausedPre.length*7+7;scanned++){
+                if(dowPre.has(curPre.getDay())){
+                  _replacements.push(curPre.getFullYear()+"-"+String(curPre.getMonth()+1).padStart(2,"0")+"-"+String(curPre.getDate()).padStart(2,"0"));
+                }
+                curPre.setDate(curPre.getDate()+1);
               }
-              curPre.setDate(curPre.getDate()+1);
             }
           }
         }
@@ -9885,6 +10099,20 @@ export default function App() {
         return classesWritePromise;
       }
 
+      // Fail-fast, before ANY state write in this edit (applyEditToClass writes classes;
+      // updateStudentPacks writes students and can queue addIncome) — checked once here against
+      // the incoming form data itself, so a direct/manipulated cd can never save classes first
+      // and fail on students after, nor record income before the invalid calendar is discovered.
+      const hasRecurringSpEdit=cd.studentPacks&&Object.values(cd.studentPacks).some(sp=>{
+        if(!sp||!sp.pack) return false;
+        const pkg=packages.find(pk=>String(pk.id)===String(sp.pack));
+        const isIndividual=sp.pack==="individual"||pkg?.type==="individual";
+        return !isIndividual;
+      });
+      if(hasRecurringSpEdit&&!hasValidClassDays(cd.days)){
+        alert(NO_VALID_CLASS_DAYS_MESSAGE);
+        return;
+      }
       applyEditToClass(cd, realId);
       removeStudentsFromClass(cd, realId);
       updateStudentPacks(cd);
