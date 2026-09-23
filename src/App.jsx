@@ -56,8 +56,16 @@ const isValidComboQty=(v)=>{const n=Number(v);return Number.isInteger(n)&&n>0;};
 const TODAY_DATE=(()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
 
 // --- MENSUAL HELPERS ---
+// Canonical "is this the modern mensual shape" check — keyed ONLY on mensualidades[] being an
+// array, never on cobroDia's mere presence. A legacy combo (paid+payments[], no mensualidades at
+// all) can gain a configurable cobroDia (see EditClassScreen) without ever being silently treated
+// as modern elsewhere: every place that used to gate on `packType==="mensual"&&cobroDia` to decide
+// "read from mensualidades[]" now uses this instead, so a legacy combo stays on its own paid/
+// payments[]-based path — no auto-generated monthly ladder, no mora/pendiente alerts invented for
+// a student who was never configured that way, no silent promotion.
+const isModernMensual=(combo)=>!!combo&&combo.packType==="mensual"&&Array.isArray(combo.mensualidades);
 function getMensualidades(combo) {
-  if(!combo||combo.packType!=="mensual"||!combo.cobroDia) return [];
+  if(!isModernMensual(combo)) return [];
   const existing=combo.mensualidades||[];
   const cobroDia=combo.cobroDia||1;
   const gracia=combo.graciaDias||5;
@@ -293,7 +301,12 @@ const getAttendanceChipStatus=(c,sid)=>{
     if((log.present||[]).includes(sid)) return "presente";
     if((log.ausente_dada||[]).includes(sid)) return "ausente_dada";
     if((log.ausente_reprog||[]).includes(sid)) return "ausente_reprog";
-    return null;
+    // An explicit absence always wins (checked above); a student who isn't in ANY of the three
+    // arrays for a day that already has a log — e.g. added to the class after attendance was
+    // taken — is unmarked, not absent: defaults to presente, same as AttModal's own initializer
+    // already does. This is a display-only default: attendanceLog itself is never touched here,
+    // and reopening AttModal for the same day still shows the same unmarked state until saved.
+    return "presente";
   }
   return isClassDone(c.date,c.timeEnd||"23:59")?"presente":null;
 };
@@ -1134,16 +1147,18 @@ function resolveStudentComboForClass(student, classRealId, classDate) {
   if(!combo) combo=combos[combos.length-1];
   return combo||null;
 }
-// "Pagó / No pagó" initial read for EditClassScreen ONLY — a modern mensual combo (cobroDia
-// present) never sets combo.paid; its real payment status lives in mensualidades[] (getMensualEstado,
-// the same canonical source Cobros/PagoModal read and write), keyed by month. A legacy combo (no
-// cobroDia) keeps reading combo.paid unchanged, for backward compatibility with existing legacy
-// mensual data. Pure, read-only. Extracted out of EditClassScreen's studentPacks useState
-// initializer (rather than left as an inline if/else there) purely to keep that initializer's own
-// branching flat — oxlint's rules-of-hooks conditional-call check is sensitive to nested
-// if/else-with-declaration shapes inside a useState lazy-initializer callback.
+// "Pagado" initial read for EditClassScreen's read-only mensual display — a modern mensual combo
+// (isModernMensual: mensualidades[] is an array) never sets combo.paid; its real payment status
+// lives in mensualidades[] (getMensualEstado, the same canonical source Cobros/PagoModal read and
+// write), keyed by month. A legacy combo (no mensualidades[] at all — even if it now has a
+// configurable cobroDia, see isModernMensual) keeps reading combo.paid unchanged, for backward
+// compatibility with existing legacy mensual data. Pure, read-only. Extracted out of
+// EditClassScreen's studentPacks useState initializer (rather than left as an inline if/else
+// there) purely to keep that initializer's own branching flat — oxlint's rules-of-hooks
+// conditional-call check is sensitive to nested if/else-with-declaration shapes inside a useState
+// lazy-initializer callback.
 function resolveInitialMensualPaidVal(combo,classDate){
-  if(combo.packType==="mensual"&&combo.cobroDia){
+  if(isModernMensual(combo)){
     const curMes=(classDate||TODAY_DATE).slice(0,7);
     const mensualidad=getMensualEstado(combo).mensualidades.find(m=>m.mes===curMes);
     return mensualidad?mensualidad.estado==="pagado":false;
@@ -1272,10 +1287,11 @@ function getVisibleClassEntitlements(s, classes=[]) {
       return false;
     });
 }
-// Any mensual-shaped entry (moderna con cobroDia, o legacy sin) — decides whether to
-// show ANY mensual box at all. getModernMensualEntitlements narrows to the modern
-// shape that getMensualEstado/getMensualRem operate on; legacy stays handled by its
-// own existing PaymentCard branch, untouched.
+// Any mensual-shaped entry (moderno o legacy) — decides whether to show ANY mensual box at all.
+// getModernMensualEntitlements narrows to the modern shape (isModernMensual) that
+// getMensualEstado/getMensualRem operate on; legacy — including a legacy combo that has since
+// gained a configurable cobroDia but still has no mensualidades[] — stays handled by its own
+// existing PaymentCard branch, untouched.
 function getAllMensualEntitlements(s) {
   return (s.combos||[]).filter(c=>
     c.packType==="mensual"||
@@ -1283,7 +1299,7 @@ function getAllMensualEntitlements(s) {
   );
 }
 function getModernMensualEntitlements(s) {
-  return (s.combos||[]).filter(c=>c.packType==="mensual"&&c.cobroDia);
+  return (s.combos||[]).filter(c=>isModernMensual(c));
 }
 // getRem split in two — same math as before, exposed independently so class-debt and
 // mensual-debt can be evaluated without one hiding the other (hasAnyDeuda below).
@@ -2760,7 +2776,7 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
   // Mensual mora alerts
   const mensualAlerts=[];
   students.forEach(s=>{
-    const mc=(s.combos||[]).find(c=>c.packType==="mensual"&&c.cobroDia);
+    const mc=(s.combos||[]).find(c=>isModernMensual(c));
     if(!mc) return;
     const est=getMensualEstado(mc);
     if(est.mora>0){
@@ -3374,6 +3390,37 @@ function MiniCalendar({ year, month, selDay, onSelect, classes=[] }) {
   );
 }
 
+// Neutral sentinel for EditClassScreen's PAQUETE selector when a mensual combo's real package
+// can't be identified from any safe, explicit source — never a guess by amount (more than one
+// mensual package can share a price) and never "the first mensual package in the array" (the
+// exact bug this replaces: array order has no relationship to which package a student actually
+// has). Distinct from "" (Elegir..., meaning no package chosen at all) and from "otro".
+const UNIDENTIFIED_MENSUAL_PACK="__unidentified_mensual__";
+// Resolves which mensual package to preselect when reopening Editar Clase, trying only explicit,
+// safe sources in order — combo.packId, then the reference EditClassScreen itself stored on the
+// class row (class.studentPacks[sid].pack) the last time this exact student was saved, then the
+// reference from the class's own creation-time snapshot (class.studentData) — each accepted only
+// if it still names a package that exists today. Falls back to UNIDENTIFIED_MENSUAL_PACK, never to
+// "first mensual package found". Pure; read-only.
+function resolveMensualPackVal(combo,cls,sid,packages){
+  const validId=(id)=>id!=null&&id!==""&&packages.some(p=>String(p.id)===String(id));
+  if(validId(combo?.packId)) return String(combo.packId);
+  const spPack=cls?.studentPacks?.[sid]?.pack??cls?.studentPacks?.[String(sid)]?.pack;
+  if(validId(spPack)) return String(spPack);
+  const sd=(cls?.studentData||[]).find(x=>x.id===sid);
+  if(validId(sd?.packId)) return String(sd.packId);
+  return UNIDENTIFIED_MENSUAL_PACK;
+}
+// Default cobroDia offered for a mensual selection with no combo yet (a brand-new student, or one
+// switching to mensual) — the same "day of the class's own date" heuristic the save handler itself
+// already falls back to when no explicit cobroDia is provided, so an untouched field still saves
+// the same value it would have without this UI at all.
+function defaultCobroDiaFor(cls){
+  const d=cls?.date;
+  const day=d?parseInt(d.split("-")[2]):NaN;
+  return Number.isInteger(day)&&day>=1&&day<=31?day:new Date().getDate();
+}
+
 function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCreateStudent, packages=[], onDelete }) {
   if(!cls) return null;
   try {
@@ -3401,19 +3448,20 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
     const init={};
     cls.students.forEach(sid=>{
       const st=initialStudents.find(s=>s.id===sid);
-      if(!st){init[sid]={pack:"",amount:0,paid:false};return;}
+      if(!st){init[sid]={pack:"",amount:0,paid:false,cobroDia:defaultCobroDiaFor(cls)};return;}
       // Display-only — never writes anything. Same canonical resolver AttModal/Dashboard use, so
       // "which combo is this" never drifts between screens.
       const clsRealId=cls._seriesId||cls.id;
       const combo=resolveStudentComboForClass(st,clsRealId,cls.date);
-      if(!combo){init[sid]={pack:"",amount:0,paid:false};return;}
+      if(!combo){init[sid]={pack:"",amount:0,paid:false,cobroDia:defaultCobroDiaFor(cls)};return;}
       // Find matching package - first try packId, then qty+amount, then qty
       let packVal="";
       if(combo.packId){
         packVal=combo.packId;
       } else if(combo.total===null||combo.packType==="mensual"){
-        const pkg=packages.find(p=>p.type==="mensual");
-        packVal=pkg?String(pkg.id):"mensual";
+        // Never "the first mensual package in the array" — that's the exact bug this replaces.
+        // Only explicit, safe sources; falls back to a neutral "sin identificar" sentinel.
+        packVal=resolveMensualPackVal(combo,cls,sid,packages);
       } else if(combo.packType==="individual"){
         const pkg=packages.find(p=>p.type==="individual"&&p.price===combo.amount)||
                   packages.find(p=>p.type==="individual");
@@ -3423,7 +3471,7 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
                   packages.find(p=>p.qty===combo.total);
         packVal=pkg?String(pkg.id):String(combo.total);
       }
-      init[sid]={pack:packVal,amount:combo?.amount||0,paid:resolveInitialMensualPaidVal(combo,cls.date)};
+      init[sid]={pack:packVal,amount:combo?.amount||0,paid:resolveInitialMensualPaidVal(combo,cls.date),cobroDia:combo.cobroDia||defaultCobroDiaFor(cls)};
     });
     return init;
   });
@@ -3464,12 +3512,15 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
           {clsSt.map(sid=>{const st=allStudents.find(s=>s.id===sid);
             if(!st) return null;
             const isNewStudent=!originalStudentIds.has(sid);
-            // Same read-only gate for both the "which combo" resolution AND the paid readout: an
-            // EXISTING modern mensual student's payment is real data live in mensualidades[] (Cobros/
-            // PagoModal) — this screen only ever shows it, never edits it. Combo/individual and legacy
-            // mensual (no cobroDia) keep the fully editable selector, unchanged.
+            // Read-only gate for the paid readout: ANY existing mensual student — modern
+            // (mensualidades[]) or legacy (combo.paid) — has real payment data owned by Cobros/
+            // PagoModal; this screen only ever shows it, never edits it via the old Sí/No selector.
+            // resolveInitialMensualPaidVal already reads the right source for each shape
+            // (isModernMensual). Combo/individual keep the fully editable selector, unchanged.
             const existingCombo=isNewStudent?null:resolveStudentComboForClass(st,clsRealId,cls.date);
-            const isReadOnlyMensualPaid=!isNewStudent&&existingCombo?.packType==="mensual"&&!!existingCombo.cobroDia;
+            const isExistingMensual=!isNewStudent&&existingCombo?.packType==="mensual";
+            const selectedPkg=packages.find(p=>String(p.id)===String(studentPacks[sid]?.pack));
+            const isMensualSelection=isExistingMensual||selectedPkg?.type==="mensual"||studentPacks[sid]?.pack==="mensual"||studentPacks[sid]?.pack===UNIDENTIFIED_MENSUAL_PACK;
             return (
             <div key={sid} style={{borderRadius:12,background:C.white,border:"1.5px solid "+C.border,marginBottom:8,overflow:"hidden"}}>
               <div style={{display:"flex",alignItems:"center",gap:12,padding:"10px 12px"}}>
@@ -3490,6 +3541,7 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
                     setChangedPacks(prev=>new Set([...prev,sid]));
                   }} style={{...iS,padding:"8px 10px",fontSize:12}}>
                     <option value="">Elegir...</option>
+                    {studentPacks[sid]?.pack===UNIDENTIFIED_MENSUAL_PACK&&<option value={UNIDENTIFIED_MENSUAL_PACK}>Paquete mensual sin identificar</option>}
                     {packages.length>0?packages.map(p=>(
                       <option key={p.id} value={String(p.id)}>{p.name}</option>
                     )):<><option value="mensual">📅 Mensual</option><option value="8">📦 8 clases</option></>}
@@ -3503,9 +3555,21 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
                   <div style={{fontSize:10,fontWeight:700,color:C.mutedDark,marginBottom:4}}>MONTO ({getCUR()})</div>
                   <MoneyInput value={studentPacks[sid]?.amount||0} onChange={v=>{setStudentPacks(p=>({...p,[sid]:{...p[sid],amount:v}}));setChangedPacks(prev=>new Set([...prev,sid]));}} style={{...iS,padding:"8px 10px",fontSize:12}}/>
                 </div>
+                {isMensualSelection&&(
+                  <div style={{gridColumn:"1/-1"}}>
+                    <label style={{fontSize:11,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>DÍA DE COBRO MENSUAL</label>
+                    <input type="number" min="1" max="31" value={studentPacks[sid]?.cobroDia||defaultCobroDiaFor(cls)} onChange={e=>{
+                      const raw=parseInt(e.target.value)||1;
+                      const clamped=Math.min(Math.max(raw,1),31);
+                      setStudentPacks(p=>({...p,[sid]:{...(p[sid]||{}),cobroDia:clamped}}));
+                      setChangedPacks(prev=>new Set([...prev,sid]));
+                    }} style={{...iS,padding:"8px 10px",fontSize:12}} placeholder="Día 1-31"/>
+                    <div style={{fontSize:10,color:C.mutedDark,marginTop:3}}>El cobro se genera cada mes en este día</div>
+                  </div>
+                )}
                 <div style={{gridColumn:"1/-1"}}>
                   <label style={{fontSize:11,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>PAGO EFECTUADO</label>
-                  {isReadOnlyMensualPaid?(
+                  {isExistingMensual?(
                     // Real payment state, read-only — mensualidades[] (Cobros/PagoModal) is the only
                     // place that can change it for a student who already belongs to the class.
                     <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -5840,7 +5904,11 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
       // One id shared by the mensualidad and its income row below — the explicit, unambiguous link
       // "Anular pago" resolves by. Generated once per confirm, never re-derived from amount/date.
       pagoLinkId=crypto.randomUUID();
-      const existingMensual=updatedCombos.findIndex(c=>c.packType==="mensual"&&c.cobroDia);
+      // isModernMensual, never a bare cobroDia check — a legacy combo that has since gained a
+      // configurable cobroDia (EditClassScreen) but still has no mensualidades[] must still fall
+      // through to "create new (legacy support)" below, never be silently upgraded to modern by a
+      // payment made through Cobros.
+      const existingMensual=updatedCombos.findIndex(c=>isModernMensual(c));
       if(existingMensual>=0){
         // Add payment to existing mensual combo
         const mc={...updatedCombos[existingMensual]};
@@ -6475,8 +6543,9 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
         })()}
 
         {/* ESTADO MENSUAL — caja separada, puede coexistir con la de Combo/Individual
-            de arriba. hasMensual cubre moderna (cobroDia) y legacy (sin cobroDia); cada
-            ruta conserva exactamente su lógica original, solo cambia el gate externo. */}
+            de arriba. hasMensual cubre moderno (isModernMensual) y legacy (sin
+            mensualidades[], con o sin cobroDia); cada ruta conserva exactamente su
+            lógica original, solo cambia el gate externo. */}
         {getAllMensualEntitlements(s).length>0&&(()=>{
           const modernMensual=getModernMensualEntitlements(s).slice(-1)[0];
           if(modernMensual){
@@ -6507,8 +6576,8 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
               </div>
             );
           }
-          // Mensual legacy (sin cobroDia) — misma lógica original, solo re-gateada.
-          const legacyEntries=getAllMensualEntitlements(s).filter(c=>!(c.packType==="mensual"&&c.cobroDia));
+          // Mensual legacy (sin mensualidades[], con o sin cobroDia) — misma lógica original, solo re-gateada.
+          const legacyEntries=getAllMensualEntitlements(s).filter(c=>!isModernMensual(c));
           const legacyMensual=legacyEntries[legacyEntries.length-1];
           if(!legacyMensual) return null;
           const lastDate=legacyMensual?.payDate||legacyMensual?.date||TODAY_DATE;
@@ -9390,6 +9459,25 @@ export default function App() {
           (lastCombo.packType==="mensual") ||
           ((lastCombo.used||0)<(lastCombo.total||0))
         );
+        // Existing mensual combo (modern or legacy) reached via Editar Clase: package and paid are
+        // effectively read-only from this screen (Cobros/PagoModal own those — see
+        // EditClassScreen's isExistingMensual gate) and structural changes are out of scope for
+        // mensual regardless (see the block below). The ONLY field this screen may change for an
+        // already-active mensual combo is cobroDia, applied in isolation — every other field is
+        // preserved byte-for-byte via the spread, including mensualidades[]/fechaPago/pagoLinkId/
+        // amount/payments[]/sourceClassId. A legacy combo (no mensualidades[] yet) can gain or
+        // change a cobroDia here without being promoted to modern — isModernMensual only ever
+        // looks at mensualidades[], never at cobroDia's presence. No package/pack fallthrough
+        // reaches this combo afterward: this branch always returns before the logic below runs.
+        if(hasActiveCombo&&lastCombo&&lastCombo.packType==="mensual"){
+          const requestedCobroDia=sp.cobroDia;
+          const validCobroDia=Number.isInteger(requestedCobroDia)&&requestedCobroDia>=1&&requestedCobroDia<=31?requestedCobroDia:undefined;
+          if(validCobroDia!==undefined&&validCobroDia!==lastCombo.cobroDia){
+            combos[targetIdx]={...lastCombo,cobroDia:validCobroDia};
+            return {...s,combos};
+          }
+          return s;
+        }
         // Explicit structural-change detection (BUG 2 fix) — replaces relying on
         // sameStructure (below) as an implicit proxy for "package unchanged". Before
         // this, any real structural change (individual<->combo, combo qty A->B) that
@@ -9516,6 +9604,7 @@ export default function App() {
               total:null,
               packType:"mensual",
               sourceClassId:realId,
+              packId:String(sp.pack||""),
               used:0,
               date:startDate,
               amount,
