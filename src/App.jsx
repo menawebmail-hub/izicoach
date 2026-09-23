@@ -111,7 +111,158 @@ function getMensualEstado(combo){
   const pagado=mens.filter(m=>m.estado==="pagado").length;
   return {mora,pendiente,pagado,total:mens.length,mensualidades:mens};
 }
+const MESES_LARGO=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+const mesLabel=(mes)=>{
+  const [,mm]=(mes||"").split("-");
+  const i=parseInt(mm)-1;
+  return i>=0&&i<12?MESES_LARGO[i]:(mes||"");
+};
 // --- END MENSUAL HELPERS ---
+
+// ---- "Anular pago" (mensual) — undo ONE paid mensualidad and its linked income, recoverable after
+// a partial write. Pure and read-only; the write itself (App.handleVoidMensualPayment) re-runs the
+// guard against the LATEST state right before writing. A payment is identified by (studentId,
+// mensualidadId, mes) — content-stable identity within a combo's mensualidades[], never an array
+// index that could shift if combos are reordered.
+//
+// Linking a mensualidad to its income (never guessed from amount alone):
+//   1) pagoLinkId — the explicit id PagoModal/createNewClass/updateStudentPacks stamp on BOTH the
+//      mensualidad and the expense row at payment time, and that applyVoidMensualidadToCombo below
+//      never clears even once the mensualidad is reverted to pendiente. This is what makes partial-
+//      write recovery possible at all: the SAME id still finds the SAME expense (findExpenseByPagoLinkId,
+//      active or already voided) no matter which of the two writes landed first.
+//   2) No pagoLinkId (a historical payment, made before this link existed) — combine category+type+
+//      student name+exact amount+exact date (four independent fields, never amount alone;
+//      resolveIncomeForMensualidad below). Zero or more than one candidate blocks the action; it is
+//      NEVER auto-picked. This path has no stable recovery anchor — once its mensualidad is reverted
+//      (fechaPago cleared) there is nothing left to re-match, so it only ever resolves atomically
+//      ("ready") or blocks; multi-step recovery is a pagoLinkId-only capability, by nature.
+const resolveIncomeForMensualidad=(expenses,student,mensualidad)=>{
+  const active=(expenses||[]).filter(e=>e.type==="ingreso"&&!e.voided);
+  const candidates=active.filter(e=>e.category==="Cobros clases"&&e.note===student.name&&e.amount===mensualidad.monto&&e.date===mensualidad.fechaPago);
+  return candidates.length===1?candidates[0]:null;
+};
+// The ONE expense sharing this pagoLinkId — active OR already voided; resolveMensualVoidState below
+// decides what "already voided" means (needs-student-update vs already-complete). Unlike
+// resolveIncomeForMensualidad's fallback, never excludes voided rows — that exclusion is exactly
+// what used to strand a partial write in a permanent "income-unresolved" dead end. Zero or 2+
+// matches is never resolved — treated like "can't find the income", never guessed.
+const findExpenseByPagoLinkId=(expenses,pagoLinkId)=>{
+  if(!pagoLinkId) return null;
+  const matches=(expenses||[]).filter(e=>e.pagoLinkId===pagoLinkId);
+  return matches.length===1?matches[0]:null;
+};
+// The one combo, among this student's own combos, that actually holds this exact mensualidad — content
+// identity (id+mes), never an array index. Zero or more than one match (should not happen in practice,
+// but data can be inconsistent) is treated as unresolved, never guessed. Matches regardless of the
+// mensualidad's current estado, so it still finds it mid-recovery (already reverted to pendiente).
+const findMensualComboWithMensualidad=(student,mensualidadId,mes)=>{
+  const matches=(student&&student.combos||[]).filter(c=>c.packType==="mensual"&&(c.mensualidades||[]).some(m=>m.id===mensualidadId&&m.mes===mes));
+  return matches.length===1?matches[0]:null;
+};
+// Every state "Anular pago" (or its recovery) can be in for ONE mensualidad, computed fresh against
+// the LATEST students/expenses — never cached, never inferred from what a confirm screen captured
+// earlier (guardVoidMensualPayment re-runs this at write time). States:
+//   ready                 — mensualidad pagado, income active: the normal case, both writes needed.
+//   needs-student-update  — income already voided (found via pagoLinkId, INCLUDING voided rows),
+//                           mensualidad still reads pagado: only the students write remains.
+//   needs-expense-update  — mensualidad already pendiente (pagoLinkId survives the revert on
+//                           purpose — see applyVoidMensualidadToCombo), income still active: only
+//                           the expenses write remains.
+//   already-complete       — mensualidad pendiente AND income voided: nothing left to do. A real,
+//                           distinct outcome — never reported as an error, never re-written.
+//   blocked                 — invalid input, no combo/mensualidad found, or a pagoLinkId (present or
+//                           absent) that can't be resolved to exactly one expense when one is needed.
+const resolveMensualVoidState=({student,mensualidadId,mes,expenses})=>{
+  const blocked=(reason)=>({state:"blocked",reason});
+  if(!student||!mensualidadId||!mes) return blocked("invalid");
+  const combo=findMensualComboWithMensualidad(student,mensualidadId,mes);
+  if(!combo) return blocked("combo-unresolved");
+  const mensualidad=getMensualEstado(combo).mensualidades.find(m=>m.id===mensualidadId&&m.mes===mes);
+  if(!mensualidad) return blocked("combo-unresolved");
+  const isPaid=mensualidad.estado==="pagado";
+  const pagoLinkId=mensualidad.pagoLinkId||null;
+  const base={studentId:student.id,studentName:student.name,mensualidadId,mes,pagoLinkId,
+    amount:mensualidad.monto,method:mensualidad.method||"efectivo"};
+  if(!pagoLinkId){
+    if(!isPaid) return blocked("not-paid");
+    const expense=resolveIncomeForMensualidad(expenses,student,mensualidad);
+    if(!expense) return blocked("income-unresolved");
+    return {...base,state:"ready",expenseId:expense.id,fechaPago:mensualidad.fechaPago};
+  }
+  const linked=findExpenseByPagoLinkId(expenses,pagoLinkId);
+  if(isPaid){
+    if(!linked) return blocked("income-unresolved");
+    return linked.voided
+      ?{...base,state:"needs-student-update",expenseId:linked.id,fechaPago:mensualidad.fechaPago}
+      :{...base,state:"ready",expenseId:linked.id,fechaPago:mensualidad.fechaPago};
+  }
+  if(!linked) return blocked("income-unresolved");
+  return linked.voided
+    ?{...base,state:"already-complete",expenseId:linked.id}
+    :{...base,state:"needs-expense-update",expenseId:linked.id};
+};
+// Write-time guard: re-runs the resolver against the LATEST students/expenses and refuses
+// ({state:"blocked",reason}) unless the exact link the user confirmed (expectedPagoLinkId) is still
+// the one resolved — a concurrent change (a new payment overwriting the mensualidad's pagoLinkId,
+// another tab already handling it, ...) never gets silently re-targeted at a different row. Returns
+// the FULL resolved state on success (never a bare "safe to write" flag) so the caller knows exactly
+// which write(s), if any, are still needed — including "already-complete", which needs none.
+const guardVoidMensualPayment=({student,mensualidadId,mes,expenses,expectedPagoLinkId})=>{
+  const r=resolveMensualVoidState({student,mensualidadId,mes,expenses});
+  if(r.state==="blocked") return r;
+  if(expectedPagoLinkId!==undefined&&r.pagoLinkId!==expectedPagoLinkId) return {state:"blocked",reason:"changed"};
+  return r;
+};
+// Pure row update: only this ONE mensualidad goes back to pendiente. Clearing fechaPago (not just
+// estado) matters — getMensualidades' own recompute (line ~86 above) forces estado back to "pagado"
+// whenever fechaPago is set, regardless of the stored estado, so leaving it would silently undo this.
+// pagoLinkId is deliberately NEVER cleared here — it's the minimal recovery breadcrumb: if the
+// matching expense write hasn't landed yet (needs-expense-update), this is what lets a later attempt
+// still find and void the SAME expense, without it this pendiente row would be indistinguishable
+// from an ordinary never-paid month and the income would be orphaned forever.
+const applyVoidMensualidadToCombo=(combo,mensualidadId,mes)=>{
+  const mens=(combo.mensualidades||[]).map(m=>(m.id===mensualidadId&&m.mes===mes)?{...m,estado:"pendiente",fechaPago:null}:m);
+  return {...combo,mensualidades:mens};
+};
+// Pure row update: the expense is never deleted (Finanzas must keep it visible in the movement
+// history) — only flagged voided, which every income-total computation must exclude.
+const applyVoidExpense=(expense,todayDate)=>({...expense,voided:true,voidedAt:todayDate});
+const VOID_MENSUAL_MESSAGES={
+  "invalid":"No se pudo identificar este pago.",
+  "combo-unresolved":"No se pudo identificar de forma inequívoca el combo mensual de este pago.",
+  "not-paid":"Esta mensualidad ya no figura como pagada.",
+  "income-unresolved":"No se pudo identificar de forma inequívoca el ingreso correspondiente a este pago.",
+  "changed":"El pago cambió desde que se abrió esta pantalla. Cerrá y volvé a intentarlo.",
+  "write-pending":"Hay cambios pendientes de sincronizar. Esperá unos segundos e intentá de nuevo.",
+  // A payment recorded before mensualidades[] existed at all (combo.paid+combo.payments[], no
+  // per-month row to identify or revert) — genuinely out of scope for this action, never silently
+  // hidden. Real legacy shape found in production: packType "mensual", paid:true, one payments[]
+  // entry, mensualidades entirely absent (not just empty), and no matching income row at all.
+  // Message deliberately avoids internal field/reason names — a coach reading this never needs to
+  // know what "mensualidades[]" or "pagoLinkId" mean.
+  "legacy-unsupported":"Este pago pertenece a un registro anterior y no tiene un ingreso financiero asociado. No puede anularse automáticamente.",
+};
+const voidMensualMessage=(reason)=>VOID_MENSUAL_MESSAGES[reason]||"Esta acción no está disponible en este momento.";
+// Decides whether "Anular pago"/"Completar anulación" appears for ONE Historial-de-Pagos row
+// (`payment`, as built by PaymentCard's allPayments — a combo/individual `payments[]` entry OR a
+// mensual `mensualidades[]` entry, both carrying `packType`) and, if it does, whether it's enabled
+// and which action it performs. Gated by `packType` ALONE — never by `comboTotal===null` (also true
+// for a mensual combo's LEGACY payments[] entries, since total is null for every mensual combo) and
+// never by presence of `mes` (a pre-mensualidades[] payment never has one) — a mensual payment is
+// NEVER silently hidden just for being legacy or missing `mes`; it shows, disabled with the exact
+// reason, whenever it can't be resolved. "already-complete" is the one state deliberately reported
+// as invisible here — PaymentCard's own allPayments filter already keeps such a row out of the list
+// entirely (nothing left to show or do), so this only has to say so for direct callers/tests.
+// Read-only; never mutates its inputs.
+const resolveVoidButtonState=(payment,student,expenses)=>{
+  if(!payment||payment.packType!=="mensual") return {visible:false,enabled:false,action:null,reason:null,pagoLinkId:null,expenseId:null};
+  if(!payment.mes) return {visible:true,enabled:false,action:"void",reason:"legacy-unsupported",pagoLinkId:null,expenseId:null};
+  const r=resolveMensualVoidState({student,mensualidadId:payment.id,mes:payment.mes,expenses});
+  if(r.state==="blocked") return {visible:true,enabled:false,action:"void",reason:r.reason,pagoLinkId:payment.pagoLinkId||null,expenseId:null};
+  if(r.state==="already-complete") return {visible:false,enabled:false,action:null,reason:null,pagoLinkId:null,expenseId:null};
+  return {visible:true,enabled:true,reason:null,action:r.state==="ready"?"void":"complete",state:r.state,pagoLinkId:r.pagoLinkId,expenseId:r.expenseId};
+};
 
 const WEEK_AGO=(()=>{const d=new Date();d.setDate(d.getDate()-7);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
 
@@ -964,6 +1115,40 @@ function getCombo(s) {
   const mensual=combos.filter(x=>x.total===null&&(x.paid||x.payDate||x.date)&&x.packType!=="individual");
   if(mensual.length>0) return mensual[mensual.length-1];
   return combos[combos.length-1]||null;
+}
+// Canonical "which combo of this student belongs to this class" resolver — the same three-layer priority
+// EditClassScreen and updateStudentPacks already used inline (kept in sync here so packType/paid reads
+// for a class — AttModal, EditClassScreen, Dashboard's reprogAlerts — never invent a second heuristic):
+//   1) sourceClassId===classRealId — an explicit link always wins.
+//   2) Legacy date heuristic — ONLY among combos with no sourceClassId at all; a combo already linked to
+//      another class is never reconsidered here just because a date happens to coincide.
+//   3) Legacy fallback — the student's last combo.
+// Read-only; never mutates its inputs. Returns null when the student has no combo at all.
+function resolveStudentComboForClass(student, classRealId, classDate) {
+  const combos=(student&&student.combos)||[];
+  if(combos.length===0) return null;
+  let combo=combos.find(c=>c.sourceClassId===classRealId);
+  if(!combo&&classDate){
+    combo=combos.find(c=>c.sourceClassId===undefined&&((c.dates||[]).includes(classDate)||c.date===classDate));
+  }
+  if(!combo) combo=combos[combos.length-1];
+  return combo||null;
+}
+// "Pagó / No pagó" initial read for EditClassScreen ONLY — a modern mensual combo (cobroDia
+// present) never sets combo.paid; its real payment status lives in mensualidades[] (getMensualEstado,
+// the same canonical source Cobros/PagoModal read and write), keyed by month. A legacy combo (no
+// cobroDia) keeps reading combo.paid unchanged, for backward compatibility with existing legacy
+// mensual data. Pure, read-only. Extracted out of EditClassScreen's studentPacks useState
+// initializer (rather than left as an inline if/else there) purely to keep that initializer's own
+// branching flat — oxlint's rules-of-hooks conditional-call check is sensitive to nested
+// if/else-with-declaration shapes inside a useState lazy-initializer callback.
+function resolveInitialMensualPaidVal(combo,classDate){
+  if(combo.packType==="mensual"&&combo.cobroDia){
+    const curMes=(classDate||TODAY_DATE).slice(0,7);
+    const mensualidad=getMensualEstado(combo).mensualidades.find(m=>m.mes===curMes);
+    return mensualidad?mensualidad.estado==="pagado":false;
+  }
+  return combo?.paid||false;
 }
 // combo.total is the contractual economic universe of a Combo — a definitive
 // cancellation or a pending/assigned reprogram never reduces it (product rule).
@@ -2524,6 +2709,15 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
     return isComboClosed(last,myClasses,s.id);
   });
 
+  // A mensual student never contributes an ausente_reprog-based alert below — mensual has no individual
+  // makeup concept (attendanceCycleFor/AttModal only ever save Presente/Ausente for them going forward);
+  // this also reinterprets any PRE-EXISTING historical ausente_reprog entry on a mensual student the same
+  // way, with no mass migration needed. Combo/individual students are completely unaffected.
+  const isMensualForClass=(sid,c)=>{
+    const st=students.find(s=>s.id===sid);
+    const combo=resolveStudentComboForClass(st,c._seriesId||c.id,c.date);
+    return !!(combo&&combo.packType==="mensual");
+  };
   // Classes that need rescheduling: ausente_reprog OR cancelled (but not already rescheduled)
   const reprogAlerts=[
     // Classes marked as "A Reprogramar" (cancelled_reprog without date)
@@ -2532,13 +2726,14 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
     ...classes.filter(c=>c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo&&!resolveAgendaCardStatus(c,students,classes,TODAY_DATE).reprogSettledTo).map(c=>({
       cls:c,reason:"a_reprogramar",students:(c.students||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean)
     })).filter(x=>x.students.length>0),
-    // Ausente-reprog: student marked as needing reschedule from attendance
+    // Ausente-reprog: student marked as needing reschedule from attendance — mensual students excluded.
     ...classes.filter(c=>{
       if(c.cancelled) return false;
-      return (c.attendanceLog||[]).some(e=>(e.ausente_reprog||[]).length>0);
+      return (c.attendanceLog||[]).some(e=>(e.ausente_reprog||[]).some(sid=>!isMensualForClass(sid,c)));
     }).map(c=>{
-      const log=(c.attendanceLog||[]).find(e=>(e.ausente_reprog||[]).length>0);
-      return {cls:c,reason:"reprog",students:(log?.ausente_reprog||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean)};
+      const log=(c.attendanceLog||[]).find(e=>(e.ausente_reprog||[]).some(sid=>!isMensualForClass(sid,c)));
+      const nonMensualIds=(log?.ausente_reprog||[]).filter(sid=>!isMensualForClass(sid,c));
+      return {cls:c,reason:"reprog",students:nonMensualIds.map(id=>students.find(s=>s.id===id)).filter(Boolean)};
     }).filter(x=>x.students.length>0),
   ];
   // Paused packages alert
@@ -3186,6 +3381,17 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
   const [days,setDays]=useState([...cls.days]);
   const [t1,setT1]=useState(cls.time); const [t2,setT2]=useState(cls.timeEnd||"09:00");
   const [clsSt,setClsSt]=useState(()=>(cls.students||[]).filter(sid=>initialStudents.some(s=>s.id===sid)));
+  // Frozen for the whole mount — "is this student new to the class" never re-evaluates mid-session
+  // (adding then removing a student, or re-adding them, is still governed by this original snapshot).
+  // Gates the Pagó/No pagó selector: editable only while a student is being newly added; an EXISTING
+  // modern mensual student's payment is real data live in mensualidades[] and must never be toggled
+  // from here. No hook needed: `cls` is a plain prop this component never mutates, and the parent
+  // (Agenda) holds it in its own useState (editCls) — set once on open, untouched by re-renders — so
+  // `cls.students` is already stable for the mount's whole lifetime; a useState here would only add a
+  // hook call after this component's existing `if(!cls) return null;` early return, which oxlint's
+  // rules-of-hooks conditional-call check would then flag as one more instance of the same class of
+  // false positive already present (and tolerated) elsewhere in this function.
+  const originalStudentIds=new Set(cls.students||[]);
   const [query,setQuery]=useState("");
   const [showCreateStudent,setShowCreateStudent]=useState(false);
   const [allStudents,setAllStudents]=useState(initialStudents);
@@ -3196,14 +3402,10 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
     cls.students.forEach(sid=>{
       const st=initialStudents.find(s=>s.id===sid);
       if(!st){init[sid]={pack:"",amount:0,paid:false};return;}
-      const combos=st?.combos||[];
-      // Prefer the combo whose sourceClassId is this class; otherwise fall
-      // back to the legacy date heuristic; otherwise the last combo.
-      // Display-only — never writes anything.
+      // Display-only — never writes anything. Same canonical resolver AttModal/Dashboard use, so
+      // "which combo is this" never drifts between screens.
       const clsRealId=cls._seriesId||cls.id;
-      const combo=combos.find(c=>c.sourceClassId===clsRealId)
-        ||combos.find(c=>(c.dates||[]).includes(cls.date))
-        ||combos[combos.length-1];
+      const combo=resolveStudentComboForClass(st,clsRealId,cls.date);
       if(!combo){init[sid]={pack:"",amount:0,paid:false};return;}
       // Find matching package - first try packId, then qty+amount, then qty
       let packVal="";
@@ -3221,13 +3423,14 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
                   packages.find(p=>p.qty===combo.total);
         packVal=pkg?String(pkg.id):String(combo.total);
       }
-      init[sid]={pack:packVal,amount:combo?.amount||0,paid:combo?.paid||false};
+      init[sid]={pack:packVal,amount:combo?.amount||0,paid:resolveInitialMensualPaidVal(combo,cls.date)};
     });
     return init;
   });
   // Track which students were explicitly modified by the professor
   const [changedPacks,setChangedPacks]=useState(new Set());
   const available=allStudents.filter(s=>!clsSt.includes(s.id)&&(query.trim()===""||s.name.toLowerCase().includes(query.toLowerCase())));
+  const clsRealId=cls._seriesId||cls.id;
   const iS={width:"100%",padding:"12px 14px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",background:C.white,color:C.text,outline:"none"};
 
   const handleCreateStudent=(data)=>{
@@ -3258,7 +3461,16 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
             <label style={{fontSize:13,color:C.blue,fontWeight:700}}>Alumnos</label>
             <button onClick={()=>setShowCreateStudent(true)} style={{padding:"6px 12px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:11,cursor:"pointer",fontWeight:800,letterSpacing:0.3}}>+ CREAR ALUMNO</button>
           </div>
-          {clsSt.map(sid=>{const st=allStudents.find(s=>s.id===sid);return st?(
+          {clsSt.map(sid=>{const st=allStudents.find(s=>s.id===sid);
+            if(!st) return null;
+            const isNewStudent=!originalStudentIds.has(sid);
+            // Same read-only gate for both the "which combo" resolution AND the paid readout: an
+            // EXISTING modern mensual student's payment is real data live in mensualidades[] (Cobros/
+            // PagoModal) — this screen only ever shows it, never edits it. Combo/individual and legacy
+            // mensual (no cobroDia) keep the fully editable selector, unchanged.
+            const existingCombo=isNewStudent?null:resolveStudentComboForClass(st,clsRealId,cls.date);
+            const isReadOnlyMensualPaid=!isNewStudent&&existingCombo?.packType==="mensual"&&!!existingCombo.cobroDia;
+            return (
             <div key={sid} style={{borderRadius:12,background:C.white,border:"1.5px solid "+C.border,marginBottom:8,overflow:"hidden"}}>
               <div style={{display:"flex",alignItems:"center",gap:12,padding:"10px 12px"}}>
                 {st.photo?<img src={st.photo} style={{width:36,height:36,borderRadius:"50%",objectFit:"cover",flexShrink:0}}/>:<div style={{width:36,height:36,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:C.white,flexShrink:0}}>{st.avatar}</div>}
@@ -3293,22 +3505,31 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
                 </div>
                 <div style={{gridColumn:"1/-1"}}>
                   <label style={{fontSize:11,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>PAGO EFECTUADO</label>
-                  <div style={{display:"flex",gap:12}}>
-                    {[true,false].map(v=>{
-                      const isPaidVal=studentPacks[sid]?.paid===true;
-                      const isSelected=v===true?isPaidVal:!isPaidVal;
-                      return (
-                      <div key={String(v)} onClick={()=>setStudentPacks(p=>({...p,[sid]:{...p[sid],paid:v}}))} style={{display:"flex",alignItems:"center",gap:5,cursor:"pointer"}}>
-                        <div style={{width:20,height:20,borderRadius:"50%",background:isSelected?"linear-gradient(135deg,#0D1B4B,#1A3DB5)":C.blueL,border:"2px solid "+(isSelected?C.blue2:C.border),display:"flex",alignItems:"center",justifyContent:"center"}}>{isSelected&&<div style={{width:7,height:7,borderRadius:"50%",background:C.white}}></div>}</div>
-                        <span style={{fontSize:12,fontWeight:isSelected?700:500,color:isSelected?C.blue2:C.mutedDark}}>{v?"✓ Sí":"✗ No"}</span>
-                      </div>
-                      );
-                    })}
-                  </div>
+                  {isReadOnlyMensualPaid?(
+                    // Real payment state, read-only — mensualidades[] (Cobros/PagoModal) is the only
+                    // place that can change it for a student who already belongs to the class.
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <span style={{fontSize:12,fontWeight:700,padding:"4px 10px",borderRadius:20,background:studentPacks[sid]?.paid?C.greenL:"#FFF3E0",color:studentPacks[sid]?.paid?C.green:"#E65100"}}>{studentPacks[sid]?.paid?"✓ Pagado":"⏳ Pendiente"}</span>
+                      <span style={{fontSize:11,color:C.mutedDark,fontStyle:"italic"}}>Gestionar pago en Cobros</span>
+                    </div>
+                  ):(
+                    <div style={{display:"flex",gap:12}}>
+                      {[true,false].map(v=>{
+                        const isPaidVal=studentPacks[sid]?.paid===true;
+                        const isSelected=v===true?isPaidVal:!isPaidVal;
+                        return (
+                        <div key={String(v)} onClick={()=>setStudentPacks(p=>({...p,[sid]:{...p[sid],paid:v}}))} style={{display:"flex",alignItems:"center",gap:5,cursor:"pointer"}}>
+                          <div style={{width:20,height:20,borderRadius:"50%",background:isSelected?"linear-gradient(135deg,#0D1B4B,#1A3DB5)":C.blueL,border:"2px solid "+(isSelected?C.blue2:C.border),display:"flex",alignItems:"center",justifyContent:"center"}}>{isSelected&&<div style={{width:7,height:7,borderRadius:"50%",background:C.white}}></div>}</div>
+                          <span style={{fontSize:12,fontWeight:isSelected?700:500,color:isSelected?C.blue2:C.mutedDark}}>{v?"✓ Sí":"✗ No"}</span>
+                        </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
-          ):null;})}
+            );})}
           <div style={{position:"relative",marginTop:4}}>
             <div style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",pointerEvents:"none"}}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.mutedDark} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -4189,15 +4410,50 @@ function AttendanceReceiptModal({ studentName, report, busy, error, onShare, onC
   );
 }
 
+// Attendance status vocabulary for ONE student in ONE class: a mensual student (per this class's
+// resolveStudentComboForClass) only ever cycles Presente/Ausente — mensual has no individual makeup
+// concept, so "A Reprogramar" never applies. Combo/individual keep the existing 3-state cycle
+// (Presente / Ausente — No Dada / Ausente — Dada) unchanged. Pure; read-only.
+const attendanceCycleFor=(students,classRealId,classDate,sid)=>{
+  const st=(students||[]).find(s=>s.id===sid);
+  const combo=resolveStudentComboForClass(st,classRealId,classDate);
+  return combo&&combo.packType==="mensual"?["presente","ausente_dada"]:["presente","ausente_reprog","ausente_dada"];
+};
+// Class-card attendance SUMMARY badge counts — for Agenda's month/week card renderers (never
+// AttModal's per-student chips, which already read attendanceCycleFor/labelFor correctly and are
+// unaffected). A mensual student (per THIS class's resolveStudentComboForClass, same per-student
+// decision attendanceCycleFor uses — never a global text replacement) has only Presente/Ausente:
+// both their ausente_dada AND any historical ausente_reprog (from before this app version, or a
+// legacy combo shape) collapse into the same simple "ausente" bucket, counted separately from
+// combo/individual's own real two-state distinction. A mixed class (some mensual, some combo/
+// individual, in the SAME attendanceLog entry) keeps every bucket independent, so a genuine combo/
+// individual "Ausente — Dada"/"A Reprogramar" alert is never hidden just because the class also
+// happens to have a mensual student absent that day. Pure; read-only; returns zero counts (never
+// null) for a missing log so callers can render unconditionally.
+const resolveClassAttendanceBadgeCounts=(students,classRealId,classDate,log)=>{
+  const isMensual=(sid)=>{
+    const st=(students||[]).find(s=>s.id===sid);
+    const combo=resolveStudentComboForClass(st,classRealId,classDate);
+    return !!(combo&&combo.packType==="mensual");
+  };
+  let ausente=0,ausenteDada=0,aReprogramar=0;
+  (log?.ausente_dada||[]).forEach(sid=>{if(isMensual(sid))ausente++;else ausenteDada++;});
+  (log?.ausente_reprog||[]).forEach(sid=>{if(isMensual(sid))ausente++;else aReprogramar++;});
+  return {ausente,ausenteDada,aReprogramar};
+};
 function AttModal({ att, students, onAttendance, onClose }) {
+  const classRealId=att._seriesId||att.id;
   const [attStatus,setAttStatus]=useState(()=>{
     const init={};
     // Restore previous attendance state if it exists
     const existingLog=(att.attendanceLog||[]).find(e=>e.date===att.date);
     att.students.forEach(sid=>{
+      const isMensual=attendanceCycleFor(students,classRealId,att.date,sid).length===2;
       if(existingLog){
         if((existingLog.ausente_dada||[]).includes(sid)) init[sid]="ausente_dada";
-        else if((existingLog.ausente_reprog||[]).includes(sid)) init[sid]="ausente_reprog";
+        // A mensual student's historical ausente_reprog (from before this change, or from a legacy
+        // combo shape) reads back simply as Ausente — no mass migration; re-saving normalizes it below.
+        else if((existingLog.ausente_reprog||[]).includes(sid)) init[sid]=isMensual?"ausente_dada":"ausente_reprog";
         else if((existingLog.present||[]).includes(sid)) init[sid]="presente";
         else init[sid]="presente";
       } else {
@@ -4210,6 +4466,8 @@ function AttModal({ att, students, onAttendance, onClose }) {
   const handleSave=()=>{
     const presentStudents=att.students.filter(sid=>attStatus[sid]==="presente");
     const ausente_dada=att.students.filter(sid=>attStatus[sid]==="ausente_dada");
+    // A mensual student's attStatus is only ever "presente"/"ausente_dada" (attendanceCycleFor never
+    // offers "ausente_reprog" to them), so this array can never include one — nothing extra to filter.
     const ausente_reprog=att.students.filter(sid=>attStatus[sid]==="ausente_reprog");
     onAttendance({...att, students:presentStudents, ausente_dada, ausente_reprog});
     onClose();
@@ -4218,15 +4476,23 @@ function AttModal({ att, students, onAttendance, onClose }) {
   const presentCount=Object.values(attStatus).filter(v=>v==="presente").length;
   const ausentCount=Object.values(attStatus).filter(v=>v!=="presente").length;
 
-  const STATUS_CYCLE=["presente","ausente_reprog","ausente_dada"];
   const STATUS_LABEL={
     "presente":     {label:"✓ Presente",    bg:"#43A047",color:"#fff"},
     "ausente_reprog":{label:"↩ Ausente — No Dada", bg:"#3949AB",color:"#fff"},
     "ausente_dada": {label:"✗ Ausente — Dada",  bg:"#E65100",color:"#fff"},
   };
+  // Mensual shows the same ausente_dada value with the simpler "Ausente" wording (no "— Dada"), matching
+  // the 2-state vocabulary — the stored value is unchanged, only the label differs.
+  const labelFor=(sid,status)=>{
+    const isMensual=attendanceCycleFor(students,classRealId,att.date,sid).length===2;
+    if(isMensual&&status==="ausente_dada") return {label:"✗ Ausente",bg:"#E65100",color:"#fff"};
+    return STATUS_LABEL[status];
+  };
   const cycleStatus=(sid)=>setAttStatus(p=>{
+    const cycle=attendanceCycleFor(students,classRealId,att.date,sid);
     const cur=p[sid]||"presente";
-    const next=STATUS_CYCLE[(STATUS_CYCLE.indexOf(cur)+1)%STATUS_CYCLE.length];
+    const idx=cycle.indexOf(cur);
+    const next=cycle[((idx<0?0:idx)+1)%cycle.length];
     return {...p,[sid]:next};
   });
 
@@ -4248,6 +4514,7 @@ function AttModal({ att, students, onAttendance, onClose }) {
             const st=students.find(s=>s.id===sid);
             if(!st) return null;
             const cur=attStatus[sid]||"presente";
+            const curLabel=labelFor(sid,cur);
             return (
               <div key={sid} style={{padding:"10px 0",borderBottom:"1px solid "+C.border}}>
                 <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:0}}>
@@ -4258,8 +4525,8 @@ function AttModal({ att, students, onAttendance, onClose }) {
                   <div style={{flex:1}}>
                     <div style={{fontWeight:700,fontSize:14,color:C.text}}>{st.name}</div>
                   </div>
-                  <button onClick={()=>cycleStatus(sid)} style={{padding:"8px 16px",borderRadius:20,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:STATUS_LABEL[cur].bg,color:STATUS_LABEL[cur].color,minWidth:160,textAlign:"center"}}>
-                    {STATUS_LABEL[cur].label}
+                  <button onClick={()=>cycleStatus(sid)} style={{padding:"8px 16px",borderRadius:20,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:curLabel.bg,color:curLabel.color,minWidth:160,textAlign:"center"}}>
+                    {curLabel.label}
                   </button>
                 </div>
               </div>
@@ -4611,8 +4878,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
 
   const ClassCard=({c})=>{
     const log=(c.attendanceLog||[]).find(e=>e.date===c.date);
-    const dadaCount=(log?.ausente_dada||[]).length;
-    const reprogCount=(log?.ausente_reprog||[]).length;
+    const {ausente:ausenteCount,ausenteDada:dadaCount,aReprogramar:reprogCount}=resolveClassAttendanceBadgeCounts(students,c._seriesId||c.id,c.date,log);
     // Determine cancel/reprog/paused state
     const isCancelled=c.cancelled&&c.cancelType==="cancelled";
     const isReprogWithDate=c.cancelled&&c.cancelType==="cancelled_reprog"&&c.rescheduledTo;
@@ -4632,11 +4898,12 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
         </div>
         <span style={{background:C.blueL,color:C.blue2,fontSize:11,padding:"4px 10px",borderRadius:20,fontWeight:600,height:"fit-content"}}>{c.days.join(" · ")}</span>
       </div>
-      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:(dadaCount||reprogCount)?6:12}}>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:(ausenteCount||dadaCount||reprogCount)?6:12}}>
         {c.students.map(sid=>{const st=students.find(s=>s.id===sid);return st?(<div key={sid} style={{display:"flex",alignItems:"center",gap:6,background:C.blueL,borderRadius:20,padding:"4px 10px 4px 6px",fontSize:12,color:C.blue2,fontWeight:600}}><div style={{width:20,height:20,borderRadius:"50%",background:C.blue2,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,color:C.white,fontWeight:700}}>{st.avatar[0]}</div>{st.name.split(" ")[0]}</div>):null;})}
       </div>
-      {(dadaCount>0||reprogCount>0)&&(
+      {(ausenteCount>0||dadaCount>0||reprogCount>0)&&(
         <div style={{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap"}}>
+          {ausenteCount>0&&<span style={{fontSize:11,padding:"3px 10px",borderRadius:20,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ {ausenteCount} Ausente</span>}
           {dadaCount>0&&<span style={{fontSize:11,padding:"3px 10px",borderRadius:20,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ {dadaCount} Ausente-Dada</span>}
           {reprogCount>0&&<span style={{fontSize:11,padding:"3px 10px",borderRadius:20,background:"#FFF8E1",color:"#F57F17",fontWeight:700}}>↩ {reprogCount} A Reprogramar</span>}
         </div>
@@ -4767,7 +5034,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                       <div style={{fontWeight:800,fontSize:15,color:isPaused?"#E65100":isCancelled?"#C62828":isReprogNoDate?"#1565C0":isReprogWithDate?"#2E7D32":isNextComboPending(c,students)?"#9E9E9E":C.text}}>{c.title}{isPaused?" (Pausada)":isCancelled?" (Cancelada)":isReprogWithDate?" (Reprogramada)":isReprogNoDate?" (A Reprogramar)":""}</div>
                       {agendaPaymentChip(agSt.payment,10)}
                       {isNextComboPending(c,students)&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#EEEEEE",color:"#757575",fontWeight:700}}>Sin pagar</span>}
-                      {(()=>{const log=(c.attendanceLog||[]).find(e=>e.date===c.date);if(!log)return null;const dC=(log.ausente_dada||[]).length;const nC=(log.ausente_reprog||[]).length;if(!dC&&!nC)return null;return(<>{dC>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ Ausente-Dada</span>}{nC>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF8E1",color:"#F57F17",fontWeight:700}}>↩ A Reprogramar</span>}</>);})()}
+                      {(()=>{const log=(c.attendanceLog||[]).find(e=>e.date===c.date);if(!log)return null;const {ausente,ausenteDada,aReprogramar}=resolveClassAttendanceBadgeCounts(students,c._seriesId||c.id,c.date,log);if(!ausente&&!ausenteDada&&!aReprogramar)return null;return(<>{ausente>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ Ausente</span>}{ausenteDada>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ Ausente-Dada</span>}{aReprogramar>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF8E1",color:"#F57F17",fontWeight:700}}>↩ A Reprogramar</span>}</>);})()}
                     </div>
                     {isReprogWithDate&&reprogTo&&<div style={{fontSize:11,color:"#2E7D32",marginBottom:4}}>📅 Reprogramada al {fmtDate(reprogTo)}</div>}
                     <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
@@ -4983,7 +5250,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                         </div>
                         <div style={{fontSize:11,color:C.mutedDark,marginTop:1}}>{c.time+(c.timeEnd?" – "+c.timeEnd:"")} · {c.court}</div>
                         {c.cancelled&&c.cancelType==="cancelled_reprog"&&reprogTo&&<div style={{fontSize:10,color:"#2E7D32",marginTop:1}}>📅 Reprogramada al {fmtDate(reprogTo)}</div>}
-                        {(()=>{const log=(c.attendanceLog||[]).find(e=>e.date===c.date);if(!log)return null;const dC=(log.ausente_dada||[]).length;const nC=(log.ausente_reprog||[]).length;if(!dC&&!nC)return null;return(<div style={{display:"flex",gap:4,marginTop:4}}>{dC>0&&<span style={{fontSize:11,padding:"3px 8px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ Ausente-Dada</span>}{nC>0&&<span style={{fontSize:11,padding:"3px 8px",borderRadius:10,background:"#FFF8E1",color:"#F57F17",fontWeight:700}}>↩ A Reprogramar</span>}</div>);})()}
+                        {(()=>{const log=(c.attendanceLog||[]).find(e=>e.date===c.date);if(!log)return null;const {ausente,ausenteDada,aReprogramar}=resolveClassAttendanceBadgeCounts(students,c._seriesId||c.id,c.date,log);if(!ausente&&!ausenteDada&&!aReprogramar)return null;return(<div style={{display:"flex",gap:4,marginTop:4,flexWrap:"wrap"}}>{ausente>0&&<span style={{fontSize:11,padding:"3px 8px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ Ausente</span>}{ausenteDada>0&&<span style={{fontSize:11,padding:"3px 8px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ Ausente-Dada</span>}{aReprogramar>0&&<span style={{fontSize:11,padding:"3px 8px",borderRadius:10,background:"#FFF8E1",color:"#F57F17",fontWeight:700}}>↩ A Reprogramar</span>}</div>);})()}
                         {heightPx>52&&<div style={{display:"flex",gap:3,marginTop:4,flexWrap:"wrap"}}>
                           {(c.students||[]).map(sid=>{const st=students.find(s=>s.id===sid);if(!st)return null;const attSt=getAttendanceChipStatus(c,sid);const attStyle=attSt&&ATT_CHIP_STYLE[attSt];return (
                             <div key={sid} style={{display:"flex",alignItems:"center",gap:3,background:attStyle?attStyle.bg:C.blueL,borderRadius:20,padding:"2px 6px 2px 3px"}}>
@@ -5525,6 +5792,10 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
     if(!localAmount||parseInt(localAmount)<=0){alert("Ingresá el monto.");return;}
     const qty=parseInt(localClasses)||0;
     let updatedCombos=[...s.combos];
+    // Set below, only for pagoTipo==="mensual" — the id shared by the mensualidad and its income row,
+    // read again at the addIncome call further down. Declared here (not inside the mensual branch) so
+    // it's still in scope there.
+    let pagoLinkId=null;
 
     if(pagoTipo==="clases"&&qty>0){
       // Multi-obligation write: exactly the same rows the preview showed as "about
@@ -5566,6 +5837,9 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
       });
     } else {
       // Mensual - update existing combo or create new
+      // One id shared by the mensualidad and its income row below — the explicit, unambiguous link
+      // "Anular pago" resolves by. Generated once per confirm, never re-derived from amount/date.
+      pagoLinkId=crypto.randomUUID();
       const existingMensual=updatedCombos.findIndex(c=>c.packType==="mensual"&&c.cobroDia);
       if(existingMensual>=0){
         // Add payment to existing mensual combo
@@ -5574,13 +5848,13 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         const payMonth=localPayMonth||TODAY_DATE.slice(0,7);
         const existingIdx=mens.findIndex(m=>m.mes===payMonth);
         if(existingIdx>=0){
-          mens[existingIdx]={...mens[existingIdx],estado:"pagado",fechaPago:localPayDate||TODAY_DATE,monto:parseInt(localAmount)||mc.amount||0,method:payMethod};
+          mens[existingIdx]={...mens[existingIdx],estado:"pagado",fechaPago:localPayDate||TODAY_DATE,monto:parseInt(localAmount)||mc.amount||0,method:payMethod,pagoLinkId};
         } else {
           const cobroDia=mc.cobroDia||1;
           const [py,pm]=payMonth.split("-").map(Number);
           const maxDay=new Date(py,pm,0).getDate();
           const dia=Math.min(cobroDia,maxDay);
-          mens.push({id:"M-"+payMonth,mes:payMonth,estado:"pagado",fechaVencimiento:py+"-"+String(pm).padStart(2,"0")+"-"+String(dia).padStart(2,"0"),fechaPago:localPayDate||TODAY_DATE,monto:parseInt(localAmount)||mc.amount||0,method:payMethod});
+          mens.push({id:"M-"+payMonth,mes:payMonth,estado:"pagado",fechaVencimiento:py+"-"+String(pm).padStart(2,"0")+"-"+String(dia).padStart(2,"0"),fechaPago:localPayDate||TODAY_DATE,monto:parseInt(localAmount)||mc.amount||0,method:payMethod,pagoLinkId});
         }
         mc.mensualidades=mens;
         updatedCombos[existingMensual]=mc;
@@ -5588,7 +5862,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         // Create new mensual combo (legacy support)
         const cobroDia=parseInt(localDate?.split("-")[2])||new Date().getDate();
         const payMonth=localPayMonth||TODAY_DATE.slice(0,7);
-        updatedCombos.push({id:s.combos.length+1,total:null,packType:"mensual",used:0,date:localDate||TODAY_DATE,amount:parseInt(localAmount)||0,currency:"PYG",cobroDia,graciaDias:5,mensualidades:[{id:"M-"+payMonth,mes:payMonth,estado:"pagado",fechaVencimiento:localDate||TODAY_DATE,fechaPago:localPayDate||TODAY_DATE,monto:parseInt(localAmount)||0,method:payMethod}]});
+        updatedCombos.push({id:s.combos.length+1,total:null,packType:"mensual",used:0,date:localDate||TODAY_DATE,amount:parseInt(localAmount)||0,currency:"PYG",cobroDia,graciaDias:5,mensualidades:[{id:"M-"+payMonth,mes:payMonth,estado:"pagado",fechaVencimiento:localDate||TODAY_DATE,fechaPago:localPayDate||TODAY_DATE,monto:parseInt(localAmount)||0,method:payMethod,pagoLinkId}]});
       }
     }
 
@@ -5604,7 +5878,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
       } else {
         detail=qty===1?"1 clase":qty+" clases";
       }
-      addIncome(parseInt(localAmount), localPayDate||TODAY, s.name, detail);
+      addIncome(parseInt(localAmount), localPayDate||TODAY, s.name, detail, pagoTipo==="mensual"?{pagoLinkId}:undefined);
     }
     setStep("success");
     // If all classes given (closed cycle), close faster
@@ -6009,13 +6283,21 @@ function RecordatorioModal({ student:s, onClose, sendNotification, getRem, getCo
   );
 }
 
-function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance }) {
+function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance, expenses=[], onVoidMensualPayment }) {
   // combo (getCombo) stays as the narrow "does this student have anything assigned
   // at all" pick for the Asignar-paquete/Detalles-de-Pagos toggle and PagoModal's
   // initial stepper seed — never used to decide WHICH box(es) to render below.
   const combo=getCombo(s);
   const [showPago,setShowPago]=useState(false);
   const [showHistory,setShowHistory]=useState(false);
+  // "Anular pago" confirm — voidTarget holds everything the confirmation screen shows (alumno,
+  // período, monto, método) PLUS the expense resolved for it AT THE MOMENT the button was
+  // clicked. resolveIncomeForMensualidad is re-run fresh right before the actual write too
+  // (inside handleVoidMensualPayment, against latest state) — this copy is only for what the
+  // confirm screen displays and for disabling the button when nothing resolves.
+  const [voidTarget,setVoidTarget]=useState(null);
+  const [voidBusy,setVoidBusy]=useState(false);
+  const [voidError,setVoidError]=useState("");
   const [showAtt,setShowAtt]=useState(false);
   const [showAttReport,setShowAttReport]=useState(false);
   const [suspended,setSuspended]=useState(s.suspended||false);
@@ -6346,13 +6628,53 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             {/* Right detail */}
             <div style={{flex:1,overflowY:"auto",padding:16}}>
               {(()=>{
-                const allPayments=s.combos.flatMap(c=>{const reg=(c.payments||[]).map(p=>({...p,comboTotal:c.total}));const mens=(c.mensualidades||[]).filter(m=>m.estado==="pagado"&&m.fechaPago).map(m=>{const MH=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];const [,mm]=m.mes.split("-");return{id:m.id,qty:1,amount:m.monto,method:m.method||"",date:m.fechaPago,comboTotal:null,detail:"Mensualidad "+MH[parseInt(mm)-1]};});return[...reg,...mens];});
+                const allPayments=s.combos.flatMap(c=>{
+                  const reg=(c.payments||[]).map(p=>({...p,comboTotal:c.total,packType:c.packType}));
+                  const MH=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+                  // A mensualidad shows here when it's genuinely paid, OR when it's pendiente but still
+                  // carries a pagoLinkId AND that link's expense is still active — an incomplete "Anular
+                  // pago" recovery (needs-expense-update), never silently unreachable after a reload just
+                  // because the mensualidad side of a partial write already landed. Once the expense side
+                  // also lands (already-complete) it drops out again — nothing left to show or do.
+                  const mens=(c.mensualidades||[]).filter(m=>{
+                    if(m.estado==="pagado"&&m.fechaPago) return true;
+                    if(m.estado!=="pagado"&&m.pagoLinkId){
+                      const linked=(expenses||[]).find(e=>e.pagoLinkId===m.pagoLinkId);
+                      return !!linked&&!linked.voided;
+                    }
+                    return false;
+                  }).map(m=>{
+                    const [,mm]=m.mes.split("-");
+                    return {id:m.id,qty:1,amount:m.monto,method:m.method||"",date:m.fechaPago,comboTotal:null,
+                      detail:"Mensualidad "+MH[parseInt(mm)-1],mes:m.mes,pagoLinkId:m.pagoLinkId,packType:c.packType,estado:m.estado};
+                  });
+                  return [...reg,...mens];
+                });
                 if(allPayments.length===0) return <div style={{textAlign:"center",padding:"40px 0",color:C.mutedDark}}>Sin historial de pagos</div>;
                 const p=allPayments[histTab]||allPayments[allPayments.length-1];
                 const wDFull=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
                 const mNShort=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
                 const fmtDate=(ds)=>{const d=new Date(ds+"T12:00:00");return wDFull[d.getDay()]+" "+d.getDate()+" "+mNShort[d.getMonth()];};
                 const methodLabel={"efectivo":"💵 Efectivo","transferencia":"🏦 Transferencia","tarjeta":"💳 Tarjeta"};
+                // Every mensual payment offers "Anular pago"/"Completar anulación" — moderno o legacy,
+                // con o sin `mes`, y también a mitad de una recuperación — via resolveVoidButtonState,
+                // gated by packType alone (never by comboTotal===null, which is also true for a mensual
+                // combo's LEGACY combo.payments[] entries, and never by presence of `mes`, which a
+                // pre-mensualidades[] payment never has). Combo/individual (packType!=="mensual") never
+                // shows it. Found in production: a legacy mensual combo that predates mensualidades[]
+                // entirely — the OLD comboTotal===null&&mes gate silently hid the button for exactly
+                // this reason; it never meant "not mensual". Now shown disabled, with the exact reason,
+                // instead of hidden.
+                const voidButtonState=resolveVoidButtonState(p,s,expenses);
+                // A legacy combo.payments[] entry never carries `.detail` (that's only ever set on
+                // the mens-branch mapping above) — never show a blank "Período" in the confirm sheet.
+                const periodoFor=(pay)=>pay.detail||("Pago del "+fmtDate(pay.date||TODAY_DATE));
+                const openVoidConfirm=()=>{
+                  if(!voidButtonState.enabled) return;
+                  setVoidError("");
+                  setVoidTarget({mensualidadId:p.id,mes:p.mes,studentName:s.name,monto:p.amount,method:p.method,periodo:periodoFor(p),
+                    expenseId:voidButtonState.expenseId,pagoLinkId:voidButtonState.pagoLinkId,action:voidButtonState.action,state:voidButtonState.state,blockedReason:voidButtonState.reason});
+                };
                 return (
                   <>
                     <WhiteCard style={{marginBottom:14}}>
@@ -6363,20 +6685,43 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
                           <span style={{fontSize:11,fontWeight:700,color:C.blue2}}>Compartir</span>
                         </button>
                       </div>
+                      {/* p.estado only exists on a mens-branch entry (a combo/individual `payments[]`
+                          row is always a genuinely completed payment, no partial-recovery concept for
+                          it — undefined here). A pendiente-but-listed mens row (needs-expense-update)
+                          must never still claim "✓ Pagado" — that exact contradiction between Cobros
+                          and Finanzas is the problem this whole recovery design exists to close. */}
+                      {(()=>{
+                        const isIncompleteRecovery=!!(p.estado&&p.estado!=="pagado");
+                        const estadoColor=isIncompleteRecovery?"#E65100":C.green;
+                        return (
                       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                         {[
                           {l:"Fecha de pago",v:fmtDate(p.date||TODAY_DATE)},
                           {l:"Monto",v:fmtMoneyShort(p.amount)},
                           {l:"Forma de pago",v:methodLabel[p.method]||"💵 Efectivo"},
                           ...(p.detail?[{l:"Período",v:p.detail}]:[]),
-                          {l:"Estado",v:"✓ Pagado"},
+                          {l:"Estado",v:isIncompleteRecovery?"⏳ Pendiente — anulación incompleta":"✓ Pagado"},
                         ].map(f=>(
                           <div key={f.l}>
                             <div style={{fontSize:10,fontWeight:700,color:C.mutedDark,marginBottom:3}}>{f.l.toUpperCase()}</div>
-                            <div style={{fontSize:13,fontWeight:700,color:f.l==="Estado"?C.green:C.text}}>{f.v}</div>
+                            <div style={{fontSize:13,fontWeight:700,color:f.l==="Estado"?estadoColor:C.text}}>{f.v}</div>
                           </div>
                         ))}
                       </div>
+                        );
+                      })()}
+                      {voidButtonState.visible&&onVoidMensualPayment&&(
+                        <div style={{marginTop:12}}>
+                          <button
+                            onClick={openVoidConfirm}
+                            disabled={!voidButtonState.enabled}
+                            style={{width:"100%",padding:"11px",borderRadius:12,border:"1.5px solid "+(voidButtonState.enabled?"#EF9A9A":C.border),background:voidButtonState.enabled?"#FFF5F5":C.bg,color:voidButtonState.enabled?"#C62828":C.mutedDark,fontSize:13,cursor:voidButtonState.enabled?"pointer":"default",fontWeight:700}}
+                          >{voidButtonState.action==="complete"?"Completar anulación":"Anular pago"}</button>
+                          {!voidButtonState.enabled&&(
+                            <div style={{fontSize:11,color:C.mutedDark,marginTop:6,lineHeight:1.4}}>{voidMensualMessage(voidButtonState.reason)}</div>
+                          )}
+                        </div>
+                      )}
                     </WhiteCard>
                     {p.dates&&p.dates.length>0&&p.qty>0?(
                       <WhiteCard>
@@ -6406,6 +6751,69 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
           </div>
         </div>
       )}
+
+      {/* Anular pago / Completar anulación — confirm sheet. Shows exactly what will be undone
+          (alumno/período/monto/método); Confirmar is disabled whenever the link couldn't be resolved
+          (voidTarget.expenseId===null, set by openVoidConfirm above) so this never offers a confirm
+          that can only fail. voidTarget.state (needs-student-update / needs-expense-update) picks the
+          "in-progress recovery" copy — the exact scenario a coach sees after reopening this screen
+          following a partial write, never silently hidden as if nothing were pending. */}
+      {voidTarget&&(()=>{
+        const isRecovery=voidTarget.action==="complete";
+        const title=isRecovery?"¿Completar esta anulación?":"¿Anular este pago?";
+        const subtitle=voidTarget.state==="needs-student-update"
+          ?"El ingreso fue anulado, pero falta actualizar la mensualidad. Volvé a intentar para completar la operación."
+          :voidTarget.state==="needs-expense-update"
+          ?"La mensualidad ya está en Pendiente, pero falta anular el ingreso. Volvé a intentar para completar la operación."
+          :"La mensualidad vuelve a Pendiente y el ingreso queda anulado en Finanzas.";
+        const ctaIdle=isRecovery?"Completar anulación":"Confirmar anulación";
+        const ctaBusy=isRecovery?"Completando...":"Anulando...";
+        return (
+        <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:1099,display:"flex",alignItems:"flex-end"}}>
+          <div style={{background:C.white,borderRadius:"24px 24px 0 0",padding:"24px 20px 32px",width:"100%",boxSizing:"border-box"}}>
+            <div style={{fontWeight:900,fontSize:18,color:C.text,marginBottom:6}}>{title}</div>
+            <div style={{fontSize:13,color:C.mutedDark,marginBottom:18}}>{subtitle}</div>
+            <div style={{background:C.blueL,borderRadius:12,padding:14,marginBottom:voidError?12:20}}>
+              {[
+                {l:"Alumno",v:voidTarget.studentName},
+                {l:"Período",v:voidTarget.periodo},
+                {l:"Monto",v:fmtMoneyShort(voidTarget.monto)},
+                {l:"Forma de pago",v:({"efectivo":"💵 Efectivo","transferencia":"🏦 Transferencia","tarjeta":"💳 Tarjeta"})[voidTarget.method]||"💵 Efectivo"},
+              ].map(f=>(
+                <div key={f.l} style={{display:"flex",justifyContent:"space-between",padding:"5px 0"}}>
+                  <span style={{fontSize:12,color:C.mutedDark,fontWeight:600}}>{f.l}</span>
+                  <span style={{fontSize:13,color:C.text,fontWeight:700}}>{f.v}</span>
+                </div>
+              ))}
+            </div>
+            {(voidError||!voidTarget.expenseId)&&(
+              <div style={{background:"#FFEBEE",color:"#C62828",fontSize:12,fontWeight:600,padding:"10px 12px",borderRadius:10,marginBottom:16}}>
+                {voidError||voidMensualMessage(voidTarget.blockedReason||"income-unresolved")}
+              </div>
+            )}
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={()=>{setVoidTarget(null);setVoidError("");}} style={{flex:1,padding:"14px",borderRadius:14,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:14,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
+              <button
+                disabled={!voidTarget.expenseId||voidBusy}
+                onClick={()=>{
+                  if(!voidTarget.expenseId||voidBusy) return;
+                  setVoidBusy(true);
+                  const result=onVoidMensualPayment({studentId:s.id,mensualidadId:voidTarget.mensualidadId,mes:voidTarget.mes,expectedPagoLinkId:voidTarget.pagoLinkId});
+                  setVoidBusy(false);
+                  // "ok" (this call performed the write(s) still needed) and "already-complete" (a
+                  // race — someone else finished it between opening this sheet and confirming) both
+                  // mean nothing is pending anymore; only a real "void-unavailable" shows an error and
+                  // keeps the sheet open so the coach can see why and retry.
+                  if(result&&(result.status==="ok"||result.status==="already-complete")){setVoidTarget(null);setVoidError("");setHistTab(0);}
+                  else setVoidError(voidMensualMessage(result?.reason));
+                }}
+                style={{flex:1,padding:"14px",borderRadius:14,border:"none",background:(!voidTarget.expenseId||voidBusy)?C.border:"linear-gradient(135deg,#C62828,#E53935)",color:"#fff",cursor:(!voidTarget.expenseId||voidBusy)?"default":"pointer",fontSize:14,fontWeight:800}}
+              >{voidBusy?ctaBusy:ctaIdle}</button>
+            </div>
+          </div>
+        </div>
+        );
+      })()}
 
       {/* Recordatorio modal */}
       {showRecordatorio&&<RecordatorioModal student={s} onClose={()=>setShowRecordatorio(false)} sendNotification={sendNotification} getRem={()=>getRem(s,classes)} getCombo={()=>getCombo(s)}/>}
@@ -6608,7 +7016,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
   );
 }
 
-function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance, families=[] }) {
+function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance, families=[], expenses=[], onVoidMensualPayment }) {
   const [search,setSearch]=useState("");
   const [filter,setFilter]=useState("none");
   const [collapsedFamilies,setCollapsedFamilies]=useState(new Set());
@@ -6738,18 +7146,18 @@ function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], send
             </WhiteCard>
             {!isCollapsed&&g.members.map(s=>(
               <div key={s.id} style={{marginLeft:14,paddingLeft:12,borderLeft:"2px solid #C5D0E6",marginBottom:10}}>
-                <PaymentCard student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance}/>
+                <PaymentCard student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment}/>
               </div>
             ))}
           </div>
         );
       })}
-      {ungroupedList.map(s=><PaymentCard key={s.id} student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance}/>)}
+      {ungroupedList.map(s=><PaymentCard key={s.id} student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment}/>)}
     </div>
   );
 }
 
-function Finances({ students, classes, initialTab="payments", onUpdate, expenses=[], setExpenses, addIncome, packages=[], sendNotification, onAttendance, families=[] }) {
+function Finances({ students, classes, initialTab="payments", onUpdate, expenses=[], setExpenses, addIncome, packages=[], sendNotification, onAttendance, families=[], onVoidMensualPayment }) {
   const [tab,setTab]=useState(initialTab);
   const [selMonth,setSelMonth]=useState((()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");})());
   const [finView,setFinView]=useState("mensual");
@@ -6764,8 +7172,10 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
   const [newCatName,setNewCatName]=useState(""); const [newCatType,setNewCatType]=useState("gasto");
   const barC=[C.blue2,C.blue3,"#5C6BC0","#26C6DA"];
   const monthFiltered=expenses.filter(e=>e.date.startsWith(selMonth));
-  const income=monthFiltered.filter(e=>e.type==="ingreso").reduce((a,b)=>a+b.amount,0);
-  const exp=monthFiltered.filter(e=>e.type==="gasto").reduce((a,b)=>a+b.amount,0);
+  // A voided movement (Anular pago) stays in monthFiltered — it must still show in the list,
+  // labeled Anulado — but never contributes to a total anywhere in this screen.
+  const income=monthFiltered.filter(e=>e.type==="ingreso"&&!e.voided).reduce((a,b)=>a+b.amount,0);
+  const exp=monthFiltered.filter(e=>e.type==="gasto"&&!e.voided).reduce((a,b)=>a+b.amount,0);
   const cats=[...new Set(monthFiltered.filter(e=>e.type==="gasto").map(e=>e.category))];
   const [yr,mn]=selMonth.split("-").map(Number);
   const monthLabel=MONTHS[mn-1]+" "+yr;
@@ -6815,13 +7225,13 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
         </div>
       </div>
       <div style={{padding:"16px",marginTop:-8}}>
-        {tab==="payments"&&<PaymentsTab students={students} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} families={families}/>}
+        {tab==="payments"&&<PaymentsTab students={students} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} families={families} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment}/>}
         {tab==="expenses"&&(
           <div>
             {/* Stats badges */}
             {(()=>{
               const cr=classes.filter(c=>c.date&&c.date.startsWith(selMonth)&&c.date<=TODAY_DATE&&!c.paused&&!c.cancelled).length;
-              const ic=expenses.filter(e=>e.date&&e.date.startsWith(selMonth)&&e.type==="ingreso").reduce((a,b)=>a+b.amount,0);
+              const ic=expenses.filter(e=>e.date&&e.date.startsWith(selMonth)&&e.type==="ingreso"&&!e.voided).reduce((a,b)=>a+b.amount,0);
               const pc=students.reduce((sum,s)=>{
                 const combos=(s.combos||[]).filter(c=>c.total>0||(c.packType&&c.packType!=="mensual"));
                 return sum+combos.reduce((s2,c)=>{
@@ -6848,7 +7258,7 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
             {finView==="anual"&&(()=>{
               const year=parseInt(selMonth.split("-")[0]);
               const ms=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
-              const md=ms.map((m,mi)=>{const pf=year+"-"+String(mi+1).padStart(2,"0");const ig=expenses.filter(e=>e.date&&e.date.startsWith(pf)&&e.type==="ingreso").reduce((a,b)=>a+b.amount,0);const gs=expenses.filter(e=>e.date&&e.date.startsWith(pf)&&e.type==="gasto").reduce((a,b)=>a+b.amount,0);return{month:m,ing:ig,gas:gs,bal:ig-gs};});
+              const md=ms.map((m,mi)=>{const pf=year+"-"+String(mi+1).padStart(2,"0");const ig=expenses.filter(e=>e.date&&e.date.startsWith(pf)&&e.type==="ingreso"&&!e.voided).reduce((a,b)=>a+b.amount,0);const gs=expenses.filter(e=>e.date&&e.date.startsWith(pf)&&e.type==="gasto"&&!e.voided).reduce((a,b)=>a+b.amount,0);return{month:m,ing:ig,gas:gs,bal:ig-gs};});
               const ti=md.reduce((a,b)=>a+b.ing,0);const tg=md.reduce((a,b)=>a+b.gas,0);const cu="₡";const mx=Math.max(...md.map(d=>Math.max(d.ing,d.gas)),1);
               return (<div>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:C.white,borderRadius:14,padding:"12px 16px",marginBottom:14,border:"1px solid "+C.border}}>
@@ -6994,8 +7404,8 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
                     sorted2.forEach(e=>{
                       csv+='"'+e.date+'","'+(e.type==="ingreso"?"Ingreso":"Gasto")+'","'+(e.category||"")+'","'+(e.note||"").replace(/"/g,"'")+'",'+e.amount+'\n';
                     });
-                    const inc2=monthFiltered.filter(e=>e.type==="ingreso").reduce((a,e)=>a+e.amount,0);
-                    const exp2=monthFiltered.filter(e=>e.type==="gasto").reduce((a,e)=>a+e.amount,0);
+                    const inc2=monthFiltered.filter(e=>e.type==="ingreso"&&!e.voided).reduce((a,e)=>a+e.amount,0);
+                    const exp2=monthFiltered.filter(e=>e.type==="gasto"&&!e.voided).reduce((a,e)=>a+e.amount,0);
                     csv+='\n"","","","Total Ingresos",'+inc2+'\n';
                     csv+='"","","","Total Gastos",'+exp2+'\n';
                     csv+='"","","","Balance Neto",'+(inc2-exp2)+'\n';
@@ -7012,14 +7422,17 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
                   </button>
                 </div>
                 {[...monthFiltered].sort((a,b)=>b.date.localeCompare(a.date)).map(e=>(
-                  <WhiteCard key={e.id} style={{marginBottom:8}}>
+                  <WhiteCard key={e.id} style={{marginBottom:8,opacity:e.voided?0.6:1}}>
                     <div style={{display:"flex",alignItems:"center",gap:12}}>
                       <div style={{width:40,height:40,borderRadius:12,background:e.type==="ingreso"?"linear-gradient(135deg,#52C048,#65CE5A)":"linear-gradient(135deg,#E53935,#EF5350)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:C.white,flexShrink:0}}>{e.type==="ingreso"?"↑":"↓"}</div>
                       <div style={{flex:1}}>
                         <div style={{fontSize:14,fontWeight:700,color:C.text}}>{e.category}</div>
                         <div style={{fontSize:11,color:C.mutedDark}}>{e.date}{e.note?" · "+e.note:""}{e.detail?" · "+e.detail:""}</div>
                       </div>
-                      <div style={{fontWeight:800,color:e.type==="ingreso"?"#2E7D32":"#C62828",fontSize:14,marginRight:8}}>{(e.type==="ingreso"?"+":"-")+fmtMoneyShort(e.amount)}</div>
+                      <div style={{fontWeight:800,color:e.type==="ingreso"?"#2E7D32":"#C62828",fontSize:14,marginRight:8,textDecoration:e.voided?"line-through":"none"}}>{(e.type==="ingreso"?"+":"-")+fmtMoneyShort(e.amount)}</div>
+                      {e.voided?(
+                        <span style={{fontSize:10,fontWeight:700,padding:"4px 10px",borderRadius:20,background:"#F5F5F5",color:"#757575",whiteSpace:"nowrap"}}>Anulado</span>
+                      ):(
                       <div style={{display:"flex",gap:4}}>
                         <button onClick={()=>{
                           setShowMovModal(e.type);
@@ -7034,6 +7447,7 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
                           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#C62828" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
                         </button>
                       </div>
+                      )}
                     </div>
                   </WhiteCard>
                 ))}
@@ -8036,6 +8450,13 @@ export default function App() {
   // "classes" genuinely confirmed before ever reporting the resume as done.
   const latestClassesRef=useRef(classes);
   useEffect(()=>{latestClassesRef.current=classes;},[classes]); // defensive backstop only
+  // "Anular pago" (Cobros) needs a synchronous read of the latest expenses at confirm time, the same
+  // way latestStudentsRef/latestClassesRef serve their own guards. expenses has no wrapped-setter-level
+  // sync today (setExpenses goes through React's own setExpensesRaw updater, not a direct v(prev) call
+  // like setStudents/setClasses) — this stays an effect-only backstop, at most one render behind, which
+  // the write-time guard's own re-resolve (against whatever IS in this ref) still protects correctly.
+  const latestExpensesRef=useRef(expenses);
+  useEffect(()=>{latestExpensesRef.current=expenses;},[expenses]);
   const applyClassesLocally=(next)=>{
     latestClassesRef.current=next;
     setClassesRaw(next);
@@ -8544,6 +8965,51 @@ export default function App() {
     const status=getSyncStatus(user.id).classes;
     return !(status.conflict||status.quarantined||status.volatileUnsafe||status.pendingOwn);
   };
+  // Same check, generalized to any of the six CAS-tracked keys — "Anular pago" needs it for BOTH
+  // students and expenses (its two independent writes) before it may even attempt either one.
+  const isDataKeyWriteSettled=(key)=>{
+    if(!user?.id) return true;
+    const status=getSyncStatus(user.id)[key];
+    return !(status.conflict||status.quarantined||status.volatileUnsafe||status.pendingOwn);
+  };
+
+  // "Anular pago" (Cobros → Historial de Pagos): undo ONE paid mensualidad and its linked income —
+  // recoverable after a partial write, never stuck in a permanent "income-unresolved" dead end just
+  // because the FIRST of the two writes already landed. Synchronous body, reads ONLY
+  // latestStudentsRef/latestExpensesRef (never render-closure state or props), so a second confirm
+  // fired before this call returns can't race it — by the time any later call runs, this call's own
+  // setStudents/setExpenses have already updated the refs synchronously (applyStudentsLocally /
+  // setExpensesRaw), so guardVoidMensualPayment's own re-resolve sees the up-to-date state and
+  // performs (at most) exactly the write(s) still missing. The UI's busy-guard is defense in depth
+  // on top of this, not the only thing preventing a double write.
+  const handleVoidMensualPayment=({studentId,mensualidadId,mes,expectedPagoLinkId})=>{
+    if(!isDataKeyWriteSettled("students")||!isDataKeyWriteSettled("expenses")) return {status:"void-unavailable",reason:"write-pending"};
+    const student=latestStudentsRef.current.find(s=>s.id===studentId);
+    const r=guardVoidMensualPayment({student,mensualidadId,mes,expenses:latestExpensesRef.current,expectedPagoLinkId});
+    if(r.state==="blocked") return {status:"void-unavailable",reason:r.reason};
+    if(r.state==="already-complete") return {status:"already-complete"};
+    // Not atomic: students and expenses are two independent outbox-backed keys — no cross-key
+    // transaction exists anywhere in this app, so a crash or a failed write between these two calls
+    // is a real possibility, not a theoretical one. Each write below only fires when the resolved
+    // state says it's actually still needed — "ready" does both (expenses first, same rationale as
+    // before: if the students write then fails, the mensualidad is left reading "Pagado" while its
+    // income is already excluded from Finanzas, a silent under-count the coach can catch on
+    // reconciliation, never a double-charge); "needs-student-update" only touches students (the
+    // expense is already voided — re-voiding it would be a no-op but is skipped entirely, never
+    // "re-confirmed"); "needs-expense-update" only touches expenses (the mensualidad is already
+    // pendiente). Either way the NEXT call (retry or double-click) re-resolves fresh and finds
+    // "already-complete" — zero further writes, never a second void.
+    if(r.state==="ready"||r.state==="needs-expense-update"){
+      setExpenses(p=>p.map(e=>e.id===r.expenseId?applyVoidExpense(e,TODAY_DATE):e));
+    }
+    if(r.state==="ready"||r.state==="needs-student-update"){
+      setStudents(p=>p.map(s=>s.id!==studentId?s:{...s,combos:(s.combos||[]).map(c=>
+        (c.packType==="mensual"&&(c.mensualidades||[]).some(m=>m.id===mensualidadId&&m.mes===mes))
+          ?applyVoidMensualidadToCombo(c,mensualidadId,mes):c
+      )}));
+    }
+    return {status:"ok"};
+  };
 
   const sendNotification=(text,type="alert")=>{
     setNotifications(p=>[...p,{id:Date.now(),from:"coach",to:"all",text,time:"Ahora",type,read:false}]);
@@ -8597,8 +9063,12 @@ export default function App() {
     setCurrency(cur);
   };
 
-  const addIncome=(amount,date,studentName,detail)=>{
-    setExpenses(p=>[...p,{id:Date.now(),category:"Cobros clases",amount,type:"ingreso",date:date||TODAY_DATE,note:studentName,detail:detail||""}]);
+  // `meta` is optional and additive — every existing caller (unchanged) omits it and gets exactly the
+  // same expense row as before. `meta.pagoLinkId`, when a caller supplies one, is the ONLY new field:
+  // the explicit, unambiguous link stamped on both this income row and its mensualidad at payment time,
+  // so "Anular pago" can find this exact row later without ever guessing from amount/date alone.
+  const addIncome=(amount,date,studentName,detail,meta)=>{
+    setExpenses(p=>[...p,{id:Date.now(),category:"Cobros clases",amount,type:"ingreso",date:date||TODAY_DATE,note:studentName,detail:detail||"",...(meta||{})}]);
   };
 
   const handleDeleteClass=(id)=>{
@@ -8675,6 +9145,11 @@ export default function App() {
       rescheduledDates:[],
     };
     setClasses(p=>[...p,newClass]);
+    // One stable id per mensual+paid student, generated ONCE before either loop below (combo creation,
+    // then the income loop) so the mensualidad and its income row share exactly the same pagoLinkId —
+    // never two independent crypto.randomUUID() calls that could silently produce an unlinked pair.
+    // "Anular pago" (Cobros) is the only reader of this field.
+    const mensualPagoLinkIds=new Map((cd.studentData||[]).filter(sd=>sd.pack==="mensual"&&sd.paid).map(sd=>[sd.id,crypto.randomUUID()]));
     if(cd.studentData&&cd.studentData.length>0){
       setStudents(p=>p.map(s=>{
         const sd=cd.studentData.find(x=>x.id===s.id);
@@ -8741,7 +9216,8 @@ export default function App() {
               fechaVencimiento:(cd.date||TODAY_DATE),
               fechaPago:TODAY_DATE,
               monto:amount,
-              method:sd.method||"Efectivo"
+              method:sd.method||"Efectivo",
+              pagoLinkId:mensualPagoLinkIds.get(sd.id)
             }]:[]
           }:{}),
           dates:projectedClassDates,
@@ -8757,7 +9233,7 @@ export default function App() {
           const detail=sd.pack==="mensual"||pkg?.type==="mensual"?"Plan Mensual":
             sd.pack==="individual"||pkg?.type==="individual"?"Clase Individual":
             pkg?.qty?(pkg.qty+" clases"):pkg?.name||"";
-          addIncome(parseInt(sd.amount), cd.date||TODAY_DATE, studentName, detail);
+          addIncome(parseInt(sd.amount), cd.date||TODAY_DATE, studentName, detail, sd.pack==="mensual"?{pagoLinkId:mensualPagoLinkIds.get(sd.id)}:undefined);
         }
       });
     }
@@ -8861,6 +9337,11 @@ export default function App() {
       try {
       const realId=cd._seriesId||cd.id;
       const editedClass=classes.find(c=>c.id===realId)||cd;
+      // Populated (at most once per student) by the map below, then read AFTER setStudents returns —
+      // never call addIncome from inside a state updater. This app's setStudents wrapper invokes its
+      // updater function synchronously, exactly once (never React's own double-invoke), so this array
+      // is filled exactly once too: one queued income per newly-paid mensual student, never duplicated.
+      const mensualIncomesToRecord=[];
       setStudents(p=>p.map(s=>{
         const sp=cd.studentPacks[s.id]||cd.studentPacks[String(s.id)];
         if(!sp||!sp.pack) return s;
@@ -8986,7 +9467,12 @@ export default function App() {
         // through to the existing behavior below, unchanged.
         const sameStructure=hasActiveCombo&&pkg&&pkg.type==="combo"&&(lastCombo.packType||"combo")==="combo"&&qty===lastCombo.total;
         let workingCombo=sameStructure?{...lastCombo,packId:String(pkg.id),amount:pkg.price}:lastCombo;
-        if(hasActiveCombo&&sp.paid===true&&workingCombo&&!workingCombo.paid){
+        // Never for mensual: a modern mensual combo's real payment status lives in mensualidades[]
+        // (PagoModal/getMensualEstado), not in this legacy paid/paidCount/payments shape — writing it
+        // here would corrupt the combo (paidCount:0 despite paid:true, since mensual's total is null)
+        // without ever touching the real ledger. Marking a mensual student paid from this screen is
+        // out of scope; use Cobros, which finds and updates the same combo (see the mensual branch below).
+        if(hasActiveCombo&&sp.paid===true&&workingCombo&&workingCombo.packType!=="mensual"&&!workingCombo.paid){
           const paymentRecord={
             id:Date.now(),
             qty:workingCombo.total||0,
@@ -9013,34 +9499,62 @@ export default function App() {
         }
         if(!lastDate||lastComboFullyUsed){
           const startDate=cd.date||today;
-          const editedClassFull=classes.find(c=>c.id===realId);
-          const realOcc=(editedClassFull?.occurrences||[]).filter(d=>d>=startDate);
-          const total=qty||8;
-          const newDates=realOcc.slice(0,total);
-          if(newDates.length===0){
-            const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
-            const dowSet=new Set((editedClass.days||[]).map(d=>DAY_MAP[d]));
-            let cur=new Date(startDate+"T12:00:00");
-            while(newDates.length<total){
-              if(dowSet.size===0||dowSet.has(cur.getDay())){
-                newDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+          if(isMensual){
+            // Same canonical shape createNewClass builds for a mensual student — cobroDia + mensualidades
+            // — never the legacy paid/paidCount/payments shape below. PagoModal's own "find the mensual
+            // combo" lookup (packType==="mensual"&&combo.cobroDia) will match THIS combo later and update
+            // it in place, so a payment made afterward through Cobros never creates a second one.
+            const amount=parseInt(sp.amount)||0;
+            const cobroDia=sp.cobroDia||parseInt(startDate.split("-")[2])||1;
+            const payMonth=startDate.slice(0,7);
+            // Same id stamped on the mensualidad AND queued for the one addIncome call below — the
+            // explicit link "Anular pago" resolves by, never guessed from amount/date alone.
+            const pagoLinkId=sp.paid===true?crypto.randomUUID():null;
+            if(sp.paid===true&&amount>0) mensualIncomesToRecord.push({studentId:s.id,studentName:s.name,amount,date:startDate,payMonth,pagoLinkId});
+            combos.push({
+              id:combos.length+1,
+              total:null,
+              packType:"mensual",
+              sourceClassId:realId,
+              used:0,
+              date:startDate,
+              amount,
+              cobroDia,
+              graciaDias:5,
+              currency:"PYG",
+              mensualidades:sp.paid===true?[{id:"M-"+payMonth,mes:payMonth,estado:"pagado",fechaVencimiento:startDate,fechaPago:today,monto:amount,method:sp.method||"Efectivo",pagoLinkId}]:[],
+              payments:[],
+            });
+          } else {
+            const editedClassFull=classes.find(c=>c.id===realId);
+            const realOcc=(editedClassFull?.occurrences||[]).filter(d=>d>=startDate);
+            const total=qty||8;
+            const newDates=realOcc.slice(0,total);
+            if(newDates.length===0){
+              const DAY_MAP={"Dom":0,"Lun":1,"Mar":2,"Mié":3,"Jue":4,"Vie":5,"Sáb":6};
+              const dowSet=new Set((editedClass.days||[]).map(d=>DAY_MAP[d]));
+              let cur=new Date(startDate+"T12:00:00");
+              while(newDates.length<total){
+                if(dowSet.size===0||dowSet.has(cur.getDay())){
+                  newDates.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
+                }
+                cur.setDate(cur.getDate()+1);
               }
-              cur.setDate(cur.getDate()+1);
             }
+            combos.push({
+              id:combos.length+1,
+              total:qty,
+              packType,
+              sourceClassId:realId,
+              used:0,
+              paid:sp.paid===true,
+              paidCount:sp.paid===true?(qty||0):0,
+              date:newDates[0]||startDate,
+              amount:parseInt(sp.amount)||0,
+              dates:newDates,
+              payments:sp.paid===true?[{id:Date.now(),qty:qty||0,amount:parseInt(sp.amount)||0,method:"efectivo",date:today,dates:newDates}]:[],
+            });
           }
-          combos.push({
-            id:combos.length+1,
-            total:qty,
-            packType,
-            sourceClassId:realId,
-            used:0,
-            paid:sp.paid===true,
-            paidCount:sp.paid===true?(qty||0):0,
-            date:newDates[0]||startDate,
-            amount:parseInt(sp.amount)||0,
-            dates:newDates,
-            payments:sp.paid===true?[{id:Date.now(),qty:qty||0,amount:parseInt(sp.amount)||0,method:"efectivo",date:today,dates:newDates}]:[],
-          });
         } else {
           if(targetIdx>=0){
             combos[targetIdx]={...combos[targetIdx],total:qty,amount:parseInt(sp.amount)||combos[targetIdx].amount};
@@ -9048,6 +9562,12 @@ export default function App() {
         }
         return {...s,combos};
       }));
+      // Exactly one addIncome per newly-paid mensual student, AFTER setStudents (its updater already
+      // ran synchronously above) — never inside the updater itself, so a re-render or a future change
+      // to setStudents's own implementation can never turn this into a duplicate income.
+      mensualIncomesToRecord.forEach(({studentName,amount,date,payMonth,pagoLinkId})=>{
+        addIncome(amount,date,studentName,"Mensualidad "+mesLabel(payMonth),{pagoLinkId});
+      });
       } catch(err){ console.error("studentPacks error:", err); }
     }
   };
@@ -9440,7 +9960,7 @@ export default function App() {
         {inviteTarget&&<InviteModal student={inviteTarget} userId={user?.id} coachName={coachProfile.name} onClose={()=>setInviteTarget(null)}/>}
         {tab==="agenda"&&<Agenda students={students} classes={xClasses} rawClasses={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onUpdateStudentsBatch={commitStudentsBatch} isClassesWriteSettled={isClassesWriteSettled} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])} onRefresh={handleRefresh}/>}
         {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification} userId={user?.id} unreadChats={unreadChats} onMarkRead={(sid)=>setUnreadChats(p=>{const n={...p};delete n[String(sid)];return n;})}/>}
-        {tab==="cobros"&&<Finances students={students} classes={xClasses} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance} families={families}/>}
+        {tab==="cobros"&&<Finances students={students} classes={xClasses} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance} families={families} onVoidMensualPayment={handleVoidMensualPayment}/>}
         {tab==="finanzas"&&<Finances students={students} classes={xClasses} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages}/>}
         {showNewClass&&<NewClassModal onClose={()=>{setShowNewClass(false);if(classes.length===0)setTab("agenda");}} onSave={handleSaveClass} existingClasses={xClasses} students={students} dateLabel="Nueva clase" onCreateStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])}/>}
         {showNewStudent&&<NewStudentModal onClose={()=>setShowNewStudent(false)} onSave={(d)=>setStudents(p=>[...p,{id:Date.now(),...d}])}/>}
