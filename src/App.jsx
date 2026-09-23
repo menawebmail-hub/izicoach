@@ -2519,14 +2519,18 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
   const mNShort=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
   const wDShort=["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
 
+  // Render-scope (not just inside handleSave) so the inline error below the day picker can react
+  // to every change in sel/days immediately — appearing/disappearing as the professor edits, never
+  // waiting for a save attempt. True only once a real recurring obligation exists (any selected
+  // student whose package isn't individual); an empty or individual-only selection never shows it.
+  const hasCombo=sel.some(x=>{
+    const pkg=packages.find(p=>String(p.id)===String(x.pack));
+    return x.pack!=="individual"&&pkg?.type!=="individual"&&x.pack!=="";
+  });
+
   const handleSave=()=>{
     if(!title||sel.length===0){alert("Agregá título y al menos un alumno.");return;}
     if(!startDate){alert("Agregá una fecha de inicio.");return;}
-    // Check if combo/mensual requires days
-    const hasCombo=sel.some(x=>{
-      const pkg=packages.find(p=>String(p.id)===String(x.pack));
-      return x.pack!=="individual"&&pkg?.type!=="individual"&&x.pack!=="";
-    });
     // Centralized — never just days.length===0, which misses an array full of unrecognized
     // names/blanks (those would still pass a bare length check, then map to a Set containing
     // undefined that a while-loop-based generator could scan forever without ever matching).
@@ -2601,6 +2605,9 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
         <div style={{marginBottom:14}}>
           <label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:8}}>Selecciona los días</label>
           <DayPicker value={days} onChange={setDays}/>
+          {hasCombo&&!hasValidClassDays(days)&&(
+            <div role="alert" aria-live="polite" style={{color:"#C62828",fontSize:12,fontWeight:700,marginTop:8}}>{NO_VALID_CLASS_DAYS_MESSAGE}</div>
+          )}
         </div>
 
         <div style={{display:"flex",gap:12,marginBottom:14}}>
@@ -3530,6 +3537,17 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
   const available=allStudents.filter(s=>!clsSt.includes(s.id)&&(query.trim()===""||s.name.toLowerCase().includes(query.toLowerCase())));
   const clsRealId=cls._seriesId||cls.id;
   const iS={width:"100%",padding:"12px 14px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",background:C.white,color:C.text,outline:"none"};
+  // Render-scope (not just inside the save handler) so the inline error below the day picker
+  // reacts immediately to every change in clsSt/studentPacks/days — matching NewClassModal's
+  // identical hasCombo predicate: any currently-assigned student whose package isn't individual
+  // (combo, mensual, or the unidentified-mensual sentinel) makes this class recurring. Empty or
+  // individual-only never shows it.
+  const hasRecurringObligation=clsSt.some(sid=>{
+    const sp=studentPacks[sid];
+    if(!sp) return false;
+    const pkg=packages.find(p=>String(p.id)===String(sp.pack));
+    return sp.pack!=="individual"&&pkg?.type!=="individual"&&sp.pack!=="";
+  });
 
   const handleCreateStudent=(data)=>{
     const newS={id:Date.now(),...data};
@@ -3549,7 +3567,13 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
       <div style={{flex:1,overflowY:"auto",minHeight:0,padding:16}}>
         <div style={{marginBottom:14}}><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Título</label><input value={title} onChange={e=>setTitle(e.target.value)} style={iS}/></div>
         <div style={{marginBottom:14}}><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Local / Cancha</label><input value={court} onChange={e=>setCourt(e.target.value)} style={iS}/></div>
-        <div style={{marginBottom:14}}><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:8}}>Días</label><DayPicker value={days} onChange={setDays}/></div>
+        <div style={{marginBottom:14}}>
+          <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:8}}>Días</label>
+          <DayPicker value={days} onChange={setDays}/>
+          {hasRecurringObligation&&!hasValidClassDays(days)&&(
+            <div role="alert" aria-live="polite" style={{color:"#C62828",fontSize:12,fontWeight:700,marginTop:8}}>{NO_VALID_CLASS_DAYS_MESSAGE}</div>
+          )}
+        </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
           <div><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Hora inicio</label><TimePicker value={t1} onChange={setT1} style={{...iS,padding:"10px 8px"}}/></div>
           <div><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Hora fin</label><TimePicker value={t2} onChange={setT2} style={{...iS,padding:"10px 8px"}}/></div>
@@ -3669,19 +3693,11 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
       </div>
       <div style={{flexShrink:0,padding:"12px 16px calc(16px + env(safe-area-inset-bottom,0px))",background:C.bg}}>
         <button onClick={()=>{
-          // Enforced here, the actual save handler — never just the day-toggle buttons' own state
-          // or a disabled-button hint — matching NewClassModal's identical hasCombo predicate: any
-          // currently-assigned student whose package isn't individual (combo, mensual, or the
-          // unidentified-mensual sentinel — none of which are "individual") makes this class
-          // recurring, and a recurring class can never be saved with zero valid days. If the
-          // professor removed every day, the previous class (cls) is untouched: no onSave call, no
-          // occurrence regeneration, no partial write of any kind.
-          const hasRecurringObligation=clsSt.some(sid=>{
-            const sp=studentPacks[sid];
-            if(!sp) return false;
-            const pkg=packages.find(p=>String(p.id)===String(sp.pack));
-            return sp.pack!=="individual"&&pkg?.type!=="individual"&&sp.pack!=="";
-          });
+          // Enforced here, the actual save handler — never just the day-toggle buttons' own state,
+          // the inline message below the day picker, or a disabled-button hint. If the professor
+          // removed every day, the previous class (cls) is untouched: no onSave call, no occurrence
+          // regeneration, no partial write of any kind. hasRecurringObligation is computed once at
+          // render scope above (also drives the inline message), never duplicated here.
           if(hasRecurringObligation&&!hasValidClassDays(days)){
             alert(NO_VALID_CLASS_DAYS_MESSAGE);
             return;
