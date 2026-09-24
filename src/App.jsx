@@ -64,6 +64,51 @@ const TODAY_DATE=(()=>{const d=new Date();return d.getFullYear()+"-"+String(d.ge
 // payments[]-based path — no auto-generated monthly ladder, no mora/pendiente alerts invented for
 // a student who was never configured that way, no silent promotion.
 const isModernMensual=(combo)=>!!combo&&combo.packType==="mensual"&&Array.isArray(combo.mensualidades);
+// Canonical "is this alumno active as a client of the coach" check (deactivation feature).
+// Reuses the pre-existing student.status field rather than adding a new one — it already has a
+// full Alumnos edit UI (EditS's "Estado" control: "● Activo"/"○ Inactivo") and is set to
+// "active" on every newly-created student. Old data that predates this field (status undefined)
+// must stay active with no migration, so this only ever excludes the literal "inactive" — never
+// requires "active" — unlike the handful of pre-existing ad-hoc `s.status==="active"` checks in
+// the Dashboard/Finanzas summary counters, which undercounted exactly that legacy case and are
+// now routed through this same helper.
+// A separate, older `student.suspended` field exists in this file (read by a couple of Cobros/
+// mora filters) but its own toggle UI was deliberately removed from Cobros in favor of Agenda's
+// "Pausar" (see git history: "eliminar Suspender de Cobros, solo Pausar en Agenda") — it has no
+// reachable way to be set today and is left completely untouched here; "inactivo" is a distinct,
+// newer concept with its own field and its own UI.
+const isStudentActive=(student)=>!!student&&student.status!=="inactive";
+const filterActiveStudents=(students)=>(students||[]).filter(isStudentActive);
+// "Vigente" for the inactivation block below: a class SERIES with at least one occurrence, TODAY
+// or later, where the student is still a member and that specific occurrence isn't cancelled.
+// Built on expandClasses (the SAME per-occurrence resolution — reschedule chains, definitive
+// cancellations, pauses — every other date-aware screen in this app already uses) rather than a
+// hand-rolled date scan, so "vigente" means exactly what it means everywhere else:
+//  - A future occurrence that's merely PAUSED is NOT cancelled (expandClasses only ever sets
+//    cancelled=true for cancelType!=="paused") — it still blocks. Pausing is reversible and the
+//    student could resume and keep accumulating debt/consuming classes, which is exactly the
+//    scenario this whole rule exists to prevent.
+//  - A DEFINITIVELY cancelled occurrence (cancelType "cancelled") is excluded — if every future
+//    occurrence of a series ends up cancelled this way, nothing vigente remains and the series
+//    does not block.
+//  - A rescheduled ("cancelled_reprog") occurrence is excluded at its OLD date (cancelled=true
+//    there) but expandClasses pushes a second, non-cancelled virtual entry at the resolved target
+//    date — if that target is still today-or-later, THAT entry blocks, correctly following the
+//    class to its new date instead of losing track of it.
+//  - A student removed from class.students matches no occurrence of that series at all, so it
+//    can never contribute a block, regardless of how many future dates the series still has.
+// Ids are compared as strings, deliberately tolerant of a numeric vs string mismatch on either
+// side. Returns each blocking series' title ONCE (Map keyed by _seriesId), never once per date.
+const getBlockingClassNamesForStudent=(studentId,rawClasses,todayDate)=>{
+  const seen=new Map();
+  expandClasses(rawClasses||[]).forEach(c=>{
+    if(c.cancelled) return;
+    if(c.date<todayDate) return;
+    if(!(c.students||[]).some(id=>String(id)===String(studentId))) return;
+    if(!seen.has(c._seriesId)) seen.set(c._seriesId,c.title);
+  });
+  return [...seen.values()];
+};
 function getMensualidades(combo) {
   if(!isModernMensual(combo)) return [];
   const existing=combo.mensualidades||[];
@@ -2767,10 +2812,13 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
   const exp=monthExpenses.filter(e=>e.type==="gasto").reduce((a,b)=>a+b.amount,0);
   // Cobros alerts - students with unpaid combos
   // Combo/Individual debt and Mensual debt are independent domains — neither may hide
-  // the other (hasAnyDeuda), unlike getRem's single-number contract.
-  const cobrosAlerts=students.filter(s=>{if(s.suspended)return false;return hasAnyDeuda(s,classes);});
-  // Combos that just completed and need renewal (new combo created but unpaid)
+  // the other (hasAnyDeuda), unlike getRem's single-number contract. An inactive alumno must
+  // never resurface here just for having a debt — same central exclusion Cobros itself applies.
+  const cobrosAlerts=students.filter(s=>{if(s.suspended||!isStudentActive(s))return false;return hasAnyDeuda(s,classes);});
+  // Combos that just completed and need renewal (new combo created but unpaid) — also a
+  // payment-collection prompt, so it gets the same inactive exclusion as cobrosAlerts above.
   const comboRenewalAlerts=students.filter(s=>{
+    if(!isStudentActive(s)) return false;
     const combos=s.combos||[];
     if(combos.length===0) return false;
     const last=combos[combos.length-1];
@@ -2860,7 +2908,7 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
             {coachProfile.photo?<img src={coachProfile.photo} style={{width:46,height:46,objectFit:"cover"}}/>:(coachProfile.name||"C")[0].toUpperCase()}
           </div>
           <div><div style={{fontSize:12,color:C.muted}}>Bienvenido</div><div style={{fontSize:18,fontWeight:700,color:C.white}}>{coachProfile.name||"Coach"}</div></div>
-          <div style={{marginLeft:"auto",background:C.whiteA,borderRadius:20,padding:"4px 12px",fontSize:12,color:C.white}}>{students.filter(s=>s.status==="active").length+" activos"}</div>
+          <div style={{marginLeft:"auto",background:C.whiteA,borderRadius:20,padding:"4px 12px",fontSize:12,color:C.white}}>{filterActiveStudents(students).length+" activos"}</div>
         </div>
         <div style={{background:C.whiteA,borderRadius:16,padding:"16px"}}>
           <div style={{fontSize:12,color:C.muted,marginBottom:4}}>Balance del mes · {mN[curMonth]+" "+curYear}</div>
@@ -3045,8 +3093,10 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
   );
 }
 
-function Students({ students, onAdd, onUpdate, onAddStudentDirect, onDelete, onChat, classes=[], onInvite, userId, onInviteStudent, onRefresh, families=[], setFamilies }) {
+function Students({ students, onAdd, onUpdate, onAddStudentDirect, onDelete, onChat, classes=[], onInvite, userId, onInviteStudent, onRefresh, families=[], setFamilies, getLatestClasses, getLatestStudents }) {
   const [f,setF]=useState("all");
+  // Independent of f (Todos/Familias/Solo alumnos) — vista inicial Activos.
+  const [statusFilter,setStatusFilter]=useState("active");
   const [editS,setEditS]=useState(null);
   const [search,setSearch]=useState("");
   const [infoS,setInfoS]=useState(null);
@@ -3057,6 +3107,14 @@ function Students({ students, onAdd, onUpdate, onAddStudentDirect, onDelete, onC
   const [collapsedFamilies,setCollapsedFamilies]=useState(new Set());
   const familyManagerRef=useRef(null);
   const [confirmDeleteStudent,setConfirmDeleteStudent]=useState(false);
+  const [confirmDeactivate,setConfirmDeactivate]=useState(false);
+  // Set only when doSave's final, ref-based revalidation (getLatestClasses/getLatestStudents)
+  // finds a block that the props-driven render didn't yet know about — the narrow same-tick race.
+  // null means "trust the reactive, props-derived blocking list below"; once set, it overrides
+  // that list until the panel is reset (new edit session, status re-toggled, or a normal
+  // subsequent render already agrees, at which point it's cleared back to null).
+  const [freshBlockOverride,setFreshBlockOverride]=useState(null);
+  const savingEditRef=useRef(false);
 
   // Load invite status and detect active students (have messages)
   useEffect(()=>{
@@ -3079,6 +3137,9 @@ function Students({ students, onAdd, onUpdate, onAddStudentDirect, onDelete, onC
   const searchLower=search.trim().toLowerCase();
   const familyMatchesSearch=fam=>!searchLower||(fam.name||"").toLowerCase().includes(searchLower)||(fam.responsible?.name||"").toLowerCase().includes(searchLower);
   const studentMatchesSearch=s=>!searchLower||s.name.toLowerCase().includes(searchLower);
+  // Activos: active or no status field at all (isStudentActive). Inactivos: explicitly marked
+  // only. Todos: both. Search still applies within whichever of these is selected.
+  const studentMatchesStatus=s=>statusFilter==="all"?true:statusFilter==="inactive"?!isStudentActive(s):isStudentActive(s);
 
   const usedIds=new Set();
   const allFamilyGroups=[];
@@ -3087,11 +3148,11 @@ function Students({ students, onAdd, onUpdate, onAddStudentDirect, onDelete, onC
     if(allMembers.length===0) return;
     allMembers.forEach(m=>usedIds.add(m.id));
     const famMatches=familyMatchesSearch(fam);
-    const members=famMatches?allMembers:allMembers.filter(studentMatchesSearch);
-    if(searchLower&&!famMatches&&members.length===0) return;
+    const members=(famMatches?allMembers:allMembers.filter(studentMatchesSearch)).filter(studentMatchesStatus);
+    if(members.length===0) return;
     allFamilyGroups.push({family:fam,members});
   });
-  const ungroupedAll=students.filter(s=>!usedIds.has(s.id)&&studentMatchesSearch(s));
+  const ungroupedAll=students.filter(s=>!usedIds.has(s.id)&&studentMatchesSearch(s)&&studentMatchesStatus(s));
 
   const familyGroups=f==="students"?[]:allFamilyGroups;
   const ungrouped=f==="families"?[]:ungroupedAll;
@@ -3113,9 +3174,14 @@ function Students({ students, onAdd, onUpdate, onAddStudentDirect, onDelete, onC
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar alumno, familia o representante..." style={{width:"100%",padding:"10px 36px 10px 36px",borderRadius:12,border:"none",fontSize:14,boxSizing:"border-box",background:"rgba(255,255,255,0.18)",color:C.white,outline:"none"}}/>
           {search&&<button onClick={()=>setSearch("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,0.7)",fontSize:18,lineHeight:1}}>×</button>}
         </div>
-        <div style={{display:"flex",gap:8}}>
+        <div style={{display:"flex",gap:8,marginBottom:8}}>
           {[["all","Todos"],["families","Familias"],["students","Solo alumnos"]].map(([k,l])=>(
             <button key={k} onClick={()=>setF(k)} style={{padding:"6px 14px",borderRadius:20,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:f===k?C.white:C.whiteA,color:f===k?C.blue2:C.white}}>{l}</button>
+          ))}
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          {[["active","Activos"],["inactive","Inactivos"],["all","Todos"]].map(([k,l])=>(
+            <button key={k} onClick={()=>setStatusFilter(k)} style={{padding:"6px 14px",borderRadius:20,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:statusFilter===k?C.white:C.whiteA,color:statusFilter===k?C.blue2:C.white}}>{l}</button>
           ))}
         </div>
       </div>
@@ -3170,13 +3236,13 @@ function Students({ students, onAdd, onUpdate, onAddStudentDirect, onDelete, onC
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{display:"flex",alignItems:"center",gap:6}}>
                     <span style={{fontWeight:700,fontSize:14,color:C.text}}>{s.name}</span>
-                    <button onClick={()=>{setEditS({...s});setConfirmDeleteStudent(false);}} style={{background:"none",border:"none",cursor:"pointer",padding:2}}>
+                    <button onClick={()=>{setEditS({...s});setConfirmDeleteStudent(false);setConfirmDeactivate(false);setFreshBlockOverride(null);}} style={{background:"none",border:"none",cursor:"pointer",padding:2}}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                     </button>
                   </div>
                   <div style={{fontSize:12,color:C.mutedDark,marginBottom:4,textAlign:"left"}}>{"Alta: "+(()=>{const d=s.createdAt||getCombo(s)?.date;return d?fmtDate(d):"—";})()}</div>
                   {fam&&<div style={{fontSize:10,color:"#1565C0",fontWeight:600,marginBottom:3,display:"flex",alignItems:"center",gap:4}}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#1565C0" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>{fam.name}{fam.responsible?.studentId===s.id?" (Responsable)":""}</div>}
-                  <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:7,height:7,borderRadius:"50%",background:s.status==="active"?C.green:"#BDBDBD"}}></div><span style={{fontSize:11,color:s.status==="active"?C.green:"#BDBDBD",fontWeight:600}}>{s.status==="active"?"Activo":"Inactivo"}</span></div>
+                  <div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:7,height:7,borderRadius:"50%",background:isStudentActive(s)?C.green:"#BDBDBD"}}></div><span style={{fontSize:11,color:isStudentActive(s)?C.green:"#BDBDBD",fontWeight:600}}>{isStudentActive(s)?"Activo":"Inactivo"}</span></div>
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
                   {invites[s.id]==="invited"&&<div style={{fontSize:10,fontWeight:700,color:"#5C7A9F",background:"#E8EEF4",padding:"3px 10px",borderRadius:10,letterSpacing:0.5}}>📩 INVITACIÓN ENVIADA</div>}
@@ -3268,7 +3334,7 @@ function Students({ students, onAdd, onUpdate, onAddStudentDirect, onDelete, onC
       {editS&&(
         <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:200,display:"flex",flexDirection:"column",background:C.bg}}>
           <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
-            <button onClick={()=>setEditS(null)} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
+            <button onClick={()=>{setEditS(null);setConfirmDeactivate(false);setFreshBlockOverride(null);}} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
             <span style={{flex:1,fontWeight:800,fontSize:16,color:C.white}}>Editar Alumno</span>
           </div>
           <div style={{flex:1,overflowY:"auto",background:C.bg,padding:20}}>
@@ -3289,14 +3355,88 @@ function Students({ students, onAdd, onUpdate, onAddStudentDirect, onDelete, onC
             <div style={{marginBottom:14}}><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Teléfono</label><input value={editS.phone||""} onChange={e=>setEditS({...editS,phone:e.target.value})} placeholder="0981 123 456" style={{width:"100%",padding:"13px 16px",borderRadius:12,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",color:C.text,background:C.white,outline:"none"}}/></div>
             <div style={{marginBottom:20}}><label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>Email</label><input value={editS.email||""} onChange={e=>setEditS({...editS,email:e.target.value})} placeholder="alumno@correo.com" type="email" style={{width:"100%",padding:"13px 16px",borderRadius:12,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",color:C.text,background:C.white,outline:"none"}}/></div>
             <div style={{marginBottom:24}}>
-              <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:8}}>Estado</label>
+              <label style={{fontSize:13,color:C.blue,fontWeight:700,display:"block",marginBottom:8}}>Estado del alumno</label>
               <div style={{display:"flex",gap:10}}>
                 {[["active","● Activo"],["inactive","○ Inactivo"]].map(([k,l])=>(
-                  <button key={k} onClick={()=>setEditS({...editS,status:k})} style={{flex:1,padding:"13px",borderRadius:12,border:"2px solid "+(editS.status===k?(k==="active"?C.green:C.border):"transparent"),background:editS.status===k?(k==="active"?C.greenL:C.bg):C.bg,color:editS.status===k?(k==="active"?C.green:C.mutedDark):C.mutedDark,fontSize:14,cursor:"pointer",fontWeight:700}}>{l}</button>
+                  <button key={k} onClick={()=>{setEditS({...editS,status:k});setConfirmDeactivate(false);setFreshBlockOverride(null);}} style={{flex:1,padding:"13px",borderRadius:12,border:"2px solid "+(editS.status===k?(k==="active"?C.green:C.border):"transparent"),background:editS.status===k?(k==="active"?C.greenL:C.bg):C.bg,color:editS.status===k?(k==="active"?C.green:C.mutedDark):C.mutedDark,fontSize:14,cursor:"pointer",fontWeight:700}}>{l}</button>
                 ))}
               </div>
             </div>
-            <button onClick={()=>{if(!editS.name.trim())return;onUpdate(editS);setEditS(null);}} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:10}}>Guardar cambios</button>
+            {(()=>{
+              // Confirmation gate: only for an active -> inactive transition (compared against the
+              // student's CURRENT persisted status in `students`, not just editS's own in-progress
+              // edits) — reactivating (inactive -> active) or any other field change saves directly,
+              // exactly as before. savingEditRef blocks a double-click from ever reaching onUpdate twice.
+              // Nothing here is cached in state: originalStudent/isDeactivating/the warning text
+              // below are recomputed on every render straight from the `students`/`classes` props,
+              // so if either changes while the panel is open (a concurrent edit landing from
+              // reconciliation) the very next render already reflects it — the same "revalidate
+              // immediately before saving" guarantee this whole file already relies on elsewhere,
+              // never a value frozen at the moment the panel first opened.
+              const originalStudent=students.find(x=>x.id===editS.id);
+              const isDeactivating=isStudentActive(originalStudent)&&editS.status==="inactive";
+              // Purely informational/gating — reuses hasAnyDeuda, the exact same canonical function
+              // Cobros itself uses (Dashboard's cobrosAlerts, PaymentsTab's "En mora" filter) to
+              // decide pendiente/en mora, so there is no second definition of "has debt" anywhere.
+              // Blocking classes reuse getBlockingClassNamesForStudent (see its own comment for the
+              // exact "vigente" definition: today-or-later, not cancelled, student still a member).
+              // Neither ever touches combos/deuda/asistencia/classes — read-only, for the message
+              // and the write-gate below. freshBlockOverride, once set by doSave's ref-based
+              // recheck, takes priority over this props-derived list until reset.
+              const hasDebt=isDeactivating&&hasAnyDeuda(originalStudent,classes);
+              const blockingClassNames=isDeactivating?(freshBlockOverride||getBlockingClassNamesForStudent(editS.id,classes,TODAY_DATE)):[];
+              const isBlocked=blockingClassNames.length>0;
+              const deactivateMessage=hasDebt
+                ?"Este alumno tiene una deuda pendiente. Al marcarlo inactivo desaparecerá de Cobros, pero conservará su deuda y su historial. No se generarán nuevos cobros mientras permanezca fuera de clases."
+                :"Al marcarlo inactivo dejará de aparecer en Cobros. Su historial se conservará.";
+              const doSave=()=>{
+                if(!editS.name.trim()||savingEditRef.current) return;
+                if(isDeactivating){
+                  // Final, synchronous revalidation against the freshest possible state — never
+                  // just the students/classes props, which only reflect the last completed render.
+                  // Catches the narrow race where a class was added (must block) or the student was
+                  // removed from every class (must now be allowed to proceed) between the panel
+                  // opening/re-rendering and this exact click.
+                  const freshClasses=getLatestClasses?getLatestClasses():classes;
+                  const freshStudents=getLatestStudents?getLatestStudents():students;
+                  const freshOriginal=freshStudents.find(x=>x.id===editS.id);
+                  if(!isStudentActive(freshOriginal)){setEditS(null);setConfirmDeactivate(false);setFreshBlockOverride(null);return;}
+                  const freshBlocking=getBlockingClassNamesForStudent(editS.id,freshClasses,TODAY_DATE);
+                  if(freshBlocking.length>0){setFreshBlockOverride(freshBlocking);return;}
+                }
+                savingEditRef.current=true;
+                onUpdate(editS);
+                setEditS(null);
+                setConfirmDeactivate(false);
+                setFreshBlockOverride(null);
+                savingEditRef.current=false;
+              };
+              if(isDeactivating&&confirmDeactivate){
+                if(isBlocked){
+                  return (
+                    <div style={{padding:12,borderRadius:14,background:"#FFEBEE",border:"1px solid #FFCDD2",marginBottom:10}}>
+                      <div role="alert" aria-live="polite" style={{fontSize:13,color:"#C62828",fontWeight:600,marginBottom:8,textAlign:"center"}}>Para marcar a este alumno como inactivo, primero debés quitarlo de sus clases actuales. Esto evita que se sigan generando cobros o consumiendo clases.</div>
+                      <ul style={{margin:"0 0 10px",paddingLeft:18,fontSize:12,color:"#C62828",fontWeight:600}}>
+                        {blockingClassNames.map(name=><li key={name}>{name}</li>)}
+                      </ul>
+                      <button onClick={()=>{setConfirmDeactivate(false);setFreshBlockOverride(null);}} style={{width:"100%",padding:"12px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:13,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
+                    </div>
+                  );
+                }
+                return (
+                  <div style={{padding:12,borderRadius:14,background:"#FFF3E0",border:"1px solid #FFE0B2",marginBottom:10}}>
+                    <div role="alert" aria-live="polite" style={{fontSize:13,color:"#E65100",fontWeight:600,marginBottom:10,textAlign:"center"}}>{deactivateMessage}</div>
+                    <div style={{display:"flex",gap:8}}>
+                      <button onClick={()=>{setConfirmDeactivate(false);setFreshBlockOverride(null);}} style={{flex:1,padding:"12px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:13,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
+                      <button onClick={doSave} style={{flex:1,padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:13,fontWeight:800}}>Confirmar inactivación</button>
+                    </div>
+                  </div>
+                );
+              }
+              return (
+                <button onClick={()=>{if(!editS.name.trim())return;if(isDeactivating){setConfirmDeactivate(true);return;}doSave();}} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:10}}>Guardar cambios</button>
+              );
+            })()}
             {confirmDeleteStudent?(
               <div style={{padding:12,borderRadius:14,background:"#FFEBEE",border:"1px solid #FFCDD2",marginBottom:20}}>
                 <div style={{fontSize:13,color:"#C62828",fontWeight:600,marginBottom:10,textAlign:"center"}}>¿Eliminar a {editS.name}? Esta acción no se puede deshacer.</div>
@@ -5796,7 +5936,11 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
   );
 }
 
-function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount, newDate, setNewDate, onClose, onUpdate, classes=[], addIncome, packages=[], sendNotification}) {
+function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount, newDate, setNewDate, onClose, onUpdate, classes=[], addIncome, packages=[], sendNotification, isStudentActiveNow}) {
+  // Re-checked in handleGoToReview/handleConfirm below — the actual enforcement points — against
+  // the freshest known student state, so a payment modal opened before a concurrent inactivation
+  // (another device) can never be confirmed afterwards from stale state.
+  const becameInactive=isStudentActiveNow&&!isStudentActiveNow(s.id);
   const [showRecordatorioPago,setShowRecordatorioPago]=useState(false);
   const [pagoTipo,setPagoTipo]=useState(()=>{
     if(combo?.total>0) return "clases";
@@ -6010,6 +6154,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   const projDates=buildProjectedDates(parseInt(localClasses)||0);
 
   const handleGoToReview=()=>{
+    if(becameInactive){alert("Este alumno fue marcado como inactivo. Cerrá y volvé a intentar.");return;}
     if(pagoTipo==="clases"&&classHasNoCalendar){alert(NO_CALENDAR_PAGO_MESSAGE);return;}
     if(pagoTipo==="clases"&&(!localClasses||parseInt(localClasses)<=0)){
       alert("Ingresá la cantidad de clases usando el stepper ◀ ▶");return;
@@ -6024,6 +6169,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
     // Re-checked here too — the handler is the enforcement point, never just the button/step gate
     // above; a payload reaching this function some other way (stale state, a direct call) is
     // refused the same way, before touching updatedCombos/onUpdate/addIncome.
+    if(becameInactive){alert("Este alumno fue marcado como inactivo. Cerrá y volvé a intentar.");return;}
     if(pagoTipo==="clases"&&classHasNoCalendar){alert(NO_CALENDAR_PAGO_MESSAGE);return;}
     if(pagoTipo==="clases"&&(!localClasses||parseInt(localClasses)<=0)){alert("Ingresá la cantidad de clases.");return;}
     if(!localAmount||parseInt(localAmount)<=0){alert("Ingresá el monto.");return;}
@@ -6172,6 +6318,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             <button onClick={()=>setStep("form")} style={{background:C.blueL,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.blue2,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
             <div style={{fontWeight:900,fontSize:18,color:"#1A237E"}}>Resumen del pago</div>
           </div>
+          {becameInactive&&<div role="alert" aria-live="polite" style={{background:"#FFF3E0",borderRadius:10,padding:"10px 14px",marginBottom:16,fontSize:12,fontWeight:700,color:"#E65100"}}>Este alumno fue marcado como inactivo. Cerrá y volvé a intentar.</div>}
           <div style={{background:C.blueL,borderRadius:16,padding:"16px",marginBottom:16}}>
             <div style={{fontSize:16,fontWeight:800,color:"#1A237E",marginBottom:10}}>{s.name}</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
@@ -6294,6 +6441,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
           </div>
 
           {/* Fields */}
+          {becameInactive&&<div role="alert" aria-live="polite" style={{background:"#FFF3E0",borderRadius:10,padding:"10px 14px",marginBottom:10,fontSize:12,fontWeight:700,color:"#E65100"}}>Este alumno fue marcado como inactivo. Cerrá y volvé a intentar.</div>}
           {pagoTipo==="clases"&&classHasNoCalendar&&(
             <div style={{gridColumn:"1/-1",background:"#FFF3E0",borderRadius:10,padding:"10px 14px",marginBottom:10,fontSize:12,fontWeight:700,color:"#E65100"}}>
               {NO_CALENDAR_PAGO_MESSAGE}
@@ -6489,19 +6637,24 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
           <button onClick={handleConfirm} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:(parseInt(localClasses)>0&&parseInt(localAmount)>0)||(pagoTipo==="mensual"&&parseInt(localAmount)>0)?"linear-gradient(135deg,#52C048,#65CE5A)":"#CBD5E0",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:800}}>✓ Confirmar pago</button>
         </div>
       </div>
-      {showRecordatorioPago&&<RecordatorioModal student={s} onClose={()=>setShowRecordatorioPago(false)} sendNotification={sendNotification} getRem={()=>getRem(s,classes)} getCombo={()=>getCombo(s)}/>}
+      {showRecordatorioPago&&<RecordatorioModal student={s} onClose={()=>setShowRecordatorioPago(false)} sendNotification={sendNotification} getRem={()=>getRem(s,classes)} getCombo={()=>getCombo(s)} isStudentActiveNow={isStudentActiveNow}/>}
     </div>
   );
 }
 
-function RecordatorioModal({ student:s, onClose, sendNotification, getRem, getCombo }) {
+function RecordatorioModal({ student:s, onClose, sendNotification, getRem, getCombo, isStudentActiveNow }) {
   const rem=getRem();
   const combo=getCombo();
   const defaultMsg=combo?.total===null
     ? s.name+", te recordamos que tu pago mensual está pendiente. Por favor regularizá tu situación a la brevedad. Gracias!"
     : s.name+", te recordamos que tenés "+Math.abs(rem||0)+" clase"+(Math.abs(rem||0)!==1?"s":"")+" pendientes de pago. Por favor regularizá tu situación a la brevedad. Gracias!";
   const [msg,setMsg]=useState(defaultMsg);
+  // Re-checked here, the actual send handlers — never just this banner/disabled-state — against
+  // the freshest known student state, so a reminder opened before a concurrent inactivation can
+  // never be sent afterwards from stale state.
+  const becameInactive=isStudentActiveNow&&!isStudentActiveNow(s.id);
   const handleWhatsApp=()=>{
+    if(becameInactive){alert("Este alumno fue marcado como inactivo. Cerrá y volvé a intentar.");return;}
     const phone=(s.phone||"").replace(/\D/g,"");
     const url=phone
       ? "https://wa.me/"+phone+"?text="+encodeURIComponent(msg)
@@ -6518,13 +6671,14 @@ function RecordatorioModal({ student:s, onClose, sendNotification, getRem, getCo
           </button>
         </div>
         <div style={{fontSize:12,color:C.mutedDark,marginBottom:8}}>Podés editar el mensaje antes de enviarlo</div>
+        {becameInactive&&<div role="alert" aria-live="polite" style={{fontSize:12,fontWeight:700,color:"#E65100",background:"#FFF3E0",borderRadius:10,padding:"10px 12px",marginBottom:10}}>Este alumno fue marcado como inactivo. Cerrá y volvé a intentar.</div>}
         <textarea value={msg} onChange={e=>setMsg(e.target.value)} rows={5} style={{width:"100%",padding:"12px",borderRadius:12,border:"1.5px solid "+C.border,fontSize:14,color:C.text,outline:"none",resize:"none",boxSizing:"border-box",fontFamily:"inherit",lineHeight:1.5}}/>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:14}}>
-          <button onClick={handleWhatsApp} style={{padding:"13px",borderRadius:12,border:"none",background:"#25D366",color:"#fff",fontSize:13,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+          <button onClick={handleWhatsApp} disabled={becameInactive} style={{padding:"13px",borderRadius:12,border:"none",background:becameInactive?"#B0BEC5":"#25D366",color:"#fff",fontSize:13,cursor:becameInactive?"not-allowed":"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="#fff"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
             WhatsApp
           </button>
-          <button onClick={()=>{sendNotification&&sendNotification({to:s.id,text:msg,type:"alert",from:"coach",time:"Ahora"});onClose();}} style={{padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",color:"#fff",fontSize:13,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+          <button onClick={()=>{if(becameInactive){alert("Este alumno fue marcado como inactivo. Cerrá y volvé a intentar.");return;}sendNotification&&sendNotification({to:s.id,text:msg,type:"alert",from:"coach",time:"Ahora"});onClose();}} disabled={becameInactive} style={{padding:"13px",borderRadius:12,border:"none",background:becameInactive?"#B0BEC5":"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",color:"#fff",fontSize:13,cursor:becameInactive?"not-allowed":"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
             En la App
           </button>
@@ -6534,7 +6688,7 @@ function RecordatorioModal({ student:s, onClose, sendNotification, getRem, getCo
   );
 }
 
-function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance, expenses=[], onVoidMensualPayment }) {
+function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance, expenses=[], onVoidMensualPayment, isStudentActiveNow }) {
   // combo (getCombo) stays as the narrow "does this student have anything assigned
   // at all" pick for the Asignar-paquete/Detalles-de-Pagos toggle and PagoModal's
   // initial stepper seed — never used to decide WHICH box(es) to render below.
@@ -6847,7 +7001,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
         })()}
       </WhiteCard>
 
-      {showPago&&<PagoModal s={s} combo={combo} newClasses={newClasses} setNewClasses={setNewClasses} newAmount={newAmount} setNewAmount={setNewAmount} newDate={newDate} setNewDate={setNewDate} onClose={()=>setShowPago(false)} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification}/>}
+      {showPago&&<PagoModal s={s} combo={combo} newClasses={newClasses} setNewClasses={setNewClasses} newAmount={newAmount} setNewAmount={setNewAmount} newDate={newDate} setNewDate={setNewDate} onClose={()=>setShowPago(false)} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} isStudentActiveNow={isStudentActiveNow}/>}
 
       {showHistory&&(
         <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:999,display:"flex",flexDirection:"column",background:C.bg}}>
@@ -7069,7 +7223,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
       })()}
 
       {/* Recordatorio modal */}
-      {showRecordatorio&&<RecordatorioModal student={s} onClose={()=>setShowRecordatorio(false)} sendNotification={sendNotification} getRem={()=>getRem(s,classes)} getCombo={()=>getCombo(s)}/>}
+      {showRecordatorio&&<RecordatorioModal student={s} onClose={()=>setShowRecordatorio(false)} sendNotification={sendNotification} getRem={()=>getRem(s,classes)} getCombo={()=>getCombo(s)} isStudentActiveNow={isStudentActiveNow}/>}
 
       {/* Comprobante de pago */}
       {showComprobante&&(()=>{
@@ -7269,11 +7423,15 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
   );
 }
 
-function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance, families=[], expenses=[], onVoidMensualPayment }) {
+function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance, families=[], expenses=[], onVoidMensualPayment, isStudentActiveNow }) {
   const [search,setSearch]=useState("");
   const [filter,setFilter]=useState("none");
   const [collapsedFamilies,setCollapsedFamilies]=useState(new Set());
-  const allList=students.filter(s=>classes.some(c=>c.students&&c.students.includes(s.id)));
+  // Central exclusion point: every card, search result, filter (Todos/En mora) and summary
+  // stat/badge below derives from allList/list, so excluding inactive alumnos here — before any
+  // of them are built — is enough to keep an inactive alumno from ever resurfacing in Cobros for
+  // any reason (debt, pending mensualidad, active combo, search match, class membership).
+  const allList=students.filter(s=>isStudentActive(s)&&classes.some(c=>c.students&&c.students.includes(s.id)));
   const uniqueClasses=[...new Set(classes.map(c=>c.title))].sort();
   let list=[...allList];
   if(search.trim()){
@@ -7318,8 +7476,10 @@ function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], send
   });
   const ungroupedList=list.filter(s=>!usedFamilyIds.has(s.id));
 
-  // Summary stats
-  const activeStudents=allList.filter(s=>s.status==="active").length;
+  // Summary stats. allList is already filtered to active-only students above, so the "Activos"
+  // badge is simply its length — never re-filtered by the old s.status==="active" predicate,
+  // which would have undercounted legacy students with no status field at all.
+  const activeStudents=allList.length;
   const enMora=allList.filter(s=>{if(s.suspended)return false;const r=getRem(s,classes);return r!==null&&r<0;});
   const mensuales=allList.filter(s=>(s.combos||[]).some(c=>c.packType==="mensual")).length;
   const paquetes=allList.filter(s=>(s.combos||[]).some(c=>c.packType==="combo"&&c.total>1)).length;
@@ -7399,18 +7559,18 @@ function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], send
             </WhiteCard>
             {!isCollapsed&&g.members.map(s=>(
               <div key={s.id} style={{marginLeft:14,paddingLeft:12,borderLeft:"2px solid #C5D0E6",marginBottom:10}}>
-                <PaymentCard student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment}/>
+                <PaymentCard student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} isStudentActiveNow={isStudentActiveNow}/>
               </div>
             ))}
           </div>
         );
       })}
-      {ungroupedList.map(s=><PaymentCard key={s.id} student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment}/>)}
+      {ungroupedList.map(s=><PaymentCard key={s.id} student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} isStudentActiveNow={isStudentActiveNow}/>)}
     </div>
   );
 }
 
-function Finances({ students, classes, initialTab="payments", onUpdate, expenses=[], setExpenses, addIncome, packages=[], sendNotification, onAttendance, families=[], onVoidMensualPayment }) {
+function Finances({ students, classes, initialTab="payments", onUpdate, expenses=[], setExpenses, addIncome, packages=[], sendNotification, onAttendance, families=[], onVoidMensualPayment, isStudentActiveNow }) {
   const [tab,setTab]=useState(initialTab);
   const [selMonth,setSelMonth]=useState((()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");})());
   const [finView,setFinView]=useState("mensual");
@@ -7445,9 +7605,11 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
           {initialTab==="payments"&&<button onClick={()=>{
             let csv="";
             if(tab==="payments"||initialTab==="payments"){
-              // Export cobros by student
+              // Export cobros by student — same central exclusion as the Cobros list itself:
+              // an inactive alumno's combo must never reappear here just because it's still on
+              // the student record (their historical data is untouched, just not surfaced).
               csv="Alumno,Tipo,Fecha Inicio,Total Clases,Pagadas,No pagadas,Restantes,Monto,Estado Pago\n";
-              students.forEach(s=>{
+              filterActiveStudents(students).forEach(s=>{
                 const combo=getCombo(s);
                 if(!combo) return;
                 const {noPagadas,pagadas,restantes,totalEntitlement}=getAccountCounters(s,classes);
@@ -7478,7 +7640,7 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
         </div>
       </div>
       <div style={{padding:"16px",marginTop:-8}}>
-        {tab==="payments"&&<PaymentsTab students={students} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} families={families} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment}/>}
+        {tab==="payments"&&<PaymentsTab students={students} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} families={families} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} isStudentActiveNow={isStudentActiveNow}/>}
         {tab==="expenses"&&(
           <div>
             {/* Stats badges */}
@@ -7495,7 +7657,7 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
                   return s2+Math.round(unpaid*perClass);
                 },0);
               },0);
-              const aa=students.filter(s=>s.status==="active").length;
+              const aa=filterActiveStudents(students).length;
               const cu="₡";
               return (<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
                 <span style={{fontSize:11,fontWeight:700,padding:"5px 10px",borderRadius:20,background:C.blueL,color:C.blue2}}>{cr} Clases este mes</span>
@@ -8678,6 +8840,13 @@ export default function App() {
   // each see the other's result, exactly like a real functional update.
   const latestStudentsRef=useRef(students);
   useEffect(()=>{latestStudentsRef.current=students;},[students]); // defensive backstop only — every real writer below goes through applyStudentsLocally, which already keeps this in sync synchronously
+  // Threaded into PagoModal/RecordatorioModal (via PaymentCard) so a cobro/recordatorio attempted
+  // from an already-open modal re-checks the FRESHEST known state, synchronously, right before
+  // acting — not just the `s` prop those modals were opened with, which stays frozen at whatever
+  // it was when the card rendered. Catches the narrow window where a concurrent edit (another
+  // device) marks the student inactive after the modal opened but before this client's own
+  // students state has re-rendered to reflect it and unmount the modal on its own.
+  const isStudentActiveNow=(studentId)=>isStudentActive(latestStudentsRef.current.find(x=>x.id===studentId));
 
   // Verification finding: `latestStudentsRef` was only being kept in sync by
   // the useEffect above, which runs one render AFTER a state change commits.
@@ -10289,11 +10458,11 @@ export default function App() {
       <div key={"cur-"+currency} style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",position:"relative",overflow:"hidden",paddingBottom:"calc(64px + env(safe-area-inset-bottom, 34px))"}}>
         {tab==="dashboard"&&isFirstTime&&<EmptyDashboard onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)}/>}
         {tab==="dashboard"&&!isFirstTime&&<Dashboard students={students} classes={xClasses} onNavigate={handleNavigate} onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)} expenses={expenses} coachProfile={coachProfile} onRefresh={handleRefresh}/>}
-        {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onAddStudentDirect={(s)=>setStudents(p=>[...p,s])} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={xClasses} onInvite={()=>setShowInvite(true)} userId={user?.id} onInviteStudent={(s)=>setInviteTarget(s)} onRefresh={handleRefresh} families={families} setFamilies={setFamilies}/>}
+        {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onAddStudentDirect={(s)=>setStudents(p=>[...p,s])} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={xClasses} onInvite={()=>setShowInvite(true)} userId={user?.id} onInviteStudent={(s)=>setInviteTarget(s)} onRefresh={handleRefresh} families={families} setFamilies={setFamilies} getLatestClasses={()=>latestClassesRef.current} getLatestStudents={()=>latestStudentsRef.current}/>}
         {inviteTarget&&<InviteModal student={inviteTarget} userId={user?.id} coachName={coachProfile.name} onClose={()=>setInviteTarget(null)}/>}
         {tab==="agenda"&&<Agenda students={students} classes={xClasses} rawClasses={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onUpdateStudentsBatch={commitStudentsBatch} isClassesWriteSettled={isClassesWriteSettled} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])} onRefresh={handleRefresh}/>}
         {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification} userId={user?.id} unreadChats={unreadChats} onMarkRead={(sid)=>setUnreadChats(p=>{const n={...p};delete n[String(sid)];return n;})}/>}
-        {tab==="cobros"&&<Finances students={students} classes={xClasses} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance} families={families} onVoidMensualPayment={handleVoidMensualPayment}/>}
+        {tab==="cobros"&&<Finances students={students} classes={xClasses} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance} families={families} onVoidMensualPayment={handleVoidMensualPayment} isStudentActiveNow={isStudentActiveNow}/>}
         {tab==="finanzas"&&<Finances students={students} classes={xClasses} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages}/>}
         {showNewClass&&<NewClassModal onClose={()=>{setShowNewClass(false);if(classes.length===0)setTab("agenda");}} onSave={handleSaveClass} existingClasses={xClasses} students={students} dateLabel="Nueva clase" onCreateStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])}/>}
         {showNewStudent&&<NewStudentModal onClose={()=>setShowNewStudent(false)} onSave={(d)=>setStudents(p=>[...p,{id:Date.now(),...d}])}/>}
