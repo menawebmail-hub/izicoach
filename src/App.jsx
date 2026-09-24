@@ -1380,6 +1380,144 @@ function getVisibleClassEntitlements(s, classes=[]) {
       return false;
     });
 }
+
+// --- COBROS EXPORT: per-obligation (never aggregated) counters, class-name resolution, and CSV
+// row/escaping helpers. All pure. Deliberately does NOT reuse getAccountCounters — it pools every
+// non-closed entitlement of a student into ONE aggregate, which is exactly what would mix
+// combos/individuals together in a per-row export. "No pagadas"/"Restantes" here are the direct,
+// literal definitions requested: classes not yet covered by payments vs. classes not yet given
+// (attendance), scoped to THIS combo alone — never the fancier per-date pause/reprogramación
+// resolution getAccountCounters does for the live Cobros summary card, which only matters when
+// pauses/reprogramaciones are in play and was never part of what was asked to match here.
+const getComboExportCounters=(combo)=>{
+  const total=combo?.total||0;
+  const paidCount=combo?.paidCount!==undefined?combo.paidCount:(combo?.paid?total:0);
+  const used=combo?.used||0;
+  return {total,noPagadas:Math.max(0,total-paidCount),restantes:Math.max(0,total-used)};
+};
+// Same string-tolerant id comparison already established for the deactivation feature
+// (getBlockingClassNamesForStudent) — sourceClassId and class.id must never fail to match just
+// because one side is a string and the other a number.
+const resolveComboClassName=(combo,classesList)=>{
+  const found=(classesList||[]).find(c=>String(c.id)===String(combo?.sourceClassId));
+  return found?found.title:"Clase no identificada";
+};
+// "YYYY-MM-DD" -> "DD/MM/YYYY". Anything else (missing, malformed) -> "" — never a guessed date.
+const formatDateDDMMYYYY=(iso)=>{
+  if(!iso||typeof iso!=="string") return "";
+  const parts=iso.split("-");
+  if(parts.length!==3) return "";
+  const [y,m,d]=parts;
+  // Each part must be purely numeric (never e.g. "no-es-fecha", whose 3 hyphen-split parts alone
+  // would otherwise pass) — checked digit-by-digit, no regex, for the same extract.mjs-tokenizer
+  // reason as escapeCsvCell above.
+  const isDigits=(s)=>s.length>0&&[...s].every(ch=>ch>="0"&&ch<="9");
+  if(!isDigits(y)||!isDigits(m)||!isDigits(d)) return "";
+  return d+"/"+m+"/"+y;
+};
+// RFC4180 cell: numbers pass through untouched (never quoted, never subject to the injection
+// guard below — a legitimate negative amount must never be mistaken for a formula). Every other
+// value is stringified, quote-wrapped, with internal quotes doubled ("→""), and — only for text —
+// defused against CSV/formula injection by prefixing a single leading apostrophe when the value,
+// after stripping leading whitespace, starts with =, +, - or @ (the standard, widely-used
+// technique: spreadsheet apps treat a leading apostrophe as "force text" and never evaluate what
+// follows as a formula). Never substitutes quotes with apostrophes — those are two unrelated
+// mechanisms solving two unrelated problems.
+const CSV_FORMULA_PREFIXES=["=","+","-","@"];
+const escapeCsvCell=(value)=>{
+  if(value===null||value===undefined) return "";
+  if(typeof value==="number") return String(value);
+  let str=String(value);
+  // No regex literals here on purpose — trimStart()/split+join do the same job without tripping
+  // up this repo's own source-text extraction tooling (extract.mjs's brace/string scanner has no
+  // notion of regex-literal syntax, only quotes and comments).
+  const leading=str.trimStart();
+  if(leading.length>0&&CSV_FORMULA_PREFIXES.includes(leading[0])) str="'"+str;
+  return '"'+str.split('"').join('""')+'"';
+};
+const COBROS_EXPORT_COLUMNS=["Alumno","Clase","Tipo","Mes correspondiente","Estado","Monto","Fecha de pago","Día de cobro","Cantidad de clases pagadas","Total de clases","No pagadas","Restantes","Forma de pago"];
+// One row per mensualidad (pagada, pendiente or mora) — never reads combo.paid (a modern mensual
+// combo never sets it; its real state lives exclusively in mensualidades[]), never derives "Mes
+// correspondiente" from fechaPago or any class date — only mensualidad.mes, via mesLabel.
+const buildMensualModernoExportRows=(student,combo,classesList)=>{
+  const claseName=resolveComboClassName(combo,classesList);
+  const est=getMensualEstado(combo);
+  return est.mensualidades.map(m=>{
+    const [yr]=(m.mes||"").split("-");
+    const mesCorrespondiente=yr?mesLabel(m.mes)+" "+yr:"";
+    const estado=m.estado==="pagado"?"Pagado":m.estado==="mora"?"En mora":"Pendiente";
+    return {Alumno:student.name,Clase:claseName,Tipo:"Mensual","Mes correspondiente":mesCorrespondiente,Estado:estado,Monto:m.monto||0,"Fecha de pago":formatDateDDMMYYYY(m.fechaPago),"Día de cobro":combo.cobroDia||"","Cantidad de clases pagadas":"","Total de clases":"","No pagadas":"",Restantes:"","Forma de pago":m.method||""};
+  });
+};
+// Legacy mensual (no mensualidades[]): one row, its own real paid/payDate — never promoted to the
+// modern per-month shape, never given an invented "Mes correspondiente".
+const buildMensualLegacyExportRow=(student,combo,classesList)=>{
+  const claseName=resolveComboClassName(combo,classesList);
+  const isPaid=combo.paid===true;
+  return {Alumno:student.name,Clase:claseName,Tipo:"Mensual","Mes correspondiente":"",Estado:isPaid?"Pagado":"Pendiente",Monto:combo.amount||0,"Fecha de pago":isPaid?formatDateDDMMYYYY(combo.payDate):"","Día de cobro":combo.cobroDia||"","Cantidad de clases pagadas":"","Total de clases":"","No pagadas":"",Restantes:"","Forma de pago":""};
+};
+// Combo/individual: one row per REAL payments[] transaction (its own monto/fecha/método/qty —
+// never combo.amount repeated), plus one Pendiente row only when a positive balance remains
+// (combo.amount minus every real payment, never negative). Zero payments falls back to either a
+// single Pagado row (a legacy record marked paid with no ledger — the flag is honored, but no
+// date/método is invented) or a single Pendiente row for the full amount.
+const buildComboExportRows=(student,combo,classesList)=>{
+  const claseName=resolveComboClassName(combo,classesList);
+  const counters=getComboExportCounters(combo);
+  const tipo=combo.packType==="individual"?"Individual":"Combo";
+  const baseRow={Alumno:student.name,Clase:claseName,Tipo:tipo,"Mes correspondiente":"","Día de cobro":"","Total de clases":counters.total,"No pagadas":counters.noPagadas,Restantes:counters.restantes};
+  const payments=combo.payments||[];
+  const rows=payments.map(p=>({...baseRow,Estado:"Pagado",Monto:p.amount||0,"Fecha de pago":formatDateDDMMYYYY(p.date),"Cantidad de clases pagadas":p.qty||0,"Forma de pago":p.method||""}));
+  if(payments.length>0){
+    const sumPaid=payments.reduce((a,p)=>a+(p.amount||0),0);
+    const pendiente=Math.max(0,(combo.amount||0)-sumPaid);
+    if(pendiente>0) rows.push({...baseRow,Estado:"Pendiente",Monto:pendiente,"Fecha de pago":"","Cantidad de clases pagadas":"","Forma de pago":""});
+  } else if(combo.paid===true){
+    rows.push({...baseRow,Estado:"Pagado",Monto:combo.amount||0,"Fecha de pago":"","Cantidad de clases pagadas":"","Forma de pago":""});
+  } else {
+    rows.push({...baseRow,Estado:"Pendiente",Monto:combo.amount||0,"Fecha de pago":"","Cantidad de clases pagadas":"","Forma de pago":""});
+  }
+  return rows;
+};
+// Mirrors PaymentCard's own "ESTADO MENSUAL" box selection exactly (see its comment: "hasMensual
+// cubre moderno... y legacy... cada ruta conserva exactamente su lógica original") — the most
+// recent MODERN mensual combo if the student has one, else the most recent LEGACY mensual entry.
+// Cobros itself only ever shows one mensual box per student; the export must match, never list
+// every mensual combo a student has ever had.
+const getVisibleMensualEntitlement=(s)=>{
+  const modernMensual=getModernMensualEntitlements(s).slice(-1)[0];
+  if(modernMensual) return modernMensual;
+  const legacyEntries=getAllMensualEntitlements(s).filter(c=>!isModernMensual(c));
+  return legacyEntries[legacyEntries.length-1]||null;
+};
+// Every export row for one ACTIVE student — exactly the universe of obligations Cobros itself
+// currently shows, never s.combos scanned wholesale and never getCombo(s)'s single "most
+// representative" pick:
+//  - combo/individual: getVisibleClassEntitlements, the SAME function PaymentCard/PagoModal share
+//    — a combo stays visible unless closed AND archived; an individual drops once paid AND its
+//    class date has passed (even without an archived flag — combo is the only packType that ever
+//    gets one); this is what makes "individual pagado y con fecha pasada" correctly disappear here
+//    exactly like it does in Cobros, not just when explicitly archived.
+//  - mensual: getVisibleMensualEntitlement above — at most one entry, matching the one box Cobros
+//    itself renders.
+const buildStudentExportRows=(student,classesList)=>{
+  const rows=[];
+  getVisibleClassEntitlements(student,classesList).forEach(({combo})=>{
+    rows.push(...buildComboExportRows(student,combo,classesList));
+  });
+  const mensual=getVisibleMensualEntitlement(student);
+  if(mensual){
+    if(isModernMensual(mensual)) rows.push(...buildMensualModernoExportRows(student,mensual,classesList));
+    else rows.push(buildMensualLegacyExportRow(student,mensual,classesList));
+  }
+  return rows;
+};
+const buildCobrosExportCsv=(students,classesList)=>{
+  const rows=filterActiveStudents(students).flatMap(s=>buildStudentExportRows(s,classesList));
+  const header=COBROS_EXPORT_COLUMNS.map(escapeCsvCell).join(",");
+  const body=rows.map(r=>COBROS_EXPORT_COLUMNS.map(col=>escapeCsvCell(r[col])).join(",")).join("\n");
+  return header+"\n"+body+(body?"\n":"");
+};
 // Any mensual-shaped entry (moderno o legacy) — decides whether to show ANY mensual box at all.
 // getModernMensualEntitlements narrows to the modern shape (isModernMensual) that
 // getMensualEstado/getMensualRem operate on; legacy — including a legacy combo that has since
@@ -7605,17 +7743,12 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
           {initialTab==="payments"&&<button onClick={()=>{
             let csv="";
             if(tab==="payments"||initialTab==="payments"){
-              // Export cobros by student — same central exclusion as the Cobros list itself:
-              // an inactive alumno's combo must never reappear here just because it's still on
-              // the student record (their historical data is untouched, just not surfaced).
-              csv="Alumno,Tipo,Fecha Inicio,Total Clases,Pagadas,No pagadas,Restantes,Monto,Estado Pago\n";
-              filterActiveStudents(students).forEach(s=>{
-                const combo=getCombo(s);
-                if(!combo) return;
-                const {noPagadas,pagadas,restantes,totalEntitlement}=getAccountCounters(s,classes);
-                const startDate=combo.dates&&combo.dates.length>0?combo.dates[0]:(combo.date||"—");
-                csv+='"'+s.name+'","'+(combo.packType||"combo")+'","'+startDate+'",'+totalEntitlement+','+pagadas+','+noPagadas+','+restantes+','+((combo.amount||0))+','+(combo.paid?"Pagado":"Pendiente")+'\n';
-              });
+              // Export cobros by student — buildCobrosExportCsv already applies the same central
+              // exclusion as the Cobros list itself (filterActiveStudents), and selects exactly the
+              // same visible obligations Cobros itself shows (getVisibleClassEntitlements for
+              // combo/individual, the equivalent selection for mensual) — never getCombo(s)'s
+              // single "most representative" pick, and never a blanket scan of every combo either.
+              csv=buildCobrosExportCsv(students,classes);
             } else {
               // Export monthly finances
               csv="Fecha,Tipo,Categoría,Nota,Monto\n";
