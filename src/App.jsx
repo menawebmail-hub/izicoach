@@ -155,12 +155,30 @@ function getMensualidades(combo) {
     }
     m++;if(m>12){m=1;y++;}
   }
+  // Explicitly stored FUTURE months — an advance payment (fechaPago set) or its voided record that
+  // still carries the pagoLinkId recovery breadcrumb — are included as-is, so Historial, export and
+  // "Anular pago" see them immediately instead of only once that month arrives. Never auto-generated
+  // (the loop above still stops at the current month), never written back; one entry per mes.
+  const curKey=nowY+"-"+String(nowM).padStart(2,"0");
+  const seenFuture=new Set();
+  existing.filter(x=>x&&typeof x.mes==="string"&&x.mes>curKey&&(x.fechaPago||x.pagoLinkId))
+    .sort((a,b)=>a.mes.localeCompare(b.mes))
+    .forEach(ex=>{
+      if(seenFuture.has(ex.mes)) return;
+      seenFuture.add(ex.mes);
+      const [fy,fm]=ex.mes.split("-").map(Number);
+      const dia=Math.min(cobroDia,new Date(fy,fm,0).getDate());
+      const fechaVenc=ex.mes+"-"+String(dia).padStart(2,"0");
+      result.push({...ex,id:"M-"+ex.mes,mes:ex.mes,fechaVencimiento:fechaVenc,estado:ex.fechaPago?"pagado":"pendiente"});
+    });
   return result;
 }
 function getMensualEstado(combo){
   const mens=getMensualidades(combo);
   const mora=mens.filter(m=>m.estado==="mora").length;
-  const pendiente=mens.filter(m=>m.estado==="pendiente").length;
+  // A not-yet-due future month (only ever present here as a voided advance payment) is never a debt.
+  const curMes=TODAY_DATE.slice(0,7);
+  const pendiente=mens.filter(m=>m.estado==="pendiente"&&m.mes<=curMes).length;
   const pagado=mens.filter(m=>m.estado==="pagado").length;
   return {mora,pendiente,pagado,total:mens.length,mensualidades:mens};
 }
@@ -316,6 +334,98 @@ const resolveVoidButtonState=(payment,student,expenses)=>{
   if(r.state==="already-complete") return {visible:false,enabled:false,action:null,reason:null,pagoLinkId:null,expenseId:null};
   return {visible:true,enabled:true,reason:null,action:r.state==="ready"?"void":"complete",state:r.state,pagoLinkId:r.pagoLinkId,expenseId:r.expenseId};
 };
+
+// ---- Mensual payment (Cobros → PagoModal) — the write-side twin of "Anular pago" above. Pure and
+// read-only; App.handleRecordMensualPayment re-runs guardMensualPayment against the LATEST students/
+// expenses right before writing, exactly like guardVoidMensualPayment.
+//
+// Stable identity of the ONE mensual obligation the card shows, captured when PagoModal opens. id
+// alone can collide (combo ids are combos.length+1, reused after a deletion), so sourceClassId and
+// date join it; amount/cobroDia are compared too, so a concurrent edit of that combo is refused
+// instead of silently paying against a combo that changed after the modal opened.
+const mensualComboIdentity=(combo)=>combo?{id:combo.id,sourceClassId:combo.sourceClassId===undefined?null:combo.sourceClassId,date:combo.date||null,amount:combo.amount,cobroDia:combo.cobroDia}:null;
+// String-tolerant (number vs string ids), and null/undefined read as the same "absent".
+const sameIdPart=(a,b)=>(a===undefined||a===null)?(b===undefined||b===null):(b!==undefined&&b!==null&&String(a)===String(b));
+const resolveMensualPaymentTarget=(student,target)=>{
+  const blocked=(reason)=>({state:"blocked",reason});
+  if(!student||!target) return blocked("invalid");
+  const matches=[];
+  (student.combos||[]).forEach((c,i)=>{
+    if(isModernMensual(c)&&sameIdPart(c.id,target.id)&&sameIdPart(c.sourceClassId,target.sourceClassId)&&(c.date||null)===target.date) matches.push(i);
+  });
+  if(matches.length!==1) return blocked("combo-unresolved");
+  const combo=student.combos[matches[0]];
+  if(combo.amount!==target.amount||combo.cobroDia!==target.cobroDia) return blocked("changed");
+  return {state:"ok",comboIndex:matches[0],combo};
+};
+const isValidMesKey=(mes)=>{
+  if(typeof mes!=="string"||mes.length!==7||mes[4]!=="-") return false;
+  return isValidIsoDate(mes+"-01");
+};
+// Whether ONE period of the target obligation may be paid now. Reuses resolveMensualVoidState (scoped
+// to the target combo only — the obligation is already explicitly resolved, never re-guessed) so
+// payment and "Anular pago" read the same states:
+//   no stored row / pendiente without link / void already-complete → ok (a new pagoLinkId is minted)
+//   pagado (income active or unresolvable)                          → already-paid
+//   pagado + income voided, or pendiente + income active            → void-incomplete
+//   anything ambiguous or inconsistent                              → blocked, zero writes
+const guardMensualPayment=({student,target,mes,fechaPago,monto,expenses})=>{
+  const blocked=(reason)=>({state:"blocked",reason});
+  if(!isValidMesKey(mes)||!isValidIsoDate(fechaPago)||!Number.isInteger(monto)||monto<=0) return blocked("invalid");
+  const t=resolveMensualPaymentTarget(student,target);
+  if(t.state==="blocked") return t;
+  const {combo,comboIndex}=t;
+  if(mes<(combo.date||"").slice(0,7)) return blocked("before-start");
+  const ok={state:"ok",comboIndex,combo};
+  const stored=(combo.mensualidades||[]).filter(m=>m&&m.mes===mes);
+  if(stored.length>1) return blocked("ambiguous");
+  if(stored.length===0) return ok;
+  const canonical=getMensualidades(combo).find(m=>m.mes===mes);
+  if(!canonical) return (!stored[0].fechaPago&&!stored[0].pagoLinkId)?ok:blocked("ambiguous");
+  const v=resolveMensualVoidState({student:{...student,combos:[combo]},mensualidadId:"M-"+mes,mes,expenses});
+  if(canonical.estado==="pagado"){
+    if(v.state==="needs-student-update") return blocked("void-incomplete");
+    if(v.state==="ready"||(v.state==="blocked"&&v.reason==="income-unresolved")) return blocked("already-paid");
+    return blocked("ambiguous");
+  }
+  if(v.state==="already-complete") return ok;
+  if(v.state==="needs-expense-update") return blocked("void-incomplete");
+  if(v.state==="blocked"&&v.reason==="not-paid") return ok;
+  return blocked("ambiguous");
+};
+// Pure row update: marks exactly ONE period of this combo paid — updates its stored row in place (by
+// mes) or materializes it. Never touches amount/cobroDia/date or any other period.
+const applyMensualPaymentToCombo=(combo,{mes,fechaPago,monto,method,pagoLinkId})=>{
+  const mens=[...(combo.mensualidades||[])];
+  const idx=mens.findIndex(m=>m&&m.mes===mes);
+  if(idx>=0){
+    mens[idx]={...mens[idx],estado:"pagado",fechaPago,monto,method,pagoLinkId};
+  } else {
+    const [py,pm]=mes.split("-").map(Number);
+    const dia=Math.min(combo.cobroDia||1,new Date(py,pm,0).getDate());
+    mens.push({id:"M-"+mes,mes,estado:"pagado",fechaVencimiento:mes+"-"+String(dia).padStart(2,"0"),fechaPago,monto,method,pagoLinkId});
+  }
+  return {...combo,mensualidades:mens};
+};
+// "2026-10" -> "Octubre 2026" — the year is always kept (an advance payment can cross a year boundary).
+const mensualPeriodLabel=(mes)=>mesLabel(mes)+" "+String(mes||"").slice(0,4);
+// Amount PagoModal pre-fills for a period: that period's own stored amount when it has one, else the
+// combo's base price. A custom amount typed for one period never carries over to another.
+const defaultMensualAmountFor=(combo,mes)=>{
+  const row=((combo&&combo.mensualidades)||[]).find(m=>m&&m.mes===mes);
+  return row&&row.monto>0?row.monto:((combo&&combo.amount)||0);
+};
+const MENSUAL_PAYMENT_MESSAGES={
+  "invalid":"Revisá el mes, la fecha de pago y el monto.",
+  "combo-unresolved":"No se pudo identificar de forma inequívoca la mensualidad de este alumno. No se registró ningún pago.",
+  "changed":"El pago cambió desde que se abrió esta pantalla. Cerrá y volvé a intentarlo.",
+  "before-start":"Ese mes es anterior al inicio de la mensualidad de este alumno.",
+  "ambiguous":"No se pudo verificar de forma inequívoca el estado de este período. No se registró ningún pago.",
+  "already-paid":"Este período ya está pagado.",
+  "void-incomplete":"Este período tiene una anulación incompleta. Usá \"Completar anulación\" en el Historial de Pagos antes de registrar un nuevo pago.",
+  "inactive":"Este alumno fue marcado como inactivo. Cerrá y volvé a intentar.",
+};
+const mensualPaymentMessage=(reason)=>MENSUAL_PAYMENT_MESSAGES[reason]||"No se pudo registrar el pago. No se registró ningún cambio.";
 
 const WEEK_AGO=(()=>{const d=new Date();d.setDate(d.getDate()-7);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
 
@@ -3903,10 +4013,21 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
                     <input type="text" placeholder="Ej: 5 clases, Mensual..." value={studentPacks[sid]?.customLabel||""} onChange={e=>setStudentPacks(p=>({...p,[sid]:{...p[sid],customLabel:e.target.value}}))} style={{...iS,padding:"8px 10px",fontSize:12,marginTop:6}}/>
                   )}
                 </div>
+                {isExistingMensual?(
+                  // Read-only: updateStudentPacks never applies an amount to an existing mensual combo
+                  // (only cobroDia), and a per-period amount belongs to that period's payment in Cobros —
+                  // an editable field here would silently discard whatever the coach typed.
+                  <div>
+                    <div style={{fontSize:10,fontWeight:700,color:C.mutedDark,marginBottom:4}}>MONTO BASE MENSUAL ({getCUR()})</div>
+                    <div style={{...iS,padding:"8px 10px",fontSize:12,background:C.bg,color:C.mutedDark}}>{fmtMoney(existingCombo?.amount||0)}</div>
+                    <div style={{fontSize:10,color:C.mutedDark,marginTop:3}}>Gestionar pagos y montos por período en Cobros</div>
+                  </div>
+                ):(
                 <div>
                   <div style={{fontSize:10,fontWeight:700,color:C.mutedDark,marginBottom:4}}>MONTO ({getCUR()})</div>
                   <MoneyInput value={studentPacks[sid]?.amount||0} onChange={v=>{setStudentPacks(p=>({...p,[sid]:{...p[sid],amount:v}}));setChangedPacks(prev=>new Set([...prev,sid]));}} style={{...iS,padding:"8px 10px",fontSize:12}}/>
                 </div>
+                )}
                 {isMensualSelection&&(
                   <div style={{gridColumn:"1/-1"}}>
                     <label style={{fontSize:11,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>DÍA DE COBRO MENSUAL</label>
@@ -6074,13 +6195,25 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
   );
 }
 
-function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount, newDate, setNewDate, onClose, onUpdate, classes=[], addIncome, packages=[], sendNotification, isStudentActiveNow}) {
+function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount, newDate, setNewDate, onClose, onUpdate, classes=[], addIncome, packages=[], sendNotification, isStudentActiveNow, mensualCombo=null, onRecordMensualPayment}) {
   // Re-checked in handleGoToReview/handleConfirm below — the actual enforcement points — against
   // the freshest known student state, so a payment modal opened before a concurrent inactivation
   // (another device) can never be confirmed afterwards from stale state.
   const becameInactive=isStudentActiveNow&&!isStudentActiveNow(s.id);
   const [showRecordatorioPago,setShowRecordatorioPago]=useState(false);
+  // The mensual obligation the card showed (PaymentCard's displayedModernMensual), captured ONCE when
+  // the modal opens — handleConfirm pays exactly this one (App.handleRecordMensualPayment re-resolves
+  // it against the latest state and refuses if it's gone or changed), never a "first mensual" pick.
+  const [mensualTarget]=useState(()=>mensualComboIdentity(mensualCombo));
+  const hasClassObligation=getVisibleClassEntitlements(s,classes).some(({combo:c})=>c.total>0||c.packType==="combo"||c.packType==="individual");
+  const hasMensualObligation=getAllMensualEntitlements(s).length>0;
+  const initialPayMonth=TODAY_DATE.slice(0,7);
   const [pagoTipo,setPagoTipo]=useState(()=>{
+    // Both kinds of obligation: the coach chooses explicitly (selector below) — never auto-picked
+    // just because another combo exists.
+    if(hasClassObligation&&hasMensualObligation) return null;
+    if(hasClassObligation) return "clases";
+    if(hasMensualObligation) return "mensual";
     if(combo?.total>0) return "clases";
     if(combo?.packType==="individual"||combo?.packType==="combo") return "clases";
     return "mensual";
@@ -6088,15 +6221,26 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   const [payMethod,setPayMethod]=useState("efectivo");
   const [step,setStep]=useState("form");
   const TODAY=TODAY_DATE;
-  // Always start at 0 so coach explicitly enters the amount
+  // Class payments start at 0 so the coach explicitly enters the amount; a mensual period pre-fills
+  // its own amount (defaultMensualAmountFor), re-derived whenever the period or obligation changes.
   const [localClasses,setLocalClasses]=useState(0);
-  const [localAmount,setLocalAmount]=useState(0);
+  const [localAmount,setLocalAmount]=useState(()=>pagoTipo==="mensual"&&mensualCombo?defaultMensualAmountFor(mensualCombo,initialPayMonth):0);
   const [localDate,setLocalDate]=useState(newDate||combo?.payDate||combo?.date||"");
   const [localPayDate,setLocalPayDate]=useState(TODAY_DATE);
-  const [localPayMonth,setLocalPayMonth]=useState(()=>{
-    const d=new Date();
-    return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
-  });
+  const [localPayMonth,setLocalPayMonth]=useState(initialPayMonth);
+  // One confirmation → at most one write: set right before handleConfirm writes, cleared only when the
+  // write was refused, so a second click can never register the payment twice.
+  const confirmingRef=useRef(false);
+  const changePayMonth=(mes)=>{
+    setLocalPayMonth(mes);
+    if(mensualCombo) setLocalAmount(defaultMensualAmountFor(mensualCombo,mes));
+  };
+  const choosePagoTipo=(tipo)=>{
+    setPagoTipo(tipo);
+    setLocalClasses(0);
+    setLocalAmount(tipo==="mensual"&&mensualCombo?defaultMensualAmountFor(mensualCombo,localPayMonth):0);
+  };
+  const mensualPaymentPayload=()=>({studentId:s.id,target:mensualTarget,mes:localPayMonth||TODAY_DATE.slice(0,7),fechaPago:localPayDate||TODAY_DATE,monto:parseInt(localAmount)||0,method:payMethod});
 
   const iSp={width:"100%",padding:"11px 14px",borderRadius:12,border:"none",fontSize:14,boxSizing:"border-box",background:C.blueL,color:"#1A237E",outline:"none"};
   const payMethodLabel={"efectivo":"💵 Efectivo","transferencia":"🏦 Transferencia","tarjeta":"💳 Tarjeta"};
@@ -6143,6 +6287,9 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
 
   const moraDates=[...attendedDates].filter(d=>!paidCoveredDates.has(d)).sort();
   const lastCombo=allCombos.length>0?allCombos[allCombos.length-1]:null;
+  // Where the mensual banner/día de cobro read from: the obligation being paid when there is one
+  // (never just "the student's last combo", which may be a class combo); legacy keeps lastCombo.
+  const mensualInfoCombo=mensualCombo||lastCombo;
   const totalPaid=lastCombo?.total||0;
   const totalUsed=lastCombo?.used||0;
   // moraCount only applies when the last combo was paid and exceeded
@@ -6293,12 +6440,19 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
 
   const handleGoToReview=()=>{
     if(becameInactive){alert("Este alumno fue marcado como inactivo. Cerrá y volvé a intentar.");return;}
+    if(!pagoTipo){alert("Elegí qué vas a pagar: Clases o Mensualidad.");return;}
     if(pagoTipo==="clases"&&classHasNoCalendar){alert(NO_CALENDAR_PAGO_MESSAGE);return;}
     if(pagoTipo==="clases"&&(!localClasses||parseInt(localClasses)<=0)){
       alert("Ingresá la cantidad de clases usando el stepper ◀ ▶");return;
     }
     if(!localAmount||parseInt(localAmount)<=0){
       alert("Ingresá el monto del pago.");return;
+    }
+    // Same guard the write runs, read-only here — an already-paid or half-voided period is refused
+    // before the review, not only at confirm.
+    if(pagoTipo==="mensual"&&mensualTarget&&onRecordMensualPayment){
+      const check=onRecordMensualPayment(mensualPaymentPayload(),{dryRun:true});
+      if(check?.status!=="ok"){alert(mensualPaymentMessage(check?.reason));return;}
     }
     setStep("review");
   };
@@ -6307,7 +6461,9 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
     // Re-checked here too — the handler is the enforcement point, never just the button/step gate
     // above; a payload reaching this function some other way (stale state, a direct call) is
     // refused the same way, before touching updatedCombos/onUpdate/addIncome.
+    if(confirmingRef.current) return;
     if(becameInactive){alert("Este alumno fue marcado como inactivo. Cerrá y volvé a intentar.");return;}
+    if(!pagoTipo){alert("Elegí qué vas a pagar: Clases o Mensualidad.");return;}
     if(pagoTipo==="clases"&&classHasNoCalendar){alert(NO_CALENDAR_PAGO_MESSAGE);return;}
     if(pagoTipo==="clases"&&(!localClasses||parseInt(localClasses)<=0)){alert("Ingresá la cantidad de clases.");return;}
     if(!localAmount||parseInt(localAmount)<=0){alert("Ingresá el monto.");return;}
@@ -6357,53 +6513,40 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         return {...c,paid:fullyPaid,paidCount:newPaidCount,used:Math.max(c.used||0,givenCount),payments:[...(c.payments||[]),newPayment]};
       });
     } else {
-      // Mensual - update existing combo or create new
+      // Mensual with a modern obligation on the card: paid ONLY through App.handleRecordMensualPayment,
+      // against the exact combo captured when this modal opened (mensualTarget) — it re-validates the
+      // combo and the period's paid/void state on the latest students/expenses and writes the
+      // mensualidad + its income itself (one shared pagoLinkId), or refuses with zero writes.
+      if(mensualTarget){
+        if(!onRecordMensualPayment){alert(mensualPaymentMessage(null));return;}
+        confirmingRef.current=true;
+        const res=onRecordMensualPayment(mensualPaymentPayload());
+        if(res?.status!=="ok"){confirmingRef.current=false;alert(mensualPaymentMessage(res?.reason));return;}
+        setStep("success");
+        setTimeout(()=>onClose(),2200);
+        return;
+      }
+      // No modern mensual obligation shown on the card: create a new mensual combo (legacy support).
+      // isModernMensual, never a bare cobroDia check — a legacy combo that has since gained a
+      // configurable cobroDia (EditClassScreen) but still has no mensualidades[] must still land
+      // here, never be silently upgraded to modern by a payment made through Cobros. If a modern one
+      // exists after all, the card and this modal disagree — refuse rather than create a second one.
+      if(updatedCombos.some(c=>isModernMensual(c))){alert(mensualPaymentMessage("changed"));return;}
       // One id shared by the mensualidad and its income row below — the explicit, unambiguous link
       // "Anular pago" resolves by. Generated once per confirm, never re-derived from amount/date.
       pagoLinkId=crypto.randomUUID();
-      // isModernMensual, never a bare cobroDia check — a legacy combo that has since gained a
-      // configurable cobroDia (EditClassScreen) but still has no mensualidades[] must still fall
-      // through to "create new (legacy support)" below, never be silently upgraded to modern by a
-      // payment made through Cobros.
-      const existingMensual=updatedCombos.findIndex(c=>isModernMensual(c));
-      if(existingMensual>=0){
-        // Add payment to existing mensual combo
-        const mc={...updatedCombos[existingMensual]};
-        const mens=[...(mc.mensualidades||[])];
-        const payMonth=localPayMonth||TODAY_DATE.slice(0,7);
-        const existingIdx=mens.findIndex(m=>m.mes===payMonth);
-        if(existingIdx>=0){
-          mens[existingIdx]={...mens[existingIdx],estado:"pagado",fechaPago:localPayDate||TODAY_DATE,monto:parseInt(localAmount)||mc.amount||0,method:payMethod,pagoLinkId};
-        } else {
-          const cobroDia=mc.cobroDia||1;
-          const [py,pm]=payMonth.split("-").map(Number);
-          const maxDay=new Date(py,pm,0).getDate();
-          const dia=Math.min(cobroDia,maxDay);
-          mens.push({id:"M-"+payMonth,mes:payMonth,estado:"pagado",fechaVencimiento:py+"-"+String(pm).padStart(2,"0")+"-"+String(dia).padStart(2,"0"),fechaPago:localPayDate||TODAY_DATE,monto:parseInt(localAmount)||mc.amount||0,method:payMethod,pagoLinkId});
-        }
-        mc.mensualidades=mens;
-        updatedCombos[existingMensual]=mc;
-      } else {
-        // Create new mensual combo (legacy support)
-        const cobroDia=parseInt(localDate?.split("-")[2])||new Date().getDate();
-        const payMonth=localPayMonth||TODAY_DATE.slice(0,7);
-        updatedCombos.push({id:s.combos.length+1,total:null,packType:"mensual",used:0,date:localDate||TODAY_DATE,amount:parseInt(localAmount)||0,currency:"PYG",cobroDia,graciaDias:5,mensualidades:[{id:"M-"+payMonth,mes:payMonth,estado:"pagado",fechaVencimiento:localDate||TODAY_DATE,fechaPago:localPayDate||TODAY_DATE,monto:parseInt(localAmount)||0,method:payMethod,pagoLinkId}]});
-      }
+      const cobroDia=parseInt(localDate?.split("-")[2])||new Date().getDate();
+      const payMonth=localPayMonth||TODAY_DATE.slice(0,7);
+      updatedCombos.push({id:s.combos.length+1,total:null,packType:"mensual",used:0,date:localDate||TODAY_DATE,amount:parseInt(localAmount)||0,currency:"PYG",cobroDia,graciaDias:5,mensualidades:[{id:"M-"+payMonth,mes:payMonth,estado:"pagado",fechaVencimiento:localDate||TODAY_DATE,fechaPago:localPayDate||TODAY_DATE,monto:parseInt(localAmount)||0,method:payMethod,pagoLinkId}]});
     }
 
+    confirmingRef.current=true;
     onUpdate({...s,combos:updatedCombos});
     if(addIncome&&parseInt(localAmount)>0){
       const qty=parseInt(localClasses)||0;
-      const MESES_FIN=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
-      let detail="";
-      if(pagoTipo==="mensual"){
-        const pm=localPayMonth||TODAY_DATE.slice(0,7);
-        const [,pmm]=pm.split("-");
-        detail="Mensualidad "+MESES_FIN[parseInt(pmm)-1];
-      } else {
-        detail=qty===1?"1 clase":qty+" clases";
-      }
-      addIncome(parseInt(localAmount), localPayDate||TODAY, s.name, detail, pagoTipo==="mensual"?{pagoLinkId}:undefined);
+      const pm=localPayMonth||TODAY_DATE.slice(0,7);
+      const detail=pagoTipo==="mensual"?"Mensualidad "+mensualPeriodLabel(pm):(qty===1?"1 clase":qty+" clases");
+      addIncome(parseInt(localAmount), localPayDate||TODAY, s.name, detail, pagoTipo==="mensual"?{pagoLinkId,mes:pm,method:payMethod}:undefined);
     }
     setStep("success");
     // If all classes given (closed cycle), close faster
@@ -6460,12 +6603,20 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
           <div style={{background:C.blueL,borderRadius:16,padding:"16px",marginBottom:16}}>
             <div style={{fontSize:16,fontWeight:800,color:"#1A237E",marginBottom:10}}>{s.name}</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-              {[
-                {l:"Plan",v:pagoTipo==="clases"?"📦 "+qty+" clases":"📅 Mensual"},
+              {(pagoTipo==="mensual"?[
+                // Mensual: the period and the REAL payment date the write will store — never
+                // combo.date/localDate, which is only the combo's own start date.
+                {l:"Clase",v:mensualInfoCombo&&mensualInfoCombo.sourceClassId!==undefined?resolveComboClassName(mensualInfoCombo,classes):([...new Set(myClasses.map(c=>c.title))].join(", ")||"—")},
+                {l:"Mes correspondiente",v:mensualPeriodLabel(localPayMonth||TODAY_DATE.slice(0,7))},
+                {l:"Fecha de pago",v:formatDateDDMMYYYY(localPayDate||TODAY_DATE)},
+                {l:"Monto",v:fmtMoney(localAmount)},
+                {l:"Forma de pago",v:payMethodLabel[payMethod]},
+              ]:[
+                {l:"Plan",v:"📦 "+qty+" clases"},
                 {l:"Monto",v:fmtMoney(localAmount)},
                 {l:"Forma de pago",v:payMethodLabel[payMethod]},
                 {l:"Fecha de pago",v:startDateLabel},
-              ].map(f=>(
+              ]).map(f=>(
                 <div key={f.l}>
                   <div style={{fontSize:10,fontWeight:700,color:"#5C7A9F",marginBottom:2}}>{f.l.toUpperCase()}</div>
                   <div style={{fontSize:13,fontWeight:700,color:"#1A237E"}}>{f.v}</div>
@@ -6499,15 +6650,15 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
 
 
           {/* Due date banner for mensual */}
-          {pagoTipo==="mensual"&&lastCombo&&(lastCombo.cobroDia||lastCombo.date)&&(
-            <div style={{background:lastCombo.cobroDia?"#E8F5E9":C.blueL,borderRadius:12,padding:"11px 16px",marginBottom:16,textAlign:"center"}}>
-              <span style={{fontSize:14,fontWeight:700,color:lastCombo.cobroDia?"#2E7D32":C.blue2}}>
-                {"📅 Día de cobro: "+( lastCombo.cobroDia||new Date(lastCombo.date+"T12:00:00").getDate() )+" de cada mes"}
+          {pagoTipo==="mensual"&&mensualInfoCombo&&(mensualInfoCombo.cobroDia||mensualInfoCombo.date)&&(
+            <div style={{background:mensualInfoCombo.cobroDia?"#E8F5E9":C.blueL,borderRadius:12,padding:"11px 16px",marginBottom:16,textAlign:"center"}}>
+              <span style={{fontSize:14,fontWeight:700,color:mensualInfoCombo.cobroDia?"#2E7D32":C.blue2}}>
+                {"📅 Día de cobro: "+( mensualInfoCombo.cobroDia||new Date(mensualInfoCombo.date+"T12:00:00").getDate() )+" de cada mes"}
               </span>
-              {lastCombo.graciaDias&&<div style={{fontSize:11,color:C.mutedDark,marginTop:4}}>Período de gracia: {lastCombo.graciaDias} días</div>}
+              {mensualInfoCombo.graciaDias&&<div style={{fontSize:11,color:C.mutedDark,marginTop:4}}>Período de gracia: {mensualInfoCombo.graciaDias} días</div>}
               {(()=>{
-                if(!lastCombo.cobroDia) return null;
-                const est=getMensualEstado(lastCombo);
+                if(!mensualInfoCombo.cobroDia) return null;
+                const est=getMensualEstado(mensualInfoCombo);
                 const moraM=est.mensualidades.filter(m=>m.estado==="mora");
                 if(moraM.length>0){
                   const oldest=moraM[0];
@@ -6578,6 +6729,18 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             </button>
           </div>
 
+          {/* Obligation selector — only when the student has BOTH class and mensual obligations */}
+          {hasClassObligation&&hasMensualObligation&&(
+            <div style={{marginBottom:16}}>
+              <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>¿Qué vas a pagar?</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                {[["clases","📦 Clases"],["mensual","📅 Mensualidad"]].map(([v,l])=>(
+                  <button key={v} onClick={()=>choosePagoTipo(v)} aria-pressed={pagoTipo===v} style={{padding:"11px",borderRadius:12,border:"none",background:pagoTipo===v?"linear-gradient(135deg,#1565C0,#1976D2)":C.blueL,color:pagoTipo===v?"#fff":C.blue2,fontSize:13,cursor:"pointer",fontWeight:800}}>{l}</button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Fields */}
           {becameInactive&&<div role="alert" aria-live="polite" style={{background:"#FFF3E0",borderRadius:10,padding:"10px 14px",marginBottom:10,fontSize:12,fontWeight:700,color:"#E65100"}}>Este alumno fue marcado como inactivo. Cerrá y volvé a intentar.</div>}
           {pagoTipo==="clases"&&classHasNoCalendar&&(
@@ -6585,6 +6748,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               {NO_CALENDAR_PAGO_MESSAGE}
             </div>
           )}
+          {pagoTipo&&(<>
           {pagoTipo==="clases"?(
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
               <div>
@@ -6616,12 +6780,12 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             </div>
           )}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
-            {pagoTipo==="mensual"&&lastCombo?.cobroDia&&(
+            {pagoTipo==="mensual"&&mensualInfoCombo?.cobroDia&&(
               <div style={{gridColumn:"1/-1",background:"#E8F5E9",borderRadius:10,padding:"10px 14px"}}>
-                <div style={{fontSize:12,fontWeight:700,color:"#2E7D32"}}>📅 Día de cobro: {lastCombo.cobroDia} de cada mes</div>
+                <div style={{fontSize:12,fontWeight:700,color:"#2E7D32"}}>📅 Día de cobro: {mensualInfoCombo.cobroDia} de cada mes</div>
               </div>
             )}
-            {pagoTipo==="mensual"&&!lastCombo?.cobroDia&&(
+            {pagoTipo==="mensual"&&!mensualInfoCombo?.cobroDia&&(
               <div style={{gridColumn:"1/-1"}}>
                 <div style={{fontSize:12,fontWeight:700,color:C.blue2,marginBottom:6}}>📅 Fecha de pago</div>
                 <input type="date" value={localDate||TODAY_DATE} onChange={e=>setLocalDate(e.target.value)} style={{...iSp,cursor:"pointer",width:"100%",boxSizing:"border-box",borderColor:C.blue2}}/>
@@ -6630,7 +6794,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             {pagoTipo==="mensual"&&(
               <div style={{gridColumn:"1/-1"}}>
                 <div style={{fontSize:12,fontWeight:700,color:C.blue2,marginBottom:6}}>📆 ¿Por qué mes es este pago?</div>
-                <select value={localPayMonth||""} onChange={e=>setLocalPayMonth(e.target.value)} style={{...iSp,cursor:"pointer",width:"100%",boxSizing:"border-box"}}>
+                <select value={localPayMonth||""} onChange={e=>changePayMonth(e.target.value)} style={{...iSp,cursor:"pointer",width:"100%",boxSizing:"border-box"}}>
                   {(()=>{
                     const mN=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
                     const opts=[];
@@ -6658,6 +6822,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               </select>
             </div>
           </div>
+          </>)}
         </div>
 
 
@@ -6772,7 +6937,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
 
         <div style={{flexShrink:0,padding:"12px 20px calc(20px + env(safe-area-inset-bottom,0px))",display:"flex",gap:10,background:"#FFFFFF"}}>
           <button onClick={onClose} style={{flex:1,padding:"14px",borderRadius:14,border:"1.5px solid rgba(21,101,192,0.12)",background:"#FFFFFF",cursor:"pointer",fontSize:14,color:"#5C7A9F",fontWeight:700}}>Cancelar</button>
-          <button onClick={handleConfirm} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:(parseInt(localClasses)>0&&parseInt(localAmount)>0)||(pagoTipo==="mensual"&&parseInt(localAmount)>0)?"linear-gradient(135deg,#52C048,#65CE5A)":"#CBD5E0",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:800}}>✓ Confirmar pago</button>
+          <button onClick={pagoTipo==="mensual"?handleGoToReview:handleConfirm} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:(parseInt(localClasses)>0&&parseInt(localAmount)>0)||(pagoTipo==="mensual"&&parseInt(localAmount)>0)?"linear-gradient(135deg,#52C048,#65CE5A)":"#CBD5E0",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:800}}>✓ Confirmar pago</button>
         </div>
       </div>
       {showRecordatorioPago&&<RecordatorioModal student={s} onClose={()=>setShowRecordatorioPago(false)} sendNotification={sendNotification} getRem={()=>getRem(s,classes)} getCombo={()=>getCombo(s)} isStudentActiveNow={isStudentActiveNow}/>}
@@ -6826,7 +6991,7 @@ function RecordatorioModal({ student:s, onClose, sendNotification, getRem, getCo
   );
 }
 
-function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance, expenses=[], onVoidMensualPayment, isStudentActiveNow }) {
+function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance, expenses=[], onVoidMensualPayment, onRecordMensualPayment, isStudentActiveNow }) {
   // combo (getCombo) stays as the narrow "does this student have anything assigned
   // at all" pick for the Asignar-paquete/Detalles-de-Pagos toggle and PagoModal's
   // initial stepper seed — never used to decide WHICH box(es) to render below.
@@ -6912,6 +7077,9 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
   const pagoCombo=getClassEntitlements(s).filter(c=>c.packType==="combo").slice(-1)[0];
   const pagoIndividual=getClassEntitlements(s).filter(c=>c.packType==="individual").slice(-1)[0];
   const hasMensual=getAllMensualEntitlements(s).length>0;
+  // The ONE modern mensual obligation this card shows (ESTADO MENSUAL below) — also the exact combo
+  // PagoModal pays into, passed explicitly, never re-picked there by any "first/last mensual" rule.
+  const displayedModernMensual=getModernMensualEntitlements(s).slice(-1)[0]||null;
   const badgeLabel=pagoCombo?"COMBO "+pagoCombo.total:pagoIndividual?"INDIVIDUAL":hasMensual?"MENSUAL":"SIN PAQUETE";
   const hasClassSection=getVisibleClassEntitlements(s,classes).length>0;
 
@@ -7021,7 +7189,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             mensualidades[], con o sin cobroDia); cada ruta conserva exactamente su
             lógica original, solo cambia el gate externo. */}
         {getAllMensualEntitlements(s).length>0&&(()=>{
-          const modernMensual=getModernMensualEntitlements(s).slice(-1)[0];
+          const modernMensual=displayedModernMensual;
           if(modernMensual){
             const est=getMensualEstado(modernMensual);
             const oldestMora=est.mensualidades.find(m=>m.estado==="mora");
@@ -7139,7 +7307,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
         })()}
       </WhiteCard>
 
-      {showPago&&<PagoModal s={s} combo={combo} newClasses={newClasses} setNewClasses={setNewClasses} newAmount={newAmount} setNewAmount={setNewAmount} newDate={newDate} setNewDate={setNewDate} onClose={()=>setShowPago(false)} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} isStudentActiveNow={isStudentActiveNow}/>}
+      {showPago&&<PagoModal s={s} combo={combo} newClasses={newClasses} setNewClasses={setNewClasses} newAmount={newAmount} setNewAmount={setNewAmount} newDate={newDate} setNewDate={setNewDate} onClose={()=>setShowPago(false)} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} isStudentActiveNow={isStudentActiveNow} mensualCombo={displayedModernMensual} onRecordMensualPayment={onRecordMensualPayment}/>}
 
       {showHistory&&(
         <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:999,display:"flex",flexDirection:"column",background:C.bg}}>
@@ -7561,7 +7729,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
   );
 }
 
-function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance, families=[], expenses=[], onVoidMensualPayment, isStudentActiveNow }) {
+function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance, families=[], expenses=[], onVoidMensualPayment, onRecordMensualPayment, isStudentActiveNow }) {
   const [search,setSearch]=useState("");
   const [filter,setFilter]=useState("none");
   const [collapsedFamilies,setCollapsedFamilies]=useState(new Set());
@@ -7697,18 +7865,18 @@ function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], send
             </WhiteCard>
             {!isCollapsed&&g.members.map(s=>(
               <div key={s.id} style={{marginLeft:14,paddingLeft:12,borderLeft:"2px solid #C5D0E6",marginBottom:10}}>
-                <PaymentCard student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} isStudentActiveNow={isStudentActiveNow}/>
+                <PaymentCard student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} onRecordMensualPayment={onRecordMensualPayment} isStudentActiveNow={isStudentActiveNow}/>
               </div>
             ))}
           </div>
         );
       })}
-      {ungroupedList.map(s=><PaymentCard key={s.id} student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} isStudentActiveNow={isStudentActiveNow}/>)}
+      {ungroupedList.map(s=><PaymentCard key={s.id} student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} onRecordMensualPayment={onRecordMensualPayment} isStudentActiveNow={isStudentActiveNow}/>)}
     </div>
   );
 }
 
-function Finances({ students, classes, initialTab="payments", onUpdate, expenses=[], setExpenses, addIncome, packages=[], sendNotification, onAttendance, families=[], onVoidMensualPayment, isStudentActiveNow }) {
+function Finances({ students, classes, initialTab="payments", onUpdate, expenses=[], setExpenses, addIncome, packages=[], sendNotification, onAttendance, families=[], onVoidMensualPayment, onRecordMensualPayment, isStudentActiveNow }) {
   const [tab,setTab]=useState(initialTab);
   const [selMonth,setSelMonth]=useState((()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");})());
   const [finView,setFinView]=useState("mensual");
@@ -7773,7 +7941,7 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
         </div>
       </div>
       <div style={{padding:"16px",marginTop:-8}}>
-        {tab==="payments"&&<PaymentsTab students={students} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} families={families} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} isStudentActiveNow={isStudentActiveNow}/>}
+        {tab==="payments"&&<PaymentsTab students={students} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} families={families} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} onRecordMensualPayment={onRecordMensualPayment} isStudentActiveNow={isStudentActiveNow}/>}
         {tab==="expenses"&&(
           <div>
             {/* Stats badges */}
@@ -9566,6 +9734,30 @@ export default function App() {
     return {status:"ok"};
   };
 
+  // Mensual payment (Cobros → PagoModal): pays ONE period of the EXACT mensual combo the card showed
+  // (payload.target, a mensualComboIdentity captured when the modal opened). Synchronous body that
+  // reads ONLY latestStudentsRef/latestExpensesRef — never the modal's `s` prop — and re-runs
+  // guardMensualPayment right before writing, so a stale modal, a concurrent edit, an already-paid
+  // period or a second confirm (double click: the first call's setStudents has already updated
+  // latestStudentsRef synchronously, so the period now reads as paid) all produce zero writes.
+  // `dryRun` runs the same guard for PagoModal's review step without writing anything. On success:
+  // exactly one students write and one addIncome, sharing one freshly minted pagoLinkId. Same
+  // non-atomic students→expenses order the payment always had (see handleVoidMensualPayment).
+  const handleRecordMensualPayment=(payload,{dryRun=false}={})=>{
+    const {studentId,target,mes,fechaPago,monto,method}=payload||{};
+    const student=latestStudentsRef.current.find(s=>s.id===studentId);
+    if(!isStudentActive(student)) return {status:"blocked",reason:student?"inactive":"combo-unresolved"};
+    const r=guardMensualPayment({student,target,mes,fechaPago,monto,expenses:latestExpensesRef.current});
+    if(r.state==="blocked") return {status:"blocked",reason:r.reason};
+    if(dryRun) return {status:"ok"};
+    const pagoLinkId=crypto.randomUUID();
+    setStudents(p=>p.map(s=>s.id!==studentId?s:{...s,combos:(s.combos||[]).map(c=>
+      c===r.combo?applyMensualPaymentToCombo(c,{mes,fechaPago,monto,method,pagoLinkId}):c
+    )}));
+    addIncome(monto,fechaPago,student.name,"Mensualidad "+mensualPeriodLabel(mes),{pagoLinkId,mes,method});
+    return {status:"ok",pagoLinkId};
+  };
+
   const sendNotification=(text,type="alert")=>{
     setNotifications(p=>[...p,{id:Date.now(),from:"coach",to:"all",text,time:"Ahora",type,read:false}]);
   };
@@ -10595,7 +10787,7 @@ export default function App() {
         {inviteTarget&&<InviteModal student={inviteTarget} userId={user?.id} coachName={coachProfile.name} onClose={()=>setInviteTarget(null)}/>}
         {tab==="agenda"&&<Agenda students={students} classes={xClasses} rawClasses={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onUpdateStudentsBatch={commitStudentsBatch} isClassesWriteSettled={isClassesWriteSettled} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])} onRefresh={handleRefresh}/>}
         {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification} userId={user?.id} unreadChats={unreadChats} onMarkRead={(sid)=>setUnreadChats(p=>{const n={...p};delete n[String(sid)];return n;})}/>}
-        {tab==="cobros"&&<Finances students={students} classes={xClasses} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance} families={families} onVoidMensualPayment={handleVoidMensualPayment} isStudentActiveNow={isStudentActiveNow}/>}
+        {tab==="cobros"&&<Finances students={students} classes={xClasses} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance} families={families} onVoidMensualPayment={handleVoidMensualPayment} onRecordMensualPayment={handleRecordMensualPayment} isStudentActiveNow={isStudentActiveNow}/>}
         {tab==="finanzas"&&<Finances students={students} classes={xClasses} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages}/>}
         {showNewClass&&<NewClassModal onClose={()=>{setShowNewClass(false);if(classes.length===0)setTab("agenda");}} onSave={handleSaveClass} existingClasses={xClasses} students={students} dateLabel="Nueva clase" onCreateStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])}/>}
         {showNewStudent&&<NewStudentModal onClose={()=>setShowNewStudent(false)} onSave={(d)=>setStudents(p=>[...p,{id:Date.now(),...d}])}/>}
