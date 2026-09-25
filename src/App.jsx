@@ -299,6 +299,9 @@ const applyVoidMensualidadToCombo=(combo,mensualidadId,mes)=>{
 // Pure row update: the expense is never deleted (Finanzas must keep it visible in the movement
 // history) — only flagged voided, which every income-total computation must exclude.
 const applyVoidExpense=(expense,todayDate)=>({...expense,voided:true,voidedAt:todayDate});
+// The ONE rule every financial aggregate uses (Dashboard's Balance del mes, Finanzas' monthly/annual
+// totals): a voided movement stays in the history, badged "Anulado", but never adds or subtracts.
+const countsInFinancialTotals=(e)=>!!e&&e.voided!==true;
 const VOID_MENSUAL_MESSAGES={
   "invalid":"No se pudo identificar este pago.",
   "combo-unresolved":"No se pudo identificar de forma inequívoca el combo mensual de este pago.",
@@ -3056,8 +3059,8 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
     const d=new Date(e.date+"T12:00:00");
     return d.getMonth()===curMonth&&d.getFullYear()===curYear;
   });
-  const income=monthExpenses.filter(e=>e.type==="ingreso").reduce((a,b)=>a+b.amount,0);
-  const exp=monthExpenses.filter(e=>e.type==="gasto").reduce((a,b)=>a+b.amount,0);
+  const income=monthExpenses.filter(e=>e.type==="ingreso"&&countsInFinancialTotals(e)).reduce((a,b)=>a+b.amount,0);
+  const exp=monthExpenses.filter(e=>e.type==="gasto"&&countsInFinancialTotals(e)).reduce((a,b)=>a+b.amount,0);
   // Cobros alerts - students with unpaid combos
   // Combo/Individual debt and Mensual debt are independent domains — neither may hide
   // the other (hasAnyDeuda), unlike getRem's single-number contract. An inactive alumno must
@@ -3126,11 +3129,15 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
       if(pausedCount>0) pauseAlerts.push({student:st,cls:c,pausedCount});
     });
   });
-  // Mensual mora alerts
+  // Mensual mora alerts — the same mensual obligation Cobros and the export show
+  // (getVisibleMensualEntitlement: newest modern, else newest legacy), never the first mensual combo
+  // in the array. Legacy has no mensualidades[] to evaluate, so it never alerts here (unchanged), and
+  // an inactive alumno never alerts — same exclusion cobrosAlerts applies.
   const mensualAlerts=[];
   students.forEach(s=>{
-    const mc=(s.combos||[]).find(c=>isModernMensual(c));
-    if(!mc) return;
+    if(!isStudentActive(s)) return;
+    const mc=getVisibleMensualEntitlement(s);
+    if(!isModernMensual(mc)) return;
     const est=getMensualEstado(mc);
     if(est.mora>0){
       // Calculate days overdue from the oldest mora mensualidad
@@ -7893,8 +7900,8 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
   const monthFiltered=expenses.filter(e=>e.date.startsWith(selMonth));
   // A voided movement (Anular pago) stays in monthFiltered — it must still show in the list,
   // labeled Anulado — but never contributes to a total anywhere in this screen.
-  const income=monthFiltered.filter(e=>e.type==="ingreso"&&!e.voided).reduce((a,b)=>a+b.amount,0);
-  const exp=monthFiltered.filter(e=>e.type==="gasto"&&!e.voided).reduce((a,b)=>a+b.amount,0);
+  const income=monthFiltered.filter(e=>e.type==="ingreso"&&countsInFinancialTotals(e)).reduce((a,b)=>a+b.amount,0);
+  const exp=monthFiltered.filter(e=>e.type==="gasto"&&countsInFinancialTotals(e)).reduce((a,b)=>a+b.amount,0);
   const cats=[...new Set(monthFiltered.filter(e=>e.type==="gasto").map(e=>e.category))];
   const [yr,mn]=selMonth.split("-").map(Number);
   const monthLabel=MONTHS[mn-1]+" "+yr;
@@ -7947,7 +7954,7 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
             {/* Stats badges */}
             {(()=>{
               const cr=classes.filter(c=>c.date&&c.date.startsWith(selMonth)&&c.date<=TODAY_DATE&&!c.paused&&!c.cancelled).length;
-              const ic=expenses.filter(e=>e.date&&e.date.startsWith(selMonth)&&e.type==="ingreso"&&!e.voided).reduce((a,b)=>a+b.amount,0);
+              const ic=expenses.filter(e=>e.date&&e.date.startsWith(selMonth)&&e.type==="ingreso"&&countsInFinancialTotals(e)).reduce((a,b)=>a+b.amount,0);
               const pc=students.reduce((sum,s)=>{
                 const combos=(s.combos||[]).filter(c=>c.total>0||(c.packType&&c.packType!=="mensual"));
                 return sum+combos.reduce((s2,c)=>{
@@ -7974,7 +7981,7 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
             {finView==="anual"&&(()=>{
               const year=parseInt(selMonth.split("-")[0]);
               const ms=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
-              const md=ms.map((m,mi)=>{const pf=year+"-"+String(mi+1).padStart(2,"0");const ig=expenses.filter(e=>e.date&&e.date.startsWith(pf)&&e.type==="ingreso"&&!e.voided).reduce((a,b)=>a+b.amount,0);const gs=expenses.filter(e=>e.date&&e.date.startsWith(pf)&&e.type==="gasto"&&!e.voided).reduce((a,b)=>a+b.amount,0);return{month:m,ing:ig,gas:gs,bal:ig-gs};});
+              const md=ms.map((m,mi)=>{const pf=year+"-"+String(mi+1).padStart(2,"0");const ig=expenses.filter(e=>e.date&&e.date.startsWith(pf)&&e.type==="ingreso"&&countsInFinancialTotals(e)).reduce((a,b)=>a+b.amount,0);const gs=expenses.filter(e=>e.date&&e.date.startsWith(pf)&&e.type==="gasto"&&countsInFinancialTotals(e)).reduce((a,b)=>a+b.amount,0);return{month:m,ing:ig,gas:gs,bal:ig-gs};});
               const ti=md.reduce((a,b)=>a+b.ing,0);const tg=md.reduce((a,b)=>a+b.gas,0);const cu="₡";const mx=Math.max(...md.map(d=>Math.max(d.ing,d.gas)),1);
               return (<div>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:C.white,borderRadius:14,padding:"12px 16px",marginBottom:14,border:"1px solid "+C.border}}>
@@ -8120,8 +8127,8 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
                     sorted2.forEach(e=>{
                       csv+='"'+e.date+'","'+(e.type==="ingreso"?"Ingreso":"Gasto")+'","'+(e.category||"")+'","'+(e.note||"").replace(/"/g,"'")+'",'+e.amount+'\n';
                     });
-                    const inc2=monthFiltered.filter(e=>e.type==="ingreso"&&!e.voided).reduce((a,e)=>a+e.amount,0);
-                    const exp2=monthFiltered.filter(e=>e.type==="gasto"&&!e.voided).reduce((a,e)=>a+e.amount,0);
+                    const inc2=monthFiltered.filter(e=>e.type==="ingreso"&&countsInFinancialTotals(e)).reduce((a,e)=>a+e.amount,0);
+                    const exp2=monthFiltered.filter(e=>e.type==="gasto"&&countsInFinancialTotals(e)).reduce((a,e)=>a+e.amount,0);
                     csv+='\n"","","","Total Ingresos",'+inc2+'\n';
                     csv+='"","","","Total Gastos",'+exp2+'\n';
                     csv+='"","","","Balance Neto",'+(inc2-exp2)+'\n';
