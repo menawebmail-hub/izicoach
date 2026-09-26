@@ -109,12 +109,38 @@ const getBlockingClassNamesForStudent=(studentId,rawClasses,todayDate)=>{
   });
   return [...seen.values()];
 };
+// "YYYY-MM" + n months -> "YYYY-MM".
+const mensualAddMonths=(mes,n)=>{
+  const [y,m]=String(mes).split("-").map(Number);
+  const d=new Date(y,m-1+n,1);
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
+};
+// The ONE resolution of what a mensual month costs when it is NOT paid yet: the latest
+// combo.preciosMensuales entry with desde <= mes (an explicit coach-defined price, valid from that
+// month onward until the next entry — 0 included, never treated as "missing"), else combo.amount,
+// the original price. A PAID month never goes through this: its stored mensualidad.monto is history.
+const getMontoVigente=(combo,mes)=>{
+  let found=null;
+  ((combo&&Array.isArray(combo.preciosMensuales))?combo.preciosMensuales:[]).forEach(p=>{
+    if(p&&typeof p.desde==="string"&&p.desde<=mes&&typeof p.monto==="number"&&Number.isFinite(p.monto)&&(found===null||p.desde>=found.desde)) found=p;
+  });
+  if(found) return found.monto;
+  const base=combo?combo.amount:undefined;
+  return typeof base==="number"&&Number.isFinite(base)?base:(parseInt(base)||0);
+};
+// Pure: sets the vigente price from `desde` onward — replaces an entry for that exact month, keeps
+// every other entry (a later explicit price keeps applying from its own month), sorted by desde.
+const applyPrecioMensual=(combo,desde,monto)=>{
+  const list=((combo&&Array.isArray(combo.preciosMensuales))?combo.preciosMensuales:[]).filter(p=>p&&p.desde!==desde);
+  list.push({desde,monto});
+  list.sort((a,b)=>a.desde.localeCompare(b.desde));
+  return {...combo,preciosMensuales:list};
+};
 function getMensualidades(combo) {
   if(!isModernMensual(combo)) return [];
   const existing=combo.mensualidades||[];
   const cobroDia=combo.cobroDia||1;
   const gracia=combo.graciaDias||5;
-  const monto=combo.amount||0;
   const currency=combo.currency||"PYG";
   // Find first month from combo date or first mensualidad
   const startDate=combo.date||TODAY_DATE;
@@ -144,14 +170,18 @@ function getMensualidades(combo) {
         const limiteStr=vencDate.getFullYear()+"-"+String(vencDate.getMonth()+1).padStart(2,"0")+"-"+String(vencDate.getDate()).padStart(2,"0");
         estado=TODAY_DATE>limiteStr?"mora":"pendiente";
       }
-      result.push({...ex,id,mes:mesKey,fechaVencimiento:fechaVenc,estado});
+      // Paid → the stored monto is history. Not paid (e.g. a voided payment's row) → what is due now
+      // is the vigente price; the row's own stored amount stays available as montoRegistrado.
+      result.push(ex.fechaPago
+        ?{...ex,id,mes:mesKey,fechaVencimiento:fechaVenc,estado}
+        :{...ex,id,mes:mesKey,fechaVencimiento:fechaVenc,estado,monto:getMontoVigente(combo,mesKey),montoRegistrado:ex.monto});
     } else {
       // Auto-generate
       const vencDate=new Date(fechaVenc+"T12:00:00");
       vencDate.setDate(vencDate.getDate()+gracia);
       const limiteStr=vencDate.getFullYear()+"-"+String(vencDate.getMonth()+1).padStart(2,"0")+"-"+String(vencDate.getDate()).padStart(2,"0");
       const estado=TODAY_DATE>limiteStr?"mora":"pendiente";
-      result.push({id,mes:mesKey,estado,fechaVencimiento:fechaVenc,fechaPago:null,monto,method:null});
+      result.push({id,mes:mesKey,estado,fechaVencimiento:fechaVenc,fechaPago:null,monto:getMontoVigente(combo,mesKey),method:null});
     }
     m++;if(m>12){m=1;y++;}
   }
@@ -169,7 +199,9 @@ function getMensualidades(combo) {
       const [fy,fm]=ex.mes.split("-").map(Number);
       const dia=Math.min(cobroDia,new Date(fy,fm,0).getDate());
       const fechaVenc=ex.mes+"-"+String(dia).padStart(2,"0");
-      result.push({...ex,id:"M-"+ex.mes,mes:ex.mes,fechaVencimiento:fechaVenc,estado:ex.fechaPago?"pagado":"pendiente"});
+      result.push(ex.fechaPago
+        ?{...ex,id:"M-"+ex.mes,mes:ex.mes,fechaVencimiento:fechaVenc,estado:"pagado"}
+        :{...ex,id:"M-"+ex.mes,mes:ex.mes,fechaVencimiento:fechaVenc,estado:"pendiente",monto:getMontoVigente(combo,ex.mes),montoRegistrado:ex.monto});
     });
   return result;
 }
@@ -254,7 +286,7 @@ const resolveMensualVoidState=({student,mensualidadId,mes,expenses})=>{
   const isPaid=mensualidad.estado==="pagado";
   const pagoLinkId=mensualidad.pagoLinkId||null;
   const base={studentId:student.id,studentName:student.name,mensualidadId,mes,pagoLinkId,
-    amount:mensualidad.monto,method:mensualidad.method||"efectivo"};
+    amount:mensualidad.montoRegistrado!==undefined?mensualidad.montoRegistrado:mensualidad.monto,method:mensualidad.method||"efectivo"};
   if(!pagoLinkId){
     if(!isPaid) return blocked("not-paid");
     const expense=resolveIncomeForMensualidad(expenses,student,mensualidad);
@@ -292,8 +324,22 @@ const guardVoidMensualPayment=({student,mensualidadId,mes,expenses,expectedPagoL
 // matching expense write hasn't landed yet (needs-expense-update), this is what lets a later attempt
 // still find and void the SAME expense, without it this pendiente row would be indistinguishable
 // from an ordinary never-paid month and the income would be orphaned forever.
-const applyVoidMensualidadToCombo=(combo,mensualidadId,mes)=>{
-  const mens=(combo.mensualidades||[]).map(m=>(m.id===mensualidadId&&m.mes===mes)?{...m,estado:"pendiente",fechaPago:null}:m);
+// historialPagos (payment/void event log of ONE month) is updated in the same write: exactly the event
+// whose pagoLinkId is the payment being voided is marked anulado with anuladoEl. A row that has no log
+// yet (paid before historialPagos existed) gets its current payment materialized as that ONE anulado
+// event, so its history never depends on being rebuilt from Finanzas afterwards.
+const mensualEventFromRow=(row,estado,extra={})=>({pagoLinkId:row.pagoLinkId===undefined?null:row.pagoLinkId,monto:row.monto,fechaPago:row.fechaPago||null,method:row.method||null,estado,...extra});
+const applyVoidMensualidadToCombo=(combo,mensualidadId,mes,anuladoEl)=>{
+  const mens=(combo.mensualidades||[]).map(m=>{
+    if(!(m.id===mensualidadId&&m.mes===mes)) return m;
+    const link=m.pagoLinkId===undefined?null:m.pagoLinkId;
+    const log=Array.isArray(m.historialPagos)?m.historialPagos:[];
+    const hasEvent=log.some(e=>e&&(e.pagoLinkId===undefined?null:e.pagoLinkId)===link&&e.estado==="pagado");
+    const historialPagos=hasEvent
+      ?log.map(e=>(e&&(e.pagoLinkId===undefined?null:e.pagoLinkId)===link&&e.estado==="pagado")?{...e,estado:"anulado",anuladoEl:anuladoEl||null}:e)
+      :[...log,mensualEventFromRow(m,"anulado",{anuladoEl:anuladoEl||null})];
+    return {...m,estado:"pendiente",fechaPago:null,historialPagos};
+  });
   return {...combo,mensualidades:mens};
 };
 // Pure row update: the expense is never deleted (Finanzas must keep it visible in the movement
@@ -309,6 +355,7 @@ const VOID_MENSUAL_MESSAGES={
   "income-unresolved":"No se pudo identificar de forma inequívoca el ingreso correspondiente a este pago.",
   "changed":"El pago cambió desde que se abrió esta pantalla. Cerrá y volvé a intentarlo.",
   "write-pending":"Hay cambios pendientes de sincronizar. Esperá unos segundos e intentá de nuevo.",
+  "void-window-closed":"Este pago ya está cerrado. Solo puede consultarse en el Historial de Pagos.",
   // A payment recorded before mensualidades[] existed at all (combo.paid+combo.payments[], no
   // per-month row to identify or revert) — genuinely out of scope for this action, never silently
   // hidden. Real legacy shape found in production: packType "mensual", paid:true, one payments[]
@@ -372,14 +419,25 @@ const isValidMesKey=(mes)=>{
 //   pagado (income active or unresolvable)                          → already-paid
 //   pagado + income voided, or pendiente + income active            → void-incomplete
 //   anything ambiguous or inconsistent                              → blocked, zero writes
+// Mensual payments are confirmed in chronological order: the first month since the combo started that
+// is not paid yet (₲0 paid counts as paid; a voided month is pending again), strictly before `mes`, or
+// null. Months not stored yet (not generated/paid) are pending too.
+const firstUnpaidMonthBefore=(combo,mes)=>{
+  const paid=new Set(getMensualidades(combo).filter(m=>m.estado==="pagado").map(m=>m.mes));
+  const start=(combo.date||"").slice(0,7);
+  if(!start||start>=mes) return null;
+  for(let m=start;m<mes;m=mensualAddMonths(m,1)){ if(!paid.has(m)) return m; }
+  return null;
+};
 const guardMensualPayment=({student,target,mes,fechaPago,monto,expenses})=>{
   const blocked=(reason)=>({state:"blocked",reason});
-  if(!isValidMesKey(mes)||!isValidIsoDate(fechaPago)||!Number.isInteger(monto)||monto<=0) return blocked("invalid");
+  if(!isValidMesKey(mes)||!isValidIsoDate(fechaPago)||!Number.isInteger(monto)||monto<0) return blocked("invalid");
   const t=resolveMensualPaymentTarget(student,target);
   if(t.state==="blocked") return t;
   const {combo,comboIndex}=t;
   if(mes<(combo.date||"").slice(0,7)) return blocked("before-start");
-  const ok={state:"ok",comboIndex,combo};
+  const skipped=firstUnpaidMonthBefore(combo,mes);
+  const ok=skipped?{state:"blocked",reason:"skip-month",mes:skipped}:{state:"ok",comboIndex,combo};
   const stored=(combo.mensualidades||[]).filter(m=>m&&m.mes===mes);
   if(stored.length>1) return blocked("ambiguous");
   if(stored.length===0) return ok;
@@ -398,25 +456,100 @@ const guardMensualPayment=({student,target,mes,fechaPago,monto,expenses})=>{
 };
 // Pure row update: marks exactly ONE period of this combo paid — updates its stored row in place (by
 // mes) or materializes it. Never touches amount/cobroDia/date or any other period.
+// Every payment also appends ONE "pagado" event to the month's historialPagos — never reusing or
+// overwriting an earlier event. A voided row from before historialPagos existed keeps its voided
+// payment as an anulado event first (its data would otherwise be overwritten by this payment).
 const applyMensualPaymentToCombo=(combo,{mes,fechaPago,monto,method,pagoLinkId})=>{
   const mens=[...(combo.mensualidades||[])];
   const idx=mens.findIndex(m=>m&&m.mes===mes);
+  const event={pagoLinkId,monto,fechaPago,method,estado:"pagado"};
   if(idx>=0){
-    mens[idx]={...mens[idx],estado:"pagado",fechaPago,monto,method,pagoLinkId};
+    const prev=mens[idx];
+    const log=Array.isArray(prev.historialPagos)?prev.historialPagos:(prev.pagoLinkId?[mensualEventFromRow(prev,"anulado",{fechaPago:null,anuladoEl:null})]:[]);
+    mens[idx]={...prev,estado:"pagado",fechaPago,monto,method,pagoLinkId,historialPagos:[...log,event]};
   } else {
     const [py,pm]=mes.split("-").map(Number);
     const dia=Math.min(combo.cobroDia||1,new Date(py,pm,0).getDate());
-    mens.push({id:"M-"+mes,mes,estado:"pagado",fechaVencimiento:mes+"-"+String(dia).padStart(2,"0"),fechaPago,monto,method,pagoLinkId});
+    mens.push({id:"M-"+mes,mes,estado:"pagado",fechaVencimiento:mes+"-"+String(dia).padStart(2,"0"),fechaPago,monto,method,pagoLinkId,historialPagos:[event]});
   }
   return {...combo,mensualidades:mens};
 };
 // "2026-10" -> "Octubre 2026" — the year is always kept (an advance payment can cross a year boundary).
 const mensualPeriodLabel=(mes)=>mesLabel(mes)+" "+String(mes||"").slice(0,4);
-// Amount PagoModal pre-fills for a period: that period's own stored amount when it has one, else the
-// combo's base price. A custom amount typed for one period never carries over to another.
-const defaultMensualAmountFor=(combo,mes)=>{
-  const row=((combo&&combo.mensualidades)||[]).find(m=>m&&m.mes===mes);
-  return row&&row.monto>0?row.monto:((combo&&combo.amount)||0);
+// "Guardar monto para [Mes]": sets the vigente price from `mes` onward WITHOUT paying — only
+// for the current or a future month (a past month's amount is recorded by paying it) and never for a
+// month already paid. Same target resolution as a payment.
+const guardMensualAmountSave=({student,target,mes,monto})=>{
+  const blocked=(reason)=>({state:"blocked",reason});
+  if(!isValidMesKey(mes)||!Number.isInteger(monto)||monto<0) return blocked("invalid");
+  const t=resolveMensualPaymentTarget(student,target);
+  if(t.state==="blocked") return t;
+  const {combo,comboIndex}=t;
+  if(mes<TODAY_DATE.slice(0,7)) return blocked("amount-past-month");
+  if(mes<(combo.date||"").slice(0,7)) return blocked("before-start");
+  const canonical=getMensualidades(combo).find(m=>m.mes===mes);
+  if(canonical&&canonical.estado==="pagado") return blocked("already-paid");
+  if(getMontoVigente(combo,mes)===monto) return blocked("amount-unchanged");
+  return {state:"ok",comboIndex,combo};
+};
+// A paid mensualidad can still be voided from Detalles de Pagos while its month is the current or a
+// future one, OR while it was paid during the current month (a late payment stays correctable until
+// that month ends). After that it is closed history — read-only in Historial de Pagos.
+const isMensualVoidWindowOpen=(row)=>{
+  const cur=TODAY_DATE.slice(0,7);
+  return !!row&&(String(row.mes||"")>=cur||String(row.fechaPago||"").slice(0,7)===cur);
+};
+// What Detalles de Pagos shows for ONE month of the paid obligation: pendiente (what is due now),
+// pagado (historical data + whether "Anular Pago" is still allowed) or incompleta (a half-done void,
+// operable at any age). Void state comes from resolveVoidButtonState — the same resolver the void
+// handler re-runs — never a second rule.
+const resolveDetallesMonth=(combo,mes,student,expenses)=>{
+  const row=getMensualidades(combo).find(m=>m.mes===mes)||null;
+  if(!row) return {mes,kind:"pendiente",monto:getMontoVigente(combo,mes),row:null};
+  const btn=(row.fechaPago||row.pagoLinkId)?resolveVoidButtonState({packType:"mensual",id:row.id,mes,pagoLinkId:row.pagoLinkId},student,expenses):null;
+  if(btn&&btn.visible&&btn.action==="complete") return {mes,kind:"incompleta",row,btn};
+  if(row.estado==="pagado") return {mes,kind:"pagado",row,btn,voidWindowOpen:isMensualVoidWindowOpen(row)};
+  return {mes,kind:"pendiente",monto:row.monto,row};
+};
+// Historial de Pagos events of ONE month (read-only): the row's historialPagos, or — for a row saved
+// before historialPagos existed — one event read from the row itself (paid → pagado; voided with its
+// link → anulado). Never written back. Dates missing from an event (legacy) are read from its linked
+// income (date / voidedAt); an event whose state disagrees with its income is a half-done void
+// ("incompleta"). isActive = the month's current, operative payment (the only one with a receipt).
+const buildMensualHistoryEvents=(row,expenses)=>{
+  if(!row) return [];
+  const log=Array.isArray(row.historialPagos)?row.historialPagos
+    :row.fechaPago?[mensualEventFromRow(row,"pagado")]
+    :row.pagoLinkId?[mensualEventFromRow(row,"anulado",{anuladoEl:null})]
+    :[];
+  const rowLink=row.pagoLinkId===undefined?null:row.pagoLinkId;
+  return log.filter(Boolean).map(e=>{
+    const link=e.pagoLinkId===undefined?null:e.pagoLinkId;
+    const inc=link?(expenses||[]).find(x=>x&&x.pagoLinkId===link)||null:null;
+    const incompleta=!!inc&&((e.estado==="anulado"&&!inc.voided)||(e.estado==="pagado"&&inc.voided));
+    return {...e,pagoLinkId:link,
+      fechaPago:e.fechaPago||(inc&&inc.date)||null,
+      anuladoEl:e.anuladoEl||(e.estado==="anulado"&&inc&&inc.voidedAt)||null,
+      estado:incompleta?"incompleta":e.estado,
+      isActive:!incompleta&&e.estado==="pagado"&&!!row.fechaPago&&link===rowLink};
+  });
+};
+// Months the Detalles selector offers — present/future and still-open operations only, never a
+// history browser: every unpaid past month since the combo started (open debt), the current month and
+// the next two, paid months still inside the void window, and half-done voids of any age. Sorted, unique.
+const buildDetallesMonthOptions=(combo,student,expenses)=>{
+  const cur=TODAY_DATE.slice(0,7);
+  const start=(combo.date||TODAY_DATE).slice(0,7);
+  const set=new Set();
+  getMensualidades(combo).forEach(m=>{
+    const st=resolveDetallesMonth(combo,m.mes,student,expenses);
+    if(st.kind==="incompleta") set.add(m.mes);
+    else if(st.kind==="pagado"){ if(st.voidWindowOpen) set.add(m.mes); }
+    else if(m.mes<cur) set.add(m.mes);
+  });
+  for(let i=0;i<=2;i++){ const mes=mensualAddMonths(cur,i); if(mes>=start) set.add(mes); }
+  if(set.size===0) set.add(start);
+  return [...set].sort();
 };
 const MENSUAL_PAYMENT_MESSAGES={
   "invalid":"Revisá el mes, la fecha de pago y el monto.",
@@ -427,8 +560,12 @@ const MENSUAL_PAYMENT_MESSAGES={
   "already-paid":"Este período ya está pagado.",
   "void-incomplete":"Este período tiene una anulación incompleta. Usá \"Completar anulación\" en el Historial de Pagos antes de registrar un nuevo pago.",
   "inactive":"Este alumno fue marcado como inactivo. Cerrá y volvé a intentar.",
+  "amount-past-month":"El monto para próximos pagos solo puede guardarse desde el mes actual en adelante.",
+  "amount-unchanged":"Ese ya es el monto vigente para ese mes.",
 };
-const mensualPaymentMessage=(reason)=>MENSUAL_PAYMENT_MESSAGES[reason]||"No se pudo registrar el pago. No se registró ningún cambio.";
+const mensualPaymentMessage=(reason,detail)=>reason==="skip-month"&&detail&&detail.mes
+  ?"Primero debés registrar el pago de "+mensualPeriodLabel(detail.mes)+"."
+  :(MENSUAL_PAYMENT_MESSAGES[reason]||"No se pudo registrar el pago. No se registró ningún cambio.");
 
 const WEEK_AGO=(()=>{const d=new Date();d.setDate(d.getDate()-7);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
 
@@ -488,9 +625,11 @@ const fmtMoney=(amount)=>{const c=_cur.v;return c+" "+formatNum(amount,c);};
 const fmtMoneyShort=(amount)=>{const c=_cur.v;return c+" "+formatNum(amount,c);};
 
 // Money input that formats as you type
-function MoneyInput({value, onChange, placeholder, style}) {
+// showZero: render an explicit 0 as "0" instead of an empty field (a mensual amount of ₲0 is a real,
+// valid amount there); every other caller keeps showing 0 as empty.
+function MoneyInput({value, onChange, placeholder, style, showZero=false}) {
   const cur=getCUR();
-  const formatted=value?formatNum(value,cur):"";
+  const formatted=(value||(showZero&&value===0))?formatNum(value,cur):"";
   const [display,setDisplay]=useState(formatted);
   const [lastValue,setLastValue]=useState(value);
   // Sync when value changes externally
@@ -1555,12 +1694,23 @@ const COBROS_EXPORT_COLUMNS=["Alumno","Clase","Tipo","Mes correspondiente","Esta
 const buildMensualModernoExportRows=(student,combo,classesList)=>{
   const claseName=resolveComboClassName(combo,classesList);
   const est=getMensualEstado(combo);
-  return est.mensualidades.map(m=>{
+  // Paid → the stored (historical) amount, date and method. Not paid → the vigente amount
+  // (getMensualidades already resolves it) and no date/method, even for a voided payment's row.
+  // Export horizon = up to the month right after the current one (never later, even if a later month
+  // was already paid in advance). That next month: paid → its historical row; not paid →
+  // "Pendiente (próximo)" at getMontoVigente, no date/method. Never a fictitious mensualidad.
+  const nextMes=mensualAddMonths(TODAY_DATE.slice(0,7),1);
+  const rowFor=(m,estado)=>{
     const [yr]=(m.mes||"").split("-");
-    const mesCorrespondiente=yr?mesLabel(m.mes)+" "+yr:"";
-    const estado=m.estado==="pagado"?"Pagado":m.estado==="mora"?"En mora":"Pendiente";
-    return {Alumno:student.name,Clase:claseName,Tipo:"Mensual","Mes correspondiente":mesCorrespondiente,Estado:estado,Monto:m.monto||0,"Fecha de pago":formatDateDDMMYYYY(m.fechaPago),"Día de cobro":combo.cobroDia||"","Cantidad de clases pagadas":"","Total de clases":"","No pagadas":"",Restantes:"","Forma de pago":m.method||""};
-  });
+    const paid=estado==="Pagado";
+    return {Alumno:student.name,Clase:claseName,Tipo:"Mensual","Mes correspondiente":yr?mesLabel(m.mes)+" "+yr:"",Estado:estado,Monto:typeof m.monto==="number"?m.monto:0,"Fecha de pago":paid?formatDateDDMMYYYY(m.fechaPago):"","Día de cobro":combo.cobroDia||"","Cantidad de clases pagadas":"","Total de clases":"","No pagadas":"",Restantes:"","Forma de pago":paid?(m.method||""):""};
+  };
+  const inHorizon=est.mensualidades.filter(m=>m.mes<=nextMes);
+  const rows=inHorizon.map(m=>rowFor(m,m.estado==="pagado"?"Pagado":m.mes===nextMes?"Pendiente (próximo)":m.estado==="mora"?"En mora":"Pendiente"));
+  if(nextMes>=(combo.date||"").slice(0,7)&&!inHorizon.some(m=>m.mes===nextMes)){
+    rows.push(rowFor({mes:nextMes,monto:getMontoVigente(combo,nextMes),fechaPago:null,method:null},"Pendiente (próximo)"));
+  }
+  return rows;
 };
 // Legacy mensual (no mensualidades[]): one row, its own real paid/payDate — never promoted to the
 // modern per-month shape, never given an invented "Mes correspondiente".
@@ -4026,7 +4176,7 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
                   // an editable field here would silently discard whatever the coach typed.
                   <div>
                     <div style={{fontSize:10,fontWeight:700,color:C.mutedDark,marginBottom:4}}>MONTO BASE MENSUAL ({getCUR()})</div>
-                    <div style={{...iS,padding:"8px 10px",fontSize:12,background:C.bg,color:C.mutedDark}}>{fmtMoney(existingCombo?.amount||0)}</div>
+                    <div style={{...iS,padding:"8px 10px",fontSize:12,background:C.bg,color:C.mutedDark}}>{fmtMoney(isModernMensual(existingCombo)?getMontoVigente(existingCombo,TODAY_DATE.slice(0,7)):(existingCombo?.amount||0))}</div>
                     <div style={{fontSize:10,color:C.mutedDark,marginTop:3}}>Gestionar pagos y montos por período en Cobros</div>
                   </div>
                 ):(
@@ -6202,7 +6352,7 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
   );
 }
 
-function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount, newDate, setNewDate, onClose, onUpdate, classes=[], addIncome, packages=[], sendNotification, isStudentActiveNow, mensualCombo=null, onRecordMensualPayment}) {
+function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount, newDate, setNewDate, onClose, onUpdate, classes=[], addIncome, packages=[], sendNotification, isStudentActiveNow, mensualCombo=null, onRecordMensualPayment, onSaveMensualAmount, onVoidMensualPayment, expenses=[]}) {
   // Re-checked in handleGoToReview/handleConfirm below — the actual enforcement points — against
   // the freshest known student state, so a payment modal opened before a concurrent inactivation
   // (another device) can never be confirmed afterwards from stale state.
@@ -6214,7 +6364,14 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   const [mensualTarget]=useState(()=>mensualComboIdentity(mensualCombo));
   const hasClassObligation=getVisibleClassEntitlements(s,classes).some(({combo:c})=>c.total>0||c.packType==="combo"||c.packType==="individual");
   const hasMensualObligation=getAllMensualEntitlements(s).length>0;
-  const initialPayMonth=TODAY_DATE.slice(0,7);
+  // Detalles de Pagos (modern mensual): the month selector offers only present/future months and
+  // still-open operations (buildDetallesMonthOptions); it opens on the current month when offered.
+  const initialPayMonth=(()=>{
+    const cur=TODAY_DATE.slice(0,7);
+    if(!mensualCombo) return cur;
+    const opts=buildDetallesMonthOptions(mensualCombo,s,expenses);
+    return opts.includes(cur)?cur:(opts[0]||cur);
+  })();
   const [pagoTipo,setPagoTipo]=useState(()=>{
     // Both kinds of obligation: the coach chooses explicitly (selector below) — never auto-picked
     // just because another combo exists.
@@ -6228,10 +6385,19 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   const [payMethod,setPayMethod]=useState("efectivo");
   const [step,setStep]=useState("form");
   const TODAY=TODAY_DATE;
-  // Class payments start at 0 so the coach explicitly enters the amount; a mensual period pre-fills
-  // its own amount (defaultMensualAmountFor), re-derived whenever the period or obligation changes.
+  // Class payments start at 0 so the coach explicitly enters the amount; a mensual month pre-fills
+  // its vigente amount (getMontoVigente). A manual edit not saved yet (amountTouched) is kept while the
+  // coach navigates months — never silently replaced by another month's vigente amount.
   const [localClasses,setLocalClasses]=useState(0);
-  const [localAmount,setLocalAmount]=useState(()=>pagoTipo==="mensual"&&mensualCombo?defaultMensualAmountFor(mensualCombo,initialPayMonth):0);
+  const [localAmount,setLocalAmount]=useState(()=>pagoTipo==="mensual"&&mensualCombo?getMontoVigente(mensualCombo,initialPayMonth):0);
+  const [amountTouched,setAmountTouched]=useState(false);
+  // Pending current/future month in Detalles: the coach says explicitly whether this is only a new
+  // amount ("save") or a payment ("pay"). Always starts at "save" and goes back to it on every month
+  // change, so a payment intent never carries over to another month. Never touches amount/date/method.
+  const [payIntent,setPayIntent]=useState("save");
+  const [savedNotice,setSavedNotice]=useState(null);
+  const [voidError,setVoidError]=useState("");
+  const voidBusyRef=useRef(false);
   const [localDate,setLocalDate]=useState(newDate||combo?.payDate||combo?.date||"");
   const [localPayDate,setLocalPayDate]=useState(TODAY_DATE);
   const [localPayMonth,setLocalPayMonth]=useState(initialPayMonth);
@@ -6240,14 +6406,63 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   const confirmingRef=useRef(false);
   const changePayMonth=(mes)=>{
     setLocalPayMonth(mes);
-    if(mensualCombo) setLocalAmount(defaultMensualAmountFor(mensualCombo,mes));
+    setSavedNotice(null);
+    setPayIntent("save");
+    if(mensualCombo&&!amountTouched) setLocalAmount(getMontoVigente(mensualCombo,mes));
+  };
+  const editAmount=(v)=>{
+    setLocalAmount(v);
+    setAmountTouched(true);
+    setSavedNotice(null);
   };
   const choosePagoTipo=(tipo)=>{
     setPagoTipo(tipo);
     setLocalClasses(0);
-    setLocalAmount(tipo==="mensual"&&mensualCombo?defaultMensualAmountFor(mensualCombo,localPayMonth):0);
+    setAmountTouched(false);
+    setPayIntent("save");
+    setLocalAmount(tipo==="mensual"&&mensualCombo?getMontoVigente(mensualCombo,localPayMonth):0);
   };
   const mensualPaymentPayload=()=>({studentId:s.id,target:mensualTarget,mes:localPayMonth||TODAY_DATE.slice(0,7),fechaPago:localPayDate||TODAY_DATE,monto:parseInt(localAmount)||0,method:payMethod});
+  // Detalles de Pagos by month — only for the modern mensual obligation shown on the card; classes and
+  // the legacy mensual creation path keep their existing form untouched.
+  const isModernMensualFlow=pagoTipo==="mensual"&&!!mensualTarget&&!!mensualCombo;
+  const detallesMonths=isModernMensualFlow?buildDetallesMonthOptions(mensualCombo,s,expenses):[];
+  const detallesMonth=isModernMensualFlow?resolveDetallesMonth(mensualCombo,localPayMonth,s,expenses):null;
+  // Pending month: the save/pay choice exists only where an amount can be saved (current or future
+  // month — same condition as "Guardar monto"); a past pending month shows the payment form directly.
+  // In payment mode, an earlier unpaid month is shown inline via the SAME helper guardMensualPayment
+  // uses; the dryRun and the App handler remain the actual enforcement.
+  const detallesPending=!!detallesMonth&&detallesMonth.kind==="pendiente";
+  const detallesShowIntent=detallesPending&&localPayMonth>=TODAY_DATE.slice(0,7);
+  const detallesPayMode=detallesPending&&(!detallesShowIntent||payIntent==="pay");
+  const detallesSkippedMonth=detallesPayMode?firstUnpaidMonthBefore(mensualCombo,localPayMonth):null;
+  const handleSaveMensualAmountClick=()=>{
+    if(becameInactive){alert("Este alumno fue marcado como inactivo. Cerrá y volvé a intentar.");return;}
+    if(!(parseInt(localAmount)>=0)){alert("Ingresá el monto.");return;}
+    if(!onSaveMensualAmount){alert(mensualPaymentMessage(null));return;}
+    const res=onSaveMensualAmount({studentId:s.id,target:mensualTarget,mes:localPayMonth,monto:parseInt(localAmount)||0});
+    if(res?.status!=="ok"){alert(mensualPaymentMessage(res?.reason));return;}
+    setAmountTouched(false);
+    setSavedNotice({mes:localPayMonth,monto:parseInt(localAmount)||0});
+  };
+  // "Anular Pago" / "Completar anulación" — exclusively here (Historial is read-only). The App handler
+  // re-resolves against the latest state and enforces the void window; this screen only confirms.
+  const handleVoidFromDetalles=()=>{
+    if(voidBusyRef.current||!detallesMonth||!detallesMonth.row) return;
+    if(!onVoidMensualPayment){setVoidError(voidMensualMessage(null));return;}
+    voidBusyRef.current=true;
+    const row=detallesMonth.row;
+    const result=onVoidMensualPayment({studentId:s.id,mensualidadId:row.id,mes:row.mes,expectedPagoLinkId:row.pagoLinkId||null});
+    voidBusyRef.current=false;
+    if(result&&(result.status==="ok"||result.status==="already-complete")){
+      setVoidError("");
+      setStep("form");
+      setPayIntent("save");
+      if(!amountTouched) setLocalAmount(getMontoVigente(mensualCombo,row.mes));
+      return;
+    }
+    setVoidError(voidMensualMessage(result?.reason));
+  };
 
   const iSp={width:"100%",padding:"11px 14px",borderRadius:12,border:"none",fontSize:14,boxSizing:"border-box",background:C.blueL,color:"#1A237E",outline:"none"};
   const payMethodLabel={"efectivo":"💵 Efectivo","transferencia":"🏦 Transferencia","tarjeta":"💳 Tarjeta"};
@@ -6452,14 +6667,14 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
     if(pagoTipo==="clases"&&(!localClasses||parseInt(localClasses)<=0)){
       alert("Ingresá la cantidad de clases usando el stepper ◀ ▶");return;
     }
-    if(!localAmount||parseInt(localAmount)<=0){
+    if(isModernMensualFlow?!(parseInt(localAmount)>=0):(!localAmount||parseInt(localAmount)<=0)){
       alert("Ingresá el monto del pago.");return;
     }
     // Same guard the write runs, read-only here — an already-paid or half-voided period is refused
     // before the review, not only at confirm.
     if(pagoTipo==="mensual"&&mensualTarget&&onRecordMensualPayment){
       const check=onRecordMensualPayment(mensualPaymentPayload(),{dryRun:true});
-      if(check?.status!=="ok"){alert(mensualPaymentMessage(check?.reason));return;}
+      if(check?.status!=="ok"){alert(mensualPaymentMessage(check?.reason,check));return;}
     }
     setStep("review");
   };
@@ -6473,7 +6688,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
     if(!pagoTipo){alert("Elegí qué vas a pagar: Clases o Mensualidad.");return;}
     if(pagoTipo==="clases"&&classHasNoCalendar){alert(NO_CALENDAR_PAGO_MESSAGE);return;}
     if(pagoTipo==="clases"&&(!localClasses||parseInt(localClasses)<=0)){alert("Ingresá la cantidad de clases.");return;}
-    if(!localAmount||parseInt(localAmount)<=0){alert("Ingresá el monto.");return;}
+    if(isModernMensualFlow?!(parseInt(localAmount)>=0):(!localAmount||parseInt(localAmount)<=0)){alert("Ingresá el monto.");return;}
     const qty=parseInt(localClasses)||0;
     let updatedCombos=[...s.combos];
     // Set below, only for pagoTipo==="mensual" — the id shared by the mensualidad and its income row,
@@ -6528,7 +6743,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         if(!onRecordMensualPayment){alert(mensualPaymentMessage(null));return;}
         confirmingRef.current=true;
         const res=onRecordMensualPayment(mensualPaymentPayload());
-        if(res?.status!=="ok"){confirmingRef.current=false;alert(mensualPaymentMessage(res?.reason));return;}
+        if(res?.status!=="ok"){confirmingRef.current=false;alert(mensualPaymentMessage(res?.reason,res));return;}
         setStep("success");
         setTimeout(()=>onClose(),2200);
         return;
@@ -6593,6 +6808,48 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         )}
       </div>
     </div>
+    );
+  }
+
+  // "Anular Pago" / "Completar anulación" confirm — same copy the Historial sheet used before it
+  // became read-only; shows exactly what will be undone.
+  if(step==="void"&&isModernMensualFlow&&detallesMonth&&detallesMonth.row){
+    const dm=detallesMonth;
+    const isRecovery=dm.kind==="incompleta";
+    const st=dm.btn&&dm.btn.state;
+    const subtitle=st==="needs-student-update"
+      ?"El ingreso fue anulado, pero falta actualizar la mensualidad. Volvé a intentar para completar la operación."
+      :st==="needs-expense-update"
+      ?"La mensualidad ya está en Pendiente, pero falta anular el ingreso. Volvé a intentar para completar la operación."
+      :"La mensualidad vuelve a Pendiente y el ingreso queda anulado en Finanzas.";
+    const amount=dm.row.montoRegistrado!==undefined?dm.row.montoRegistrado:dm.row.monto;
+    return (
+      <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
+        <div style={{background:C.white,borderRadius:"24px 24px 0 0",padding:"24px 20px 32px",width:"100%",boxSizing:"border-box"}}>
+          <div style={{fontWeight:900,fontSize:18,color:C.text,marginBottom:6}}>{isRecovery?"¿Completar esta anulación?":"¿Anular este pago?"}</div>
+          <div style={{fontSize:13,color:C.mutedDark,marginBottom:18}}>{subtitle}</div>
+          <div style={{background:C.blueL,borderRadius:12,padding:14,marginBottom:voidError?12:20}}>
+            {[
+              {l:"Alumno",v:s.name},
+              {l:"Período",v:"Mensualidad "+mensualPeriodLabel(dm.mes)},
+              {l:"Monto",v:fmtMoneyShort(amount)},
+              {l:"Forma de pago",v:payMethodLabel[dm.row.method]||"💵 Efectivo"},
+            ].map(f=>(
+              <div key={f.l} style={{display:"flex",justifyContent:"space-between",padding:"5px 0"}}>
+                <span style={{fontSize:12,color:C.mutedDark,fontWeight:600}}>{f.l}</span>
+                <span style={{fontSize:13,color:C.text,fontWeight:700}}>{f.v}</span>
+              </div>
+            ))}
+          </div>
+          {voidError&&(
+            <div style={{background:"#FFEBEE",color:"#C62828",fontSize:12,fontWeight:600,padding:"10px 12px",borderRadius:10,marginBottom:16}}>{voidError}</div>
+          )}
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={()=>{setVoidError("");setStep("form");}} style={{flex:1,padding:"14px",borderRadius:14,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:14,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
+            <button onClick={handleVoidFromDetalles} style={{flex:1,padding:"14px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#C62828,#E53935)",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:800}}>{isRecovery?"Completar anulación":"Confirmar anulación"}</button>
+          </div>
+        </div>
+      </div>
     );
   }
 
@@ -6728,13 +6985,13 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             );
           })()}
 
-          {/* Enviar recordatorio */}
-          <div style={{marginBottom:16}}>
+          {/* Enviar recordatorio — not in the simplified modern mensual screen (the card keeps its own) */}
+          {!isModernMensualFlow&&<div style={{marginBottom:16}}>
             <button onClick={()=>setShowRecordatorioPago(true)} style={{width:"100%",padding:"10px",borderRadius:10,border:"1.5px solid #65CE5A",background:C.white,color:"#2E7D32",fontSize:12,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#2E7D32" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
               Enviar Recordatorio
             </button>
-          </div>
+          </div>}
 
           {/* Obligation selector — only when the student has BOTH class and mensual obligations */}
           {hasClassObligation&&hasMensualObligation&&(
@@ -6755,7 +7012,89 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               {NO_CALENDAR_PAGO_MESSAGE}
             </div>
           )}
-          {pagoTipo&&(<>
+          {isModernMensualFlow&&detallesMonth&&(()=>{
+            const cur=TODAY_DATE.slice(0,7);
+            const dm=detallesMonth;
+            const isPaidView=dm.kind!=="pendiente";
+            const row=dm.row;
+            const linkedIncome=row&&row.pagoLinkId?(expenses||[]).find(e=>e.pagoLinkId===row.pagoLinkId):null;
+            const shownAmount=isPaidView?(row.montoRegistrado!==undefined?row.montoRegistrado:row.monto):null;
+            const shownDate=isPaidView?(row.fechaPago||(linkedIncome&&linkedIncome.date)||""):"";
+            const lbl={fontSize:12,fontWeight:700,color:C.mutedDark,marginBottom:6};
+            const readOnly={...iSp,display:"flex",alignItems:"center",minHeight:42};
+            return (
+              <div style={{marginBottom:16,textAlign:"left"}}>
+                <div style={{fontSize:20,fontWeight:900,color:"#1A237E",marginBottom:14}}>Detalle de Pago</div>
+                <div style={lbl}>Mes</div>
+                <select value={localPayMonth} onChange={e=>changePayMonth(e.target.value)} style={{...iSp,cursor:"pointer",marginBottom:14}}>
+                  {detallesMonths.map(mes=>{
+                    const st=mes===dm.mes?dm:resolveDetallesMonth(mensualCombo,mes,s,expenses);
+                    const tag=st.kind==="pagado"?" · Pagado":st.kind==="incompleta"?" · Anulación incompleta":mes<cur?" · Vencido":"";
+                    return <option key={mes} value={mes}>{mensualPeriodLabel(mes)+tag}</option>;
+                  })}
+                </select>
+                <div style={lbl}>Monto</div>
+                {isPaidView
+                  ?<div style={{...readOnly,marginBottom:14}}>{formatNum(shownAmount,getCUR())}</div>
+                  :<div style={{marginBottom:14}}><MoneyInput value={parseInt(localAmount)||0} onChange={editAmount} placeholder="0" showZero style={iSp}/></div>}
+                {detallesShowIntent&&(
+                  <div style={{marginBottom:14}}>
+                    <div style={lbl}>¿Querés registrar el pago ahora?</div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                      {[["pay","Sí, registrar el pago"],["save","No, solo guardar el monto"]].map(([v,l])=>(
+                        <button key={v} onClick={()=>setPayIntent(v)} aria-pressed={payIntent===v} style={{padding:"11px",borderRadius:12,border:"none",background:payIntent===v?"linear-gradient(135deg,#1565C0,#1976D2)":C.blueL,color:payIntent===v?"#fff":C.blue2,fontSize:13,cursor:"pointer",fontWeight:800}}>{l}</button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {(isPaidView||detallesPayMode)&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+                  <div>
+                    <div style={lbl}>Fecha de pago</div>
+                    {isPaidView
+                      ?<div style={readOnly}>{formatDateDDMMYYYY(shownDate)||"—"}</div>
+                      :<input type="date" value={localPayDate||TODAY_DATE} onChange={e=>setLocalPayDate(e.target.value)} style={{...iSp,cursor:"pointer"}}/>}
+                  </div>
+                  <div>
+                    <div style={lbl}>Forma de pago</div>
+                    {isPaidView
+                      ?<div style={readOnly}>{payMethodLabel[row.method]||"💵 Efectivo"}</div>
+                      :<select value={payMethod} onChange={e=>setPayMethod(e.target.value)} style={{...iSp,cursor:"pointer"}}>
+                        <option value="efectivo">💵 Efectivo</option>
+                        <option value="transferencia">🏦 Transferencia</option>
+                        <option value="tarjeta">💳 Tarjeta</option>
+                      </select>}
+                  </div>
+                </div>}
+                {detallesSkippedMonth&&(
+                  <div role="alert" aria-live="polite" style={{background:"#FFF3E0",borderRadius:10,padding:"10px 14px",marginBottom:10,fontSize:12,fontWeight:700,color:"#E65100"}}>{mensualPaymentMessage("skip-month",{mes:detallesSkippedMonth})}</div>
+                )}
+                {!isPaidView&&savedNotice&&savedNotice.mes===localPayMonth&&(
+                  <div role="status" style={{background:"#E8F5E9",borderRadius:10,padding:"10px 14px",marginTop:10,fontSize:12,fontWeight:700,color:"#2E7D32"}}>
+                    {"Monto guardado: desde "+mensualPeriodLabel(savedNotice.mes)+" el monto vigente es "+fmtMoney(savedNotice.monto)+". "+mensualPeriodLabel(savedNotice.mes)+" sigue pendiente."}
+                  </div>
+                )}
+                {dm.kind==="pagado"&&(
+                  <div style={{background:"#E8F5E9",borderRadius:12,padding:"14px",textAlign:"center",border:"1.5px solid #66BB6A"}}>
+                    <div style={{fontSize:22,fontWeight:900,color:"#2E7D32",lineHeight:1}}>✓</div>
+                    <div style={{fontSize:14,fontWeight:800,color:"#2E7D32",marginTop:6}}>Monto Pagado</div>
+                  </div>
+                )}
+                {dm.kind==="incompleta"&&(
+                  <div style={{background:"#FFF3E0",borderRadius:12,padding:"14px",textAlign:"center",border:"1.5px solid #FFB74D"}}>
+                    <div style={{fontSize:14,fontWeight:800,color:"#E65100"}}>⏳ Anulación incompleta</div>
+                    <div style={{fontSize:11,color:C.mutedDark,marginTop:4}}>Completá la anulación para dejar este mes pendiente.</div>
+                  </div>
+                )}
+                {isPaidView&&dm.btn&&!dm.btn.enabled&&dm.btn.reason&&(
+                  <div style={{fontSize:11,color:C.mutedDark,marginTop:8,lineHeight:1.4}}>{voidMensualMessage(dm.btn.reason)}</div>
+                )}
+                {dm.kind==="pagado"&&!dm.voidWindowOpen&&(
+                  <div style={{fontSize:11,color:C.mutedDark,marginTop:8,lineHeight:1.4}}>{voidMensualMessage("void-window-closed")}</div>
+                )}
+              </div>
+            );
+          })()}
+          {pagoTipo&&!isModernMensualFlow&&(<>
           {pagoTipo==="clases"?(
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
               <div>
@@ -6944,7 +7283,14 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
 
         <div style={{flexShrink:0,padding:"12px 20px calc(20px + env(safe-area-inset-bottom,0px))",display:"flex",gap:10,background:"#FFFFFF"}}>
           <button onClick={onClose} style={{flex:1,padding:"14px",borderRadius:14,border:"1.5px solid rgba(21,101,192,0.12)",background:"#FFFFFF",cursor:"pointer",fontSize:14,color:"#5C7A9F",fontWeight:700}}>Cancelar</button>
-          <button onClick={pagoTipo==="mensual"?handleGoToReview:handleConfirm} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:(parseInt(localClasses)>0&&parseInt(localAmount)>0)||(pagoTipo==="mensual"&&parseInt(localAmount)>0)?"linear-gradient(135deg,#52C048,#65CE5A)":"#CBD5E0",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:800}}>✓ Confirmar pago</button>
+          {isModernMensualFlow&&detallesMonth&&detallesMonth.kind!=="pendiente"
+            ?((detallesMonth.kind==="incompleta"||detallesMonth.voidWindowOpen)&&detallesMonth.btn&&detallesMonth.btn.enabled&&(
+              <button onClick={()=>{setVoidError("");setStep("void");}} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#C62828,#E53935)",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:800}}>{detallesMonth.kind==="incompleta"?"Completar anulación":"Anular Pago"}</button>
+            ))
+            :(detallesPending&&!detallesPayMode)
+            // Save mode: "Guardar monto" takes the primary action's place (same slot/style as Confirmar pago).
+            ?<button onClick={handleSaveMensualAmountClick} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:800}}>Guardar monto</button>
+            :<button onClick={pagoTipo==="mensual"?handleGoToReview:handleConfirm} disabled={!!detallesSkippedMonth} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:!detallesSkippedMonth&&((parseInt(localClasses)>0&&parseInt(localAmount)>0)||(pagoTipo==="mensual"&&(isModernMensualFlow?parseInt(localAmount)>=0:parseInt(localAmount)>0)))?"linear-gradient(135deg,#52C048,#65CE5A)":"#CBD5E0",color:"#fff",cursor:detallesSkippedMonth?"not-allowed":"pointer",fontSize:14,fontWeight:800}}>✓ Confirmar pago</button>}
         </div>
       </div>
       {showRecordatorioPago&&<RecordatorioModal student={s} onClose={()=>setShowRecordatorioPago(false)} sendNotification={sendNotification} getRem={()=>getRem(s,classes)} getCombo={()=>getCombo(s)} isStudentActiveNow={isStudentActiveNow}/>}
@@ -6998,21 +7344,13 @@ function RecordatorioModal({ student:s, onClose, sendNotification, getRem, getCo
   );
 }
 
-function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance, expenses=[], onVoidMensualPayment, onRecordMensualPayment, isStudentActiveNow }) {
+function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance, expenses=[], onVoidMensualPayment, onRecordMensualPayment, onSaveMensualAmount, isStudentActiveNow }) {
   // combo (getCombo) stays as the narrow "does this student have anything assigned
   // at all" pick for the Asignar-paquete/Detalles-de-Pagos toggle and PagoModal's
   // initial stepper seed — never used to decide WHICH box(es) to render below.
   const combo=getCombo(s);
   const [showPago,setShowPago]=useState(false);
   const [showHistory,setShowHistory]=useState(false);
-  // "Anular pago" confirm — voidTarget holds everything the confirmation screen shows (alumno,
-  // período, monto, método) PLUS the expense resolved for it AT THE MOMENT the button was
-  // clicked. resolveIncomeForMensualidad is re-run fresh right before the actual write too
-  // (inside handleVoidMensualPayment, against latest state) — this copy is only for what the
-  // confirm screen displays and for disabling the button when nothing resolves.
-  const [voidTarget,setVoidTarget]=useState(null);
-  const [voidBusy,setVoidBusy]=useState(false);
-  const [voidError,setVoidError]=useState("");
   const [showAtt,setShowAtt]=useState(false);
   const [showAttReport,setShowAttReport]=useState(false);
   const [suspended,setSuspended]=useState(s.suspended||false);
@@ -7021,7 +7359,8 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
     setSuspended(newVal);
     onUpdate({...s,suspended:newVal});
   };
-  const [histTab,setHistTab]=useState(0);
+  // Historial de Pagos selection — the stable key of ONE entry of historyPayments (null = newest).
+  const [histKey,setHistKey]=useState(null);
   const [showComprobante,setShowComprobante]=useState(null);
   const [showRecordatorio,setShowRecordatorio]=useState(false);
   const myClassesH=classes.filter(c=>c.students&&c.students.includes(s.id));
@@ -7222,6 +7561,24 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
                   Cobro: día {modernMensual.cobroDia} de cada mes · Gracia: {modernMensual.graciaDias||5} días
                   {isMora&&<span style={{color:"#C62828",fontWeight:700}}> — Debe {moraMonths.join(", ")}</span>}
                 </div>
+                {(()=>{
+                  // Próxima mensualidad = always the month right after the current one; its amount is the
+                  // vigente one (getMontoVigente), or the stored amount if it was already paid in advance.
+                  const nextMes=mensualAddMonths(TODAY_DATE.slice(0,7),1);
+                  if(nextMes<(modernMensual.date||"").slice(0,7)) return null;
+                  const nextRow=est.mensualidades.find(m=>m.mes===nextMes);
+                  const nextPaid=!!(nextRow&&nextRow.estado==="pagado");
+                  const nextMonto=nextPaid?nextRow.monto:getMontoVigente(modernMensual,nextMes);
+                  return (
+                    <div style={{marginTop:10,background:nextPaid?"#E8F5E9":"#FFF8E1",borderRadius:10,padding:"9px 12px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                      <div style={{fontSize:12,color:"#1A237E",lineHeight:1.35,textAlign:"left"}}>
+                        <span style={{fontWeight:700,color:C.mutedDark}}>Próxima mensualidad:</span><br/>
+                        <b>{mensualPeriodLabel(nextMes)+" · "+fmtMoney(nextMonto)}</b>
+                      </div>
+                      <span style={{fontSize:10,fontWeight:700,color:nextPaid?"#2E7D32":"#F57F17",background:C.white,border:"1px solid "+(nextPaid?"#66BB6A":"#FFB74D"),borderRadius:20,padding:"3px 9px",whiteSpace:"nowrap"}}>{nextPaid?"✓ Pagado":"⏳ Pendiente"}</span>
+                    </div>
+                  );
+                })()}
               </div>
             );
           }
@@ -7314,9 +7671,36 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
         })()}
       </WhiteCard>
 
-      {showPago&&<PagoModal s={s} combo={combo} newClasses={newClasses} setNewClasses={setNewClasses} newAmount={newAmount} setNewAmount={setNewAmount} newDate={newDate} setNewDate={setNewDate} onClose={()=>setShowPago(false)} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} isStudentActiveNow={isStudentActiveNow} mensualCombo={displayedModernMensual} onRecordMensualPayment={onRecordMensualPayment}/>}
+      {showPago&&<PagoModal s={s} combo={combo} newClasses={newClasses} setNewClasses={setNewClasses} newAmount={newAmount} setNewAmount={setNewAmount} newDate={newDate} setNewDate={setNewDate} onClose={()=>setShowPago(false)} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} isStudentActiveNow={isStudentActiveNow} mensualCombo={displayedModernMensual} onRecordMensualPayment={onRecordMensualPayment} onSaveMensualAmount={onSaveMensualAmount} onVoidMensualPayment={onVoidMensualPayment} expenses={expenses}/>}
 
-      {showHistory&&(
+      {showHistory&&(()=>{
+        // Historial de Pagos — read-only record. ONE list, built once: the left tabs render it and the
+        // detail panel resolves the selection by each entry's stable key, never by an index into a
+        // second, differently-filtered list. A mensualidad is listed when paid, or while a half-done
+        // void still has its income active (shown as such, operable only from Detalles de Pagos).
+        // Selection key = the record's own identity (its combo's identity + the payment's own fields /
+        // the mensualidad's mes), never a position in any array — reordering, filtering or adding
+        // records can never make a selection show another payment's data.
+        const historyPayments=(s.combos||[]).flatMap(c=>{
+          const comboKey=[c.packType,c.id,c.sourceClassId,c.date].map(v=>v===undefined||v===null?"":String(v)).join("|");
+          const reg=(c.payments||[]).map(p=>({...p,comboTotal:c.total,packType:c.packType,key:"p|"+comboKey+"|"+[p.id,p.date,p.amount,p.qty,p.method].map(v=>v===undefined||v===null?"":String(v)).join("|")}));
+          // One entry per payment EVENT of each month (historialPagos): a voided payment stays listed as
+          // anulado next to the later one that replaced it — the record, not just the current state.
+          const mens=(c.mensualidades||[]).flatMap(m=>{
+            const events=buildMensualHistoryEvents(m,expenses);
+            return events.map(ev=>({key:"m|"+comboKey+"|"+m.mes+"|"+(ev.pagoLinkId===null?"sin-vinculo:"+ev.estado:ev.pagoLinkId),
+              id:m.id,qty:1,amount:ev.monto,method:ev.method||"",date:ev.fechaPago,comboTotal:null,
+              detail:"Mensualidad "+mensualPeriodLabel(m.mes),mes:m.mes,pagoLinkId:ev.pagoLinkId,packType:c.packType,
+              eventEstado:ev.estado,anuladoEl:ev.anuladoEl,isActive:ev.isActive,monthEvents:events}));
+          });
+          return [...reg,...mens];
+        });
+        const selected=historyPayments.find(x=>x.key===histKey)||historyPayments[historyPayments.length-1]||null;
+        const wDFull=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+        const mNShort=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+        const fmtDate=(ds)=>{const d=new Date(ds+"T12:00:00");return wDFull[d.getDay()]+" "+d.getDate()+" "+mNShort[d.getMonth()];};
+        const methodLabel={"efectivo":"💵 Efectivo","transferencia":"🏦 Transferencia","tarjeta":"💳 Tarjeta"};
+        return (
         <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:999,display:"flex",flexDirection:"column",background:C.bg}}>
           {/* Header */}
           <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
@@ -7327,100 +7711,50 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
           <div style={{flex:1,display:"flex",overflow:"hidden"}}>
             {/* Left tabs - one per payment transaction */}
             <div style={{width:110,borderRight:"1px solid "+C.border,overflowY:"auto",background:C.white,flexShrink:0}}>
-              {(()=>{
-                const allPayments=s.combos.flatMap(c=>{const reg=(c.payments||[]).map(p=>({...p,comboTotal:c.total}));const mens=(c.mensualidades||[]).filter(m=>m.estado==="pagado"&&m.fechaPago).map(m=>{const MH=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];const [,mm]=m.mes.split("-");return{id:m.id,qty:1,amount:m.monto,method:m.method||"",date:m.fechaPago,comboTotal:null,detail:"Mensualidad "+MH[parseInt(mm)-1]};});return[...reg,...mens];});
-                if(allPayments.length===0) return <div style={{padding:12,fontSize:11,color:C.mutedDark,textAlign:"center"}}>Sin pagos</div>;
-                return [...allPayments].reverse().map((p,i)=>{
-                  const idx=allPayments.length-1-i;
-                  const isActive=histTab===idx;
+              {historyPayments.length===0
+                ?<div style={{padding:12,fontSize:11,color:C.mutedDark,textAlign:"center"}}>Sin pagos</div>
+                :[...historyPayments].reverse().map(p=>{
+                  const isActive=!!selected&&selected.key===p.key;
                   const d=new Date((p.date||"2026-01-01")+"T12:00:00");
-                  const mN=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
                   return (
-                    <div key={idx} onClick={()=>setHistTab(idx)} style={{padding:"12px 10px",borderBottom:"1px solid "+C.border,cursor:"pointer",background:isActive?"linear-gradient(135deg,#0D1B4B,#1A3DB5)":C.white,borderLeft:isActive?"3px solid "+C.blue2:"3px solid transparent"}}>
-                      <div style={{fontSize:11,fontWeight:800,color:isActive?C.white:C.text}}>{d.getDate()+" "+mN[d.getMonth()]}</div>
-                      <div style={{fontSize:10,color:isActive?"rgba(255,255,255,0.8)":C.mutedDark,marginTop:2}}>{p.comboTotal===null?(p.payMonth?(["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"][parseInt(p.payMonth?.split("-")[1])-1]+" "+p.payMonth?.split("-")[0]):"Mensual"):p.qty+" clase"+(p.qty>1?"s":"")}</div>
-                      <div style={{marginTop:4,width:8,height:8,borderRadius:"50%",background:"#43A047"}}></div>
+                    <div key={p.key} onClick={()=>setHistKey(p.key)} style={{padding:"12px 10px",borderBottom:"1px solid "+C.border,cursor:"pointer",background:isActive?"linear-gradient(135deg,#0D1B4B,#1A3DB5)":C.white,borderLeft:isActive?"3px solid "+C.blue2:"3px solid transparent"}}>
+                      <div style={{fontSize:11,fontWeight:800,color:isActive?C.white:C.text}}>{d.getDate()+" "+mNShort[d.getMonth()]}</div>
+                      <div style={{fontSize:10,color:isActive?"rgba(255,255,255,0.8)":C.mutedDark,marginTop:2}}>{p.comboTotal===null?"Mensual":p.qty+" clase"+(p.qty>1?"s":"")}</div>
+                      <div style={{marginTop:4,width:8,height:8,borderRadius:"50%",background:p.eventEstado==="incompleta"?"#E65100":p.eventEstado==="anulado"?"#9E9E9E":"#43A047"}}></div>
                     </div>
                   );
-                });
-              })()}
+                })}
             </div>
             {/* Right detail */}
             <div style={{flex:1,overflowY:"auto",padding:16}}>
               {(()=>{
-                const allPayments=s.combos.flatMap(c=>{
-                  const reg=(c.payments||[]).map(p=>({...p,comboTotal:c.total,packType:c.packType}));
-                  const MH=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
-                  // A mensualidad shows here when it's genuinely paid, OR when it's pendiente but still
-                  // carries a pagoLinkId AND that link's expense is still active — an incomplete "Anular
-                  // pago" recovery (needs-expense-update), never silently unreachable after a reload just
-                  // because the mensualidad side of a partial write already landed. Once the expense side
-                  // also lands (already-complete) it drops out again — nothing left to show or do.
-                  const mens=(c.mensualidades||[]).filter(m=>{
-                    if(m.estado==="pagado"&&m.fechaPago) return true;
-                    if(m.estado!=="pagado"&&m.pagoLinkId){
-                      const linked=(expenses||[]).find(e=>e.pagoLinkId===m.pagoLinkId);
-                      return !!linked&&!linked.voided;
-                    }
-                    return false;
-                  }).map(m=>{
-                    const [,mm]=m.mes.split("-");
-                    return {id:m.id,qty:1,amount:m.monto,method:m.method||"",date:m.fechaPago,comboTotal:null,
-                      detail:"Mensualidad "+MH[parseInt(mm)-1],mes:m.mes,pagoLinkId:m.pagoLinkId,packType:c.packType,estado:m.estado};
-                  });
-                  return [...reg,...mens];
-                });
-                if(allPayments.length===0) return <div style={{textAlign:"center",padding:"40px 0",color:C.mutedDark}}>Sin historial de pagos</div>;
-                const p=allPayments[histTab]||allPayments[allPayments.length-1];
-                const wDFull=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
-                const mNShort=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
-                const fmtDate=(ds)=>{const d=new Date(ds+"T12:00:00");return wDFull[d.getDay()]+" "+d.getDate()+" "+mNShort[d.getMonth()];};
-                const methodLabel={"efectivo":"💵 Efectivo","transferencia":"🏦 Transferencia","tarjeta":"💳 Tarjeta"};
-                // Every mensual payment offers "Anular pago"/"Completar anulación" — moderno o legacy,
-                // con o sin `mes`, y también a mitad de una recuperación — via resolveVoidButtonState,
-                // gated by packType alone (never by comboTotal===null, which is also true for a mensual
-                // combo's LEGACY combo.payments[] entries, and never by presence of `mes`, which a
-                // pre-mensualidades[] payment never has). Combo/individual (packType!=="mensual") never
-                // shows it. Found in production: a legacy mensual combo that predates mensualidades[]
-                // entirely — the OLD comboTotal===null&&mes gate silently hid the button for exactly
-                // this reason; it never meant "not mensual". Now shown disabled, with the exact reason,
-                // instead of hidden.
-                const voidButtonState=resolveVoidButtonState(p,s,expenses);
-                // A legacy combo.payments[] entry never carries `.detail` (that's only ever set on
-                // the mens-branch mapping above) — never show a blank "Período" in the confirm sheet.
-                const periodoFor=(pay)=>pay.detail||("Pago del "+fmtDate(pay.date||TODAY_DATE));
-                const openVoidConfirm=()=>{
-                  if(!voidButtonState.enabled) return;
-                  setVoidError("");
-                  setVoidTarget({mensualidadId:p.id,mes:p.mes,studentName:s.name,monto:p.amount,method:p.method,periodo:periodoFor(p),
-                    expenseId:voidButtonState.expenseId,pagoLinkId:voidButtonState.pagoLinkId,action:voidButtonState.action,state:voidButtonState.state,blockedReason:voidButtonState.reason});
-                };
+                if(!selected) return <div style={{textAlign:"center",padding:"40px 0",color:C.mutedDark}}>Sin historial de pagos</div>;
+                const p=selected;
+                // Mensual entries are payment events: pagado (the active one), anulado (kept as history)
+                // or incompleta (a half-done void — completed only from Detalles de Pagos).
+                const isMensualEvent=!!p.eventEstado;
+                const isIncompleteRecovery=p.eventEstado==="incompleta";
+                const isAnulado=p.eventEstado==="anulado";
+                const estadoColor=isIncompleteRecovery?"#E65100":isAnulado?C.mutedDark:C.green;
+                const ddmm=(d)=>formatDateDDMMYYYY(d)||"";
+                const eventEstadoText=(ev)=>ev.estado==="incompleta"?"⏳ Anulación incompleta":ev.estado==="anulado"?("Anulado"+(ev.anuladoEl?" el "+ddmm(ev.anuladoEl):"")):("✓ Pagado"+(ev.fechaPago?" el "+ddmm(ev.fechaPago):""));
                 return (
                   <>
                     <WhiteCard style={{marginBottom:14}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
                         <div style={{fontSize:15,fontWeight:800,color:C.text}}>{p.detail?("📅 "+p.detail):("📦 "+p.qty+" clase"+(p.qty>1?"s":"")+" pagadas")}</div>
-                        <button onClick={()=>setShowComprobante({...p,studentName:s.name})} style={{background:C.blueL,border:"1px solid "+C.border,borderRadius:10,padding:"6px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
+                        {(!isMensualEvent||p.isActive)&&<button onClick={()=>setShowComprobante({...p,studentName:s.name})} style={{background:C.blueL,border:"1px solid "+C.border,borderRadius:10,padding:"6px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
                           <span style={{fontSize:11,fontWeight:700,color:C.blue2}}>Compartir</span>
-                        </button>
+                        </button>}
                       </div>
-                      {/* p.estado only exists on a mens-branch entry (a combo/individual `payments[]`
-                          row is always a genuinely completed payment, no partial-recovery concept for
-                          it — undefined here). A pendiente-but-listed mens row (needs-expense-update)
-                          must never still claim "✓ Pagado" — that exact contradiction between Cobros
-                          and Finanzas is the problem this whole recovery design exists to close. */}
-                      {(()=>{
-                        const isIncompleteRecovery=!!(p.estado&&p.estado!=="pagado");
-                        const estadoColor=isIncompleteRecovery?"#E65100":C.green;
-                        return (
                       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                         {[
-                          {l:"Fecha de pago",v:fmtDate(p.date||TODAY_DATE)},
+                          {l:"Fecha de pago",v:p.date?fmtDate(p.date):"—"},
                           {l:"Monto",v:fmtMoneyShort(p.amount)},
                           {l:"Forma de pago",v:methodLabel[p.method]||"💵 Efectivo"},
                           ...(p.detail?[{l:"Período",v:p.detail}]:[]),
-                          {l:"Estado",v:isIncompleteRecovery?"⏳ Pendiente — anulación incompleta":"✓ Pagado"},
+                          {l:"Estado",v:isMensualEvent?eventEstadoText({estado:p.eventEstado,anuladoEl:p.anuladoEl,fechaPago:p.date}):"✓ Pagado"},
                         ].map(f=>(
                           <div key={f.l}>
                             <div style={{fontSize:10,fontWeight:700,color:C.mutedDark,marginBottom:3}}>{f.l.toUpperCase()}</div>
@@ -7428,21 +7762,21 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
                           </div>
                         ))}
                       </div>
-                        );
-                      })()}
-                      {voidButtonState.visible&&onVoidMensualPayment&&(
-                        <div style={{marginTop:12}}>
-                          <button
-                            onClick={openVoidConfirm}
-                            disabled={!voidButtonState.enabled}
-                            style={{width:"100%",padding:"11px",borderRadius:12,border:"1.5px solid "+(voidButtonState.enabled?"#EF9A9A":C.border),background:voidButtonState.enabled?"#FFF5F5":C.bg,color:voidButtonState.enabled?"#C62828":C.mutedDark,fontSize:13,cursor:voidButtonState.enabled?"pointer":"default",fontWeight:700}}
-                          >{voidButtonState.action==="complete"?"Completar anulación":"Anular pago"}</button>
-                          {!voidButtonState.enabled&&(
-                            <div style={{fontSize:11,color:C.mutedDark,marginTop:6,lineHeight:1.4}}>{voidMensualMessage(voidButtonState.reason)}</div>
-                          )}
-                        </div>
+                      {isIncompleteRecovery&&(
+                        <div style={{fontSize:11,color:C.mutedDark,marginTop:10,lineHeight:1.4}}>Completá la anulación desde Detalles de Pagos.</div>
                       )}
                     </WhiteCard>
+                    {isMensualEvent&&(
+                      <WhiteCard style={{marginBottom:14}}>
+                        <div style={{fontSize:12,fontWeight:700,color:C.mutedDark,marginBottom:10}}>{mensualPeriodLabel(p.mes).toUpperCase()}</div>
+                        {p.monthEvents.map((ev,i)=>(
+                          <div key={(ev.pagoLinkId===null?"sin-vinculo:"+ev.estado:ev.pagoLinkId)} style={{padding:"8px 0",borderBottom:i<p.monthEvents.length-1?"1px solid "+C.border:"none"}}>
+                            <div style={{fontSize:12,fontWeight:700,color:C.text}}>{"Pago: "+(ev.fechaPago?ddmm(ev.fechaPago):"—")+" · "+fmtMoneyShort(ev.monto)+" · "+(methodLabel[ev.method]||"💵 Efectivo")}</div>
+                            <div style={{fontSize:11,fontWeight:700,color:ev.estado==="incompleta"?"#E65100":ev.estado==="anulado"?C.mutedDark:C.green,marginTop:2}}>{eventEstadoText(ev)}</div>
+                          </div>
+                        ))}
+                      </WhiteCard>
+                    )}
                     {p.dates&&p.dates.length>0&&p.qty>0?(
                       <WhiteCard>
                         <div style={{fontSize:12,fontWeight:700,color:C.mutedDark,marginBottom:10}}>FECHAS DE CLASE</div>
@@ -7467,68 +7801,6 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
                   </>
                 );
               })()}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Anular pago / Completar anulación — confirm sheet. Shows exactly what will be undone
-          (alumno/período/monto/método); Confirmar is disabled whenever the link couldn't be resolved
-          (voidTarget.expenseId===null, set by openVoidConfirm above) so this never offers a confirm
-          that can only fail. voidTarget.state (needs-student-update / needs-expense-update) picks the
-          "in-progress recovery" copy — the exact scenario a coach sees after reopening this screen
-          following a partial write, never silently hidden as if nothing were pending. */}
-      {voidTarget&&(()=>{
-        const isRecovery=voidTarget.action==="complete";
-        const title=isRecovery?"¿Completar esta anulación?":"¿Anular este pago?";
-        const subtitle=voidTarget.state==="needs-student-update"
-          ?"El ingreso fue anulado, pero falta actualizar la mensualidad. Volvé a intentar para completar la operación."
-          :voidTarget.state==="needs-expense-update"
-          ?"La mensualidad ya está en Pendiente, pero falta anular el ingreso. Volvé a intentar para completar la operación."
-          :"La mensualidad vuelve a Pendiente y el ingreso queda anulado en Finanzas.";
-        const ctaIdle=isRecovery?"Completar anulación":"Confirmar anulación";
-        const ctaBusy=isRecovery?"Completando...":"Anulando...";
-        return (
-        <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:1099,display:"flex",alignItems:"flex-end"}}>
-          <div style={{background:C.white,borderRadius:"24px 24px 0 0",padding:"24px 20px 32px",width:"100%",boxSizing:"border-box"}}>
-            <div style={{fontWeight:900,fontSize:18,color:C.text,marginBottom:6}}>{title}</div>
-            <div style={{fontSize:13,color:C.mutedDark,marginBottom:18}}>{subtitle}</div>
-            <div style={{background:C.blueL,borderRadius:12,padding:14,marginBottom:voidError?12:20}}>
-              {[
-                {l:"Alumno",v:voidTarget.studentName},
-                {l:"Período",v:voidTarget.periodo},
-                {l:"Monto",v:fmtMoneyShort(voidTarget.monto)},
-                {l:"Forma de pago",v:({"efectivo":"💵 Efectivo","transferencia":"🏦 Transferencia","tarjeta":"💳 Tarjeta"})[voidTarget.method]||"💵 Efectivo"},
-              ].map(f=>(
-                <div key={f.l} style={{display:"flex",justifyContent:"space-between",padding:"5px 0"}}>
-                  <span style={{fontSize:12,color:C.mutedDark,fontWeight:600}}>{f.l}</span>
-                  <span style={{fontSize:13,color:C.text,fontWeight:700}}>{f.v}</span>
-                </div>
-              ))}
-            </div>
-            {(voidError||!voidTarget.expenseId)&&(
-              <div style={{background:"#FFEBEE",color:"#C62828",fontSize:12,fontWeight:600,padding:"10px 12px",borderRadius:10,marginBottom:16}}>
-                {voidError||voidMensualMessage(voidTarget.blockedReason||"income-unresolved")}
-              </div>
-            )}
-            <div style={{display:"flex",gap:10}}>
-              <button onClick={()=>{setVoidTarget(null);setVoidError("");}} style={{flex:1,padding:"14px",borderRadius:14,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:14,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
-              <button
-                disabled={!voidTarget.expenseId||voidBusy}
-                onClick={()=>{
-                  if(!voidTarget.expenseId||voidBusy) return;
-                  setVoidBusy(true);
-                  const result=onVoidMensualPayment({studentId:s.id,mensualidadId:voidTarget.mensualidadId,mes:voidTarget.mes,expectedPagoLinkId:voidTarget.pagoLinkId});
-                  setVoidBusy(false);
-                  // "ok" (this call performed the write(s) still needed) and "already-complete" (a
-                  // race — someone else finished it between opening this sheet and confirming) both
-                  // mean nothing is pending anymore; only a real "void-unavailable" shows an error and
-                  // keeps the sheet open so the coach can see why and retry.
-                  if(result&&(result.status==="ok"||result.status==="already-complete")){setVoidTarget(null);setVoidError("");setHistTab(0);}
-                  else setVoidError(voidMensualMessage(result?.reason));
-                }}
-                style={{flex:1,padding:"14px",borderRadius:14,border:"none",background:(!voidTarget.expenseId||voidBusy)?C.border:"linear-gradient(135deg,#C62828,#E53935)",color:"#fff",cursor:(!voidTarget.expenseId||voidBusy)?"default":"pointer",fontSize:14,fontWeight:800}}
-              >{voidBusy?ctaBusy:ctaIdle}</button>
             </div>
           </div>
         </div>
@@ -7736,7 +8008,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
   );
 }
 
-function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance, families=[], expenses=[], onVoidMensualPayment, onRecordMensualPayment, isStudentActiveNow }) {
+function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance, families=[], expenses=[], onVoidMensualPayment, onRecordMensualPayment, onSaveMensualAmount, isStudentActiveNow }) {
   const [search,setSearch]=useState("");
   const [filter,setFilter]=useState("none");
   const [collapsedFamilies,setCollapsedFamilies]=useState(new Set());
@@ -7872,18 +8144,18 @@ function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], send
             </WhiteCard>
             {!isCollapsed&&g.members.map(s=>(
               <div key={s.id} style={{marginLeft:14,paddingLeft:12,borderLeft:"2px solid #C5D0E6",marginBottom:10}}>
-                <PaymentCard student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} onRecordMensualPayment={onRecordMensualPayment} isStudentActiveNow={isStudentActiveNow}/>
+                <PaymentCard student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} onRecordMensualPayment={onRecordMensualPayment} onSaveMensualAmount={onSaveMensualAmount} isStudentActiveNow={isStudentActiveNow}/>
               </div>
             ))}
           </div>
         );
       })}
-      {ungroupedList.map(s=><PaymentCard key={s.id} student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} onRecordMensualPayment={onRecordMensualPayment} isStudentActiveNow={isStudentActiveNow}/>)}
+      {ungroupedList.map(s=><PaymentCard key={s.id} student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} onRecordMensualPayment={onRecordMensualPayment} onSaveMensualAmount={onSaveMensualAmount} isStudentActiveNow={isStudentActiveNow}/>)}
     </div>
   );
 }
 
-function Finances({ students, classes, initialTab="payments", onUpdate, expenses=[], setExpenses, addIncome, packages=[], sendNotification, onAttendance, families=[], onVoidMensualPayment, onRecordMensualPayment, isStudentActiveNow }) {
+function Finances({ students, classes, initialTab="payments", onUpdate, expenses=[], setExpenses, addIncome, packages=[], sendNotification, onAttendance, families=[], onVoidMensualPayment, onRecordMensualPayment, onSaveMensualAmount, onEditLinkedMensualIncome, isStudentActiveNow }) {
   const [tab,setTab]=useState(initialTab);
   const [selMonth,setSelMonth]=useState((()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");})());
   const [finView,setFinView]=useState("mensual");
@@ -7948,7 +8220,7 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
         </div>
       </div>
       <div style={{padding:"16px",marginTop:-8}}>
-        {tab==="payments"&&<PaymentsTab students={students} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} families={families} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} onRecordMensualPayment={onRecordMensualPayment} isStudentActiveNow={isStudentActiveNow}/>}
+        {tab==="payments"&&<PaymentsTab students={students} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} families={families} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} onRecordMensualPayment={onRecordMensualPayment} onSaveMensualAmount={onSaveMensualAmount} isStudentActiveNow={isStudentActiveNow}/>}
         {tab==="expenses"&&(
           <div>
             {/* Stats badges */}
@@ -8148,10 +8420,19 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
                   <WhiteCard key={e.id} style={{marginBottom:8,opacity:e.voided?0.6:1}}>
                     <div style={{display:"flex",alignItems:"center",gap:12}}>
                       <div style={{width:40,height:40,borderRadius:12,background:e.type==="ingreso"?"linear-gradient(135deg,#52C048,#65CE5A)":"linear-gradient(135deg,#E53935,#EF5350)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:C.white,flexShrink:0}}>{e.type==="ingreso"?"↑":"↓"}</div>
-                      <div style={{flex:1}}>
-                        <div style={{fontSize:14,fontWeight:700,color:C.text}}>{e.category}</div>
-                        <div style={{fontSize:11,color:C.mutedDark}}>{e.date}{e.note?" · "+e.note:""}{e.detail?" · "+e.detail:""}</div>
-                      </div>
+                      {/* A movement from Cobros carries the alumno in `note`: Nombre (bold) · Fecha · Motivo.
+                          A manual movement has no alumno — it keeps its category as the title. */}
+                      {e.note?(
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:14,fontWeight:800,color:C.text}}>{e.note}</div>
+                          <div style={{fontSize:11,color:C.mutedDark}}>{e.date}{e.detail?" · "+e.detail:""}</div>
+                        </div>
+                      ):(
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:14,fontWeight:700,color:C.text}}>{e.category}</div>
+                          <div style={{fontSize:11,color:C.mutedDark}}>{e.date}{e.detail?" · "+e.detail:""}</div>
+                        </div>
+                      )}
                       <div style={{fontWeight:800,color:e.type==="ingreso"?"#2E7D32":"#C62828",fontSize:14,marginRight:8,textDecoration:e.voided?"line-through":"none"}}>{(e.type==="ingreso"?"+":"-")+fmtMoneyShort(e.amount)}</div>
                       {e.voided?(
                         <span style={{fontSize:10,fontWeight:700,padding:"4px 10px",borderRadius:20,background:"#F5F5F5",color:"#757575",whiteSpace:"nowrap"}}>Anulado</span>
@@ -8166,7 +8447,12 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
                         }} style={{width:30,height:30,borderRadius:8,border:"none",background:C.blueL,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
                           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.blue2} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                         </button>
-                        <button onClick={()=>setExpenses(p=>p.filter(x=>x.id!==e.id))} style={{width:30,height:30,borderRadius:8,border:"none",background:"#FFEBEE",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                        <button onClick={()=>{
+                          // A mensual income linked to its mensualidad (pagoLinkId) is never hard-deleted —
+                          // that would leave a paid month without its income. It is voided via Anular Pago.
+                          if(e.pagoLinkId){alert("Este ingreso corresponde a un pago mensual. Gestionalo con \"Anular Pago\" en Detalles de Pagos.");return;}
+                          setExpenses(p=>p.filter(x=>x.id!==e.id));
+                        }} style={{width:30,height:30,borderRadius:8,border:"none",background:"#FFEBEE",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
                           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#C62828" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
                         </button>
                       </div>
@@ -8245,10 +8531,21 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
             <div style={{display:"flex",gap:10}}>
               <button onClick={()=>{setShowMovModal(null);setEditMovId(null);setMovCat("");setMovAmount("");setMovDate("");}} style={{flex:1,padding:"14px",borderRadius:14,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:14,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
               <button onClick={()=>{
-                if(!movCat.trim()||!movAmount){alert("Completá categoría y monto.");return;}
+                // ₲0 is a valid amount only for a linked mensual income (its paid month can be ₲0); a manual
+                // income/expense still requires a non-zero amount, as before.
+                const linkedEdit=!!editMovId&&!!(expenses.find(e=>e.id===editMovId)||{}).pagoLinkId;
+                if(!movCat.trim()||(linkedEdit?(movAmount===""||movAmount===null||movAmount===undefined):!movAmount)){alert("Completá categoría y monto.");return;}
                 const date=movDate||(selMonth+"-01");
                 if(editMovId){
-                  setExpenses(prev=>prev.map(e=>e.id===editMovId?{...e,category:movCat,amount:parseInt(movAmount),date,type:showMovModal}:e));
+                  const original=expenses.find(e=>e.id===editMovId);
+                  if(original&&original.pagoLinkId){
+                    // Linked mensual income: amount/date are corrected on the income AND its paid
+                    // mensualidad together (App.handleEditLinkedMensualIncome), or not at all.
+                    const res=onEditLinkedMensualIncome?onEditLinkedMensualIncome({expenseId:editMovId,amount:parseInt(movAmount),date,category:movCat}):{status:"blocked"};
+                    if(res.status!=="ok"){alert("No se pudo actualizar este pago mensual de forma segura. Revisalo en Detalles de Pagos.");return;}
+                  } else {
+                    setExpenses(prev=>prev.map(e=>e.id===editMovId?{...e,category:movCat,amount:parseInt(movAmount),date,type:showMovModal}:e));
+                  }
                   setEditMovId(null);
                 } else {
                   setExpenses(prev=>[...prev,{id:Date.now(),category:movCat,amount:parseInt(movAmount),type:showMovModal,date}]);
@@ -9718,6 +10015,9 @@ export default function App() {
     const r=guardVoidMensualPayment({student,mensualidadId,mes,expenses:latestExpensesRef.current,expectedPagoLinkId});
     if(r.state==="blocked") return {status:"void-unavailable",reason:r.reason};
     if(r.state==="already-complete") return {status:"already-complete"};
+    // A full void only while the payment is still operable (isMensualVoidWindowOpen); finishing a
+    // half-done void (needs-*-update) is always allowed — leaving it half-done is never the safer option.
+    if(r.state==="ready"&&!isMensualVoidWindowOpen({mes:r.mes,fechaPago:r.fechaPago})) return {status:"void-unavailable",reason:"void-window-closed"};
     // Not atomic: students and expenses are two independent outbox-backed keys — no cross-key
     // transaction exists anywhere in this app, so a crash or a failed write between these two calls
     // is a real possibility, not a theoretical one. Each write below only fires when the resolved
@@ -9733,9 +10033,11 @@ export default function App() {
       setExpenses(p=>p.map(e=>e.id===r.expenseId?applyVoidExpense(e,TODAY_DATE):e));
     }
     if(r.state==="ready"||r.state==="needs-student-update"){
+      const voidedIncome=latestExpensesRef.current.find(e=>e.id===r.expenseId);
+      const anuladoEl=r.state==="needs-student-update"&&voidedIncome&&voidedIncome.voidedAt?voidedIncome.voidedAt:TODAY_DATE;
       setStudents(p=>p.map(s=>s.id!==studentId?s:{...s,combos:(s.combos||[]).map(c=>
         (c.packType==="mensual"&&(c.mensualidades||[]).some(m=>m.id===mensualidadId&&m.mes===mes))
-          ?applyVoidMensualidadToCombo(c,mensualidadId,mes):c
+          ?applyVoidMensualidadToCombo(c,mensualidadId,mes,anuladoEl):c
       )}));
     }
     return {status:"ok"};
@@ -9755,14 +10057,59 @@ export default function App() {
     const student=latestStudentsRef.current.find(s=>s.id===studentId);
     if(!isStudentActive(student)) return {status:"blocked",reason:student?"inactive":"combo-unresolved"};
     const r=guardMensualPayment({student,target,mes,fechaPago,monto,expenses:latestExpensesRef.current});
-    if(r.state==="blocked") return {status:"blocked",reason:r.reason};
+    if(r.state==="blocked") return {status:"blocked",reason:r.reason,...(r.mes?{mes:r.mes}:{})};
     if(dryRun) return {status:"ok"};
     const pagoLinkId=crypto.randomUUID();
-    setStudents(p=>p.map(s=>s.id!==studentId?s:{...s,combos:(s.combos||[]).map(c=>
-      c===r.combo?applyMensualPaymentToCombo(c,{mes,fechaPago,monto,method,pagoLinkId}):c
-    )}));
+    // Paying the current or a future month with a different amount makes it the vigente price from
+    // that month onward (same students write). Paying a PAST month never changes preciosMensuales —
+    // that amount is history of that month only.
+    const setsPrice=mes>=TODAY_DATE.slice(0,7)&&monto!==getMontoVigente(r.combo,mes);
+    setStudents(p=>p.map(s=>s.id!==studentId?s:{...s,combos:(s.combos||[]).map(c=>{
+      if(c!==r.combo) return c;
+      const paid=applyMensualPaymentToCombo(c,{mes,fechaPago,monto,method,pagoLinkId});
+      return setsPrice?applyPrecioMensual(paid,mes,monto):paid;
+    })}));
     addIncome(monto,fechaPago,student.name,"Mensualidad "+mensualPeriodLabel(mes),{pagoLinkId,mes,method});
     return {status:"ok",pagoLinkId};
+  };
+
+  // "Guardar monto para [Mes]": the vigente price from `mes` onward, WITHOUT a payment — one
+  // students write, no mensualidad row, no income. Same fresh-state re-validation as a payment.
+  const handleSaveMensualAmount=({studentId,target,mes,monto}={})=>{
+    const student=latestStudentsRef.current.find(s=>s.id===studentId);
+    if(!isStudentActive(student)) return {status:"blocked",reason:student?"inactive":"combo-unresolved"};
+    const r=guardMensualAmountSave({student,target,mes,monto});
+    if(r.state==="blocked") return {status:"blocked",reason:r.reason};
+    setStudents(p=>p.map(s=>s.id!==studentId?s:{...s,combos:(s.combos||[]).map(c=>c===r.combo?applyPrecioMensual(c,mes,monto):c)}));
+    return {status:"ok"};
+  };
+
+  // Finanzas → editar un ingreso mensual vinculado (pagoLinkId): corrects the historical amount/date of
+  // BOTH the income and its paid mensualidad, so Finanzas, Cobros and the export never disagree. Never
+  // touches preciosMensuales. Refuses (zero writes) unless exactly one paid mensualidad carries the link.
+  const handleEditLinkedMensualIncome=({expenseId,amount,date,category}={})=>{
+    const exp=latestExpensesRef.current.find(e=>e.id===expenseId);
+    if(!exp||!exp.pagoLinkId) return {status:"blocked",reason:"invalid"};
+    if(exp.voided) return {status:"blocked",reason:"voided"};
+    if(!Number.isInteger(amount)||amount<0||!isValidIsoDate(date)) return {status:"blocked",reason:"invalid"};
+    const link=exp.pagoLinkId;
+    const hits=[];
+    latestStudentsRef.current.forEach(s=>(s.combos||[]).forEach(c=>{
+      if(!isModernMensual(c)) return;
+      (c.mensualidades||[]).forEach(m=>{
+        if(m&&(m.pagoLinkId===link||(Array.isArray(m.historialPagos)&&m.historialPagos.some(e=>e&&e.pagoLinkId===link)))) hits.push({studentId:s.id,combo:c,row:m});
+      });
+    }));
+    // Exactly one month carries this link, and it must be that month's ACTIVE payment — an income whose
+    // link only survives as an older (anulado) event is never allowed to touch the active payment.
+    if(hits.length!==1||hits[0].row.pagoLinkId!==link||!hits[0].row.fechaPago) return {status:"blocked",reason:"link-unresolved"};
+    const {studentId,combo,row}=hits[0];
+    const log=Array.isArray(row.historialPagos)?row.historialPagos:null;
+    if(log&&log.filter(e=>e&&e.pagoLinkId===link).length>1) return {status:"blocked",reason:"link-unresolved"};
+    const nextRow={...row,monto:amount,fechaPago:date,...(log?{historialPagos:log.map(e=>e&&e.pagoLinkId===link?{...e,monto:amount,fechaPago:date}:e)}:{})};
+    setStudents(p=>p.map(s=>s.id!==studentId?s:{...s,combos:(s.combos||[]).map(c=>c!==combo?c:{...c,mensualidades:(c.mensualidades||[]).map(m=>m!==row?m:nextRow)})}));
+    setExpenses(p=>p.map(e=>e.id!==expenseId?e:{...e,amount,date,category}));
+    return {status:"ok"};
   };
 
   const sendNotification=(text,type="alert")=>{
@@ -10794,8 +11141,8 @@ export default function App() {
         {inviteTarget&&<InviteModal student={inviteTarget} userId={user?.id} coachName={coachProfile.name} onClose={()=>setInviteTarget(null)}/>}
         {tab==="agenda"&&<Agenda students={students} classes={xClasses} rawClasses={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onUpdateStudentsBatch={commitStudentsBatch} isClassesWriteSettled={isClassesWriteSettled} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])} onRefresh={handleRefresh}/>}
         {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification} userId={user?.id} unreadChats={unreadChats} onMarkRead={(sid)=>setUnreadChats(p=>{const n={...p};delete n[String(sid)];return n;})}/>}
-        {tab==="cobros"&&<Finances students={students} classes={xClasses} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance} families={families} onVoidMensualPayment={handleVoidMensualPayment} onRecordMensualPayment={handleRecordMensualPayment} isStudentActiveNow={isStudentActiveNow}/>}
-        {tab==="finanzas"&&<Finances students={students} classes={xClasses} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages}/>}
+        {tab==="cobros"&&<Finances students={students} classes={xClasses} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance} families={families} onVoidMensualPayment={handleVoidMensualPayment} onRecordMensualPayment={handleRecordMensualPayment} onSaveMensualAmount={handleSaveMensualAmount} isStudentActiveNow={isStudentActiveNow}/>}
+        {tab==="finanzas"&&<Finances students={students} classes={xClasses} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} onEditLinkedMensualIncome={handleEditLinkedMensualIncome}/>}
         {showNewClass&&<NewClassModal onClose={()=>{setShowNewClass(false);if(classes.length===0)setTab("agenda");}} onSave={handleSaveClass} existingClasses={xClasses} students={students} dateLabel="Nueva clase" onCreateStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])}/>}
         {showNewStudent&&<NewStudentModal onClose={()=>setShowNewStudent(false)} onSave={(d)=>setStudents(p=>[...p,{id:Date.now(),...d}])}/>}
         {showConfig&&<ConfigScreen onClose={()=>{setShowConfig(false);setConfigInitialTab(null);}} courts={courts} setCourts={setCourts} packages={packages} setPackages={setPackages} families={families} setFamilies={setFamilies} students={students} onUpdateStudent={updateStudent} onAddStudent={(s)=>setStudents(p=>[...p,s])} coachProfile={coachProfile} onSaveProfile={saveCoachProfile} initialTab={configInitialTab}/>}
