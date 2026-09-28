@@ -6616,6 +6616,11 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   // AFTER this chronological selection is fixed (see handleConfirm below), purely to
   // decide which combo each already-chosen row writes into.
   const payableRows=allDates.filter(d=>(d.status==="pendiente"||d.status==="dada_unpaid")&&!d.isCancelled&&!d.isPaused);
+  // Presentation only. Nothing left to pay (the same rows the stepper and handleConfirm use) → the
+  // classes screen is read-only: no stepper/amount/date/method/Confirmar. "Paquete de clases" as the
+  // subtitle only when at least one combo is visible (same source and packType default as buildAllDates).
+  const clasesConsultMode=pagoTipo==="clases"&&payableRows.length===0;
+  const clasesHasCombo=pagoTipo==="clases"&&getVisibleClassEntitlements(s,classes).some(({combo:c})=>(c.packType||"combo")==="combo");
 
   // For new combo projection (mora + future)
   const buildProjectedDates=(qty)=>{
@@ -6907,8 +6912,8 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               :<div style={{width:52,height:52,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,fontWeight:800,color:"#fff",flexShrink:0}}>{s.avatar}</div>
             }
             <div style={{flex:1,textAlign:"left",minWidth:0}}>
-              <div style={{fontWeight:900,fontSize:22,color:"#1A237E",lineHeight:1.1,textAlign:"left"}}>{s.name}</div>
-              <div style={{fontSize:12,color:"#5C7A9F",marginTop:3,textAlign:"left"}}>Detalles de Pagos</div>
+              <div style={{fontWeight:900,fontSize:22,color:"#1A237E",lineHeight:1.1,textAlign:"left",overflowWrap:"anywhere"}}>{s.name}</div>
+              <div style={{fontSize:12,color:"#5C7A9F",marginTop:3,textAlign:"left"}}>{clasesHasCombo?"Paquete de clases":"Detalles de Pagos"}</div>
             </div>
           </div>
 
@@ -6953,7 +6958,9 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               not from paid state. Targeting/writing in handleConfirm is untouched by
               this — purely a display concern. */}
           {pagoTipo==="clases"&&allDates.length>0&&(()=>{
-            const {noPagadas,pagadas,realizadas,restantes,pausadas}=getAccountCounters(s,classes);
+            const {noPagadas,pagadas,realizadas,restantes,pausadas,totalEntitlementCombo,realizadasCombo}=getAccountCounters(s,classes);
+            // Same combo progress as the Cobros card (real noPagadas, not the stepper preview); combo only.
+            const showProgress=totalEntitlementCombo>0;
             const previewQty=Math.min(parseInt(localClasses)||0, payableRows.length);
             const previewNoPagadas=Math.max(0, noPagadas-previewQty);
             const previewPagadas=pagadas+previewQty;
@@ -6965,7 +6972,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             ].filter(Boolean);
             return (
               <>
-                <div style={{display:"grid",gridTemplateColumns:"repeat("+cols.length+",1fr)",gap:6,marginBottom:pausadas>0?8:16}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat("+cols.length+",1fr)",gap:6,marginBottom:(showProgress||pausadas>0)?8:16}}>
                   {cols.map((col,i)=>(
                     <div key={i} style={{background:col.bg,borderRadius:12,padding:"10px 4px",textAlign:"center"}}>
                       <div style={{fontSize:24,fontWeight:900,color:col.color,lineHeight:1}}>{col.n}</div>
@@ -6973,6 +6980,11 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
                     </div>
                   ))}
                 </div>
+                {showProgress&&(
+                  <div style={{marginBottom:pausadas>0?8:16}}>
+                    <ComboProgressBar realizadasCombo={realizadasCombo} totalEntitlementCombo={totalEntitlementCombo} noPagadas={noPagadas}/>
+                  </div>
+                )}
                 {pausadas>0&&(
                   <div style={{display:"grid",gridTemplateColumns:"1fr",gap:6,marginBottom:16}}>
                     <div style={{background:"#FFF3E0",borderRadius:12,padding:"8px 4px",textAlign:"center"}}>
@@ -6985,8 +6997,8 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             );
           })()}
 
-          {/* Enviar recordatorio — not in the simplified modern mensual screen (the card keeps its own) */}
-          {!isModernMensualFlow&&<div style={{marginBottom:16}}>
+          {/* Enviar recordatorio — not in the modern mensual or classes screens (the card keeps its own) */}
+          {!isModernMensualFlow&&pagoTipo!=="clases"&&<div style={{marginBottom:16}}>
             <button onClick={()=>setShowRecordatorioPago(true)} style={{width:"100%",padding:"10px",borderRadius:10,border:"1.5px solid #65CE5A",background:C.white,color:"#2E7D32",fontSize:12,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#2E7D32" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
               Enviar Recordatorio
@@ -7007,7 +7019,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
 
           {/* Fields */}
           {becameInactive&&<div role="alert" aria-live="polite" style={{background:"#FFF3E0",borderRadius:10,padding:"10px 14px",marginBottom:10,fontSize:12,fontWeight:700,color:"#E65100"}}>Este alumno fue marcado como inactivo. Cerrá y volvé a intentar.</div>}
-          {pagoTipo==="clases"&&classHasNoCalendar&&(
+          {pagoTipo==="clases"&&classHasNoCalendar&&!clasesConsultMode&&(
             <div style={{gridColumn:"1/-1",background:"#FFF3E0",borderRadius:10,padding:"10px 14px",marginBottom:10,fontSize:12,fontWeight:700,color:"#E65100"}}>
               {NO_CALENDAR_PAGO_MESSAGE}
             </div>
@@ -7094,11 +7106,12 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               </div>
             );
           })()}
-          {pagoTipo&&!isModernMensualFlow&&(<>
-          {pagoTipo==="clases"?(
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          {pagoTipo&&!isModernMensualFlow&&!clasesConsultMode&&(<>
+          {pagoTipo==="clases"?(<>
+            <div style={{fontSize:20,fontWeight:900,color:"#1A237E",marginBottom:14,textAlign:"left"}}>Registrar pago</div>
+            <div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr)",gap:10,marginBottom:10,textAlign:"left"}}>
               <div>
-                <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>¿Cuántas clases pagamos?</div>
+                <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>Clases a pagar</div>
                 {(()=>{
                   // Cap = payableRows.length: every currently pending, payable row
                   // across ALL obligations (Combo + Individual), not just one combo.
@@ -7106,26 +7119,27 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
                   // date-generation caps only protects a scan that has somewhere real to look.
                   const maxUnpaid=classHasNoCalendar?0:payableRows.length;
                   return (
-                    <div style={{display:"flex",alignItems:"center",background:C.blueL,borderRadius:12,overflow:"hidden"}}>
-                      <button onClick={()=>setLocalClasses(Math.max(0,(parseInt(localClasses)||0)-1))} style={{width:44,height:46,border:"none",background:"#2C5EF7",color:"#fff",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>◀</button>
-                      <div style={{flex:1,textAlign:"center",fontSize:22,fontWeight:800,color:"#1A237E"}}>{parseInt(localClasses)||0}</div>
-                      <button onClick={()=>setLocalClasses(Math.min(maxUnpaid,(parseInt(localClasses)||0)+1))} disabled={classHasNoCalendar} style={{width:44,height:46,border:"none",background:classHasNoCalendar?"#B0BEC5":"#2C5EF7",color:"#fff",fontSize:20,cursor:classHasNoCalendar?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>▶</button>
+                    // One control: − | number | + on a light-blue track, same height as Monto.
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:4,height:48,padding:4,boxSizing:"border-box",background:C.blueL,borderRadius:12}}>
+                      <button onClick={()=>setLocalClasses(Math.max(0,(parseInt(localClasses)||0)-1))} aria-label="Restar una clase" style={{width:44,height:40,padding:0,border:"none",borderRadius:10,background:"transparent",color:"#1A237E",fontSize:28,fontWeight:700,lineHeight:1,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>−</button>
+                      <div style={{flex:"0 1 60px",minWidth:0,height:40,borderRadius:10,background:"#1A237E",color:"#fff",fontSize:22,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{parseInt(localClasses)||0}</div>
+                      <button onClick={()=>setLocalClasses(Math.min(maxUnpaid,(parseInt(localClasses)||0)+1))} disabled={classHasNoCalendar} aria-label="Sumar una clase" style={{width:44,height:40,padding:0,border:"none",borderRadius:10,background:"transparent",color:classHasNoCalendar?"#B0BEC5":"#1A237E",fontSize:28,fontWeight:700,lineHeight:1,cursor:classHasNoCalendar?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>+</button>
                     </div>
                   );
                 })()}
               </div>
               <div>
                 <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>Monto (₲)</div>
-                <MoneyInput value={parseInt(localAmount)||0} onChange={v=>setLocalAmount(v)} placeholder="0" style={iSp}/>
+                <MoneyInput value={parseInt(localAmount)||0} onChange={v=>setLocalAmount(v)} placeholder="0" style={{...iSp,height:48}}/>
               </div>
             </div>
-          ):(
+          </>):(
             <div style={{marginBottom:10}}>
               <div style={{fontSize:12,fontWeight:700,color:"#1565C0",marginBottom:6}}>Monto (₲)</div>
               <MoneyInput value={parseInt(localAmount)||0} onChange={v=>setLocalAmount(v)} placeholder="0" style={iSp}/>
             </div>
           )}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+          <div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr)",gap:10,marginBottom:16,textAlign:pagoTipo==="clases"?"left":undefined}}>
             {pagoTipo==="mensual"&&mensualInfoCombo?.cobroDia&&(
               <div style={{gridColumn:"1/-1",background:"#E8F5E9",borderRadius:10,padding:"10px 14px"}}>
                 <div style={{fontSize:12,fontWeight:700,color:"#2E7D32"}}>📅 Día de cobro: {mensualInfoCombo.cobroDia} de cada mes</div>
@@ -7287,6 +7301,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             ?((detallesMonth.kind==="incompleta"||detallesMonth.voidWindowOpen)&&detallesMonth.btn&&detallesMonth.btn.enabled&&(
               <button onClick={()=>{setVoidError("");setStep("void");}} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#C62828,#E53935)",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:800}}>{detallesMonth.kind==="incompleta"?"Completar anulación":"Anular Pago"}</button>
             ))
+            :clasesConsultMode?null
             :(detallesPending&&!detallesPayMode)
             // Save mode: "Guardar monto" takes the primary action's place (same slot/style as Confirmar pago).
             ?<button onClick={handleSaveMensualAmountClick} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:800}}>Guardar monto</button>
@@ -7341,6 +7356,24 @@ function RecordatorioModal({ student:s, onClose, sendNotification, getRem, getCo
         </div>
       </div>
     </div>
+  );
+}
+
+// Combo progress ("Progreso del combo · N de M") — presentation only, shared by PaymentCard and
+// PagoModal. Every value comes from getAccountCounters (realizadasCombo/totalEntitlementCombo/noPagadas,
+// the REAL noPagadas — never a stepper preview); callers render it only when totalEntitlementCombo>0.
+function ComboProgressBar({ realizadasCombo, totalEntitlementCombo, noPagadas }) {
+  const paymentBarColor=noPagadas>0?"#C62828":C.green;
+  return (
+    <>
+      <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+        <span style={{fontSize:10,fontWeight:700,color:C.mutedDark}}>Progreso del combo</span>
+        <span style={{fontSize:10,fontWeight:600,color:C.mutedDark}}>{realizadasCombo} de {totalEntitlementCombo}</span>
+      </div>
+      <div style={{height:5,borderRadius:999,background:C.blueL,overflow:"hidden"}}>
+        <div style={{height:"100%",width:Math.min(100,(realizadasCombo/totalEntitlementCombo)*100)+"%",borderRadius:999,background:paymentBarColor}}/>
+      </div>
+    </>
   );
 }
 
@@ -7501,15 +7534,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
               </div>
               <div style={{marginBottom:extraCols.length>0?8:0}}>
                 {showProgress?(
-                  <>
-                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                      <span style={{fontSize:10,fontWeight:700,color:C.mutedDark}}>Progreso del combo</span>
-                      <span style={{fontSize:10,fontWeight:600,color:C.mutedDark}}>{realizadasCombo} de {totalEntitlementCombo}</span>
-                    </div>
-                    <div style={{height:5,borderRadius:999,background:C.blueL,overflow:"hidden"}}>
-                      <div style={{height:"100%",width:Math.min(100,(realizadasCombo/totalEntitlementCombo)*100)+"%",borderRadius:999,background:paymentBarColor}}/>
-                    </div>
-                  </>
+                  <ComboProgressBar realizadasCombo={realizadasCombo} totalEntitlementCombo={totalEntitlementCombo} noPagadas={noPagadas}/>
                 ):(
                   // Individual puro (sin Combo activo): solo la raya de estado de pago,
                   // sin texto "Progreso"/"N de N" ni porcentaje inventado.
