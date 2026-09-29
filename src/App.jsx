@@ -6391,10 +6391,11 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   const [localClasses,setLocalClasses]=useState(0);
   const [localAmount,setLocalAmount]=useState(()=>pagoTipo==="mensual"&&mensualCombo?getMontoVigente(mensualCombo,initialPayMonth):0);
   const [amountTouched,setAmountTouched]=useState(false);
-  // Pending current/future month in Detalles: the coach says explicitly whether this is only a new
-  // amount ("save") or a payment ("pay"). Always starts at "save" and goes back to it on every month
-  // change, so a payment intent never carries over to another month. Never touches amount/date/method.
-  const [payIntent,setPayIntent]=useState("save");
+  // Pending current/future month in Detalles: the coach says explicitly whether this is a payment
+  // ("pay") or only a new amount ("save"). Starts at "pay" and goes back to it on every month change —
+  // only a pre-selection: nothing is written until the bottom button is confirmed. Never touches
+  // amount/date/method.
+  const [payIntent,setPayIntent]=useState("pay");
   const [savedNotice,setSavedNotice]=useState(null);
   const [voidError,setVoidError]=useState("");
   const voidBusyRef=useRef(false);
@@ -6407,7 +6408,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   const changePayMonth=(mes)=>{
     setLocalPayMonth(mes);
     setSavedNotice(null);
-    setPayIntent("save");
+    setPayIntent("pay");
     if(mensualCombo&&!amountTouched) setLocalAmount(getMontoVigente(mensualCombo,mes));
   };
   const editAmount=(v)=>{
@@ -6419,7 +6420,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
     setPagoTipo(tipo);
     setLocalClasses(0);
     setAmountTouched(false);
-    setPayIntent("save");
+    setPayIntent("pay");
     setLocalAmount(tipo==="mensual"&&mensualCombo?getMontoVigente(mensualCombo,localPayMonth):0);
   };
   const mensualPaymentPayload=()=>({studentId:s.id,target:mensualTarget,mes:localPayMonth||TODAY_DATE.slice(0,7),fechaPago:localPayDate||TODAY_DATE,monto:parseInt(localAmount)||0,method:payMethod});
@@ -6457,7 +6458,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
     if(result&&(result.status==="ok"||result.status==="already-complete")){
       setVoidError("");
       setStep("form");
-      setPayIntent("save");
+      setPayIntent("pay");
       if(!amountTouched) setLocalAmount(getMontoVigente(mensualCombo,row.mes));
       return;
     }
@@ -7052,12 +7053,17 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
                 {detallesShowIntent&&(
                   <div style={{marginBottom:14}}>
                     <div style={lbl}>¿Querés registrar el pago ahora?</div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                      {[["pay","Sí, registrar el pago"],["save","No, solo guardar el monto"]].map(([v,l])=>(
-                        <button key={v} onClick={()=>setPayIntent(v)} aria-pressed={payIntent===v} style={{padding:"11px",borderRadius:12,border:"none",background:payIntent===v?"linear-gradient(135deg,#1565C0,#1976D2)":C.blueL,color:payIntent===v?"#fff":C.blue2,fontSize:13,cursor:"pointer",fontWeight:800}}>{l}</button>
+                    {/* Segmented control: one light track, the selected option in dark navy. */}
+                    <div role="group" aria-label="¿Querés registrar el pago ahora?" style={{display:"flex",gap:4,padding:4,borderRadius:12,background:C.blueL}}>
+                      {[["pay","Sí, registrar pago"],["save","No, solo definir monto"]].map(([v,l])=>(
+                        <button key={v} onClick={()=>setPayIntent(v)} aria-pressed={payIntent===v} style={{flex:1,minWidth:0,padding:"11px 6px",borderRadius:10,border:"none",background:payIntent===v?"#1A237E":"transparent",color:payIntent===v?"#fff":"#1A237E",fontSize:13,lineHeight:1.2,cursor:"pointer",fontWeight:800}}>{l}</button>
                       ))}
                     </div>
                   </div>
+                )}
+                {/* Why "Registrar pago" is disabled — right under the choice, visible without scrolling. */}
+                {detallesSkippedMonth&&(
+                  <div role="alert" aria-live="polite" style={{background:"#FFF3E0",borderRadius:10,padding:"10px 14px",marginBottom:14,fontSize:12,fontWeight:700,color:"#E65100"}}>{mensualPaymentMessage("skip-month",{mes:detallesSkippedMonth})}</div>
                 )}
                 {(isPaidView||detallesPayMode)&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
                   <div>
@@ -7077,9 +7083,6 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
                       </select>}
                   </div>
                 </div>}
-                {detallesSkippedMonth&&(
-                  <div role="alert" aria-live="polite" style={{background:"#FFF3E0",borderRadius:10,padding:"10px 14px",marginBottom:10,fontSize:12,fontWeight:700,color:"#E65100"}}>{mensualPaymentMessage("skip-month",{mes:detallesSkippedMonth})}</div>
-                )}
                 {!isPaidView&&savedNotice&&savedNotice.mes===localPayMonth&&(
                   <div role="status" style={{background:"#E8F5E9",borderRadius:10,padding:"10px 14px",marginTop:10,fontSize:12,fontWeight:700,color:"#2E7D32"}}>
                     {"Monto guardado: desde "+mensualPeriodLabel(savedNotice.mes)+" el monto vigente es "+fmtMoney(savedNotice.monto)+". "+mensualPeriodLabel(savedNotice.mes)+" sigue pendiente."}
@@ -7305,7 +7308,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             :(detallesPending&&!detallesPayMode)
             // Save mode: "Guardar monto" takes the primary action's place (same slot/style as Confirmar pago).
             ?<button onClick={handleSaveMensualAmountClick} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:800}}>Guardar monto</button>
-            :<button onClick={pagoTipo==="mensual"?handleGoToReview:handleConfirm} disabled={!!detallesSkippedMonth} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:!detallesSkippedMonth&&((parseInt(localClasses)>0&&parseInt(localAmount)>0)||(pagoTipo==="mensual"&&(isModernMensualFlow?parseInt(localAmount)>=0:parseInt(localAmount)>0)))?"linear-gradient(135deg,#52C048,#65CE5A)":"#CBD5E0",color:"#fff",cursor:detallesSkippedMonth?"not-allowed":"pointer",fontSize:14,fontWeight:800}}>✓ Confirmar pago</button>}
+            :<button onClick={pagoTipo==="mensual"?handleGoToReview:handleConfirm} disabled={!!detallesSkippedMonth} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:!detallesSkippedMonth&&((parseInt(localClasses)>0&&parseInt(localAmount)>0)||(pagoTipo==="mensual"&&(isModernMensualFlow?parseInt(localAmount)>=0:parseInt(localAmount)>0)))?"linear-gradient(135deg,#52C048,#65CE5A)":"#CBD5E0",color:"#fff",cursor:detallesSkippedMonth?"not-allowed":"pointer",fontSize:14,fontWeight:800}}>{detallesShowIntent?"Registrar pago":"✓ Confirmar pago"}</button>}
         </div>
       </div>
       {showRecordatorioPago&&<RecordatorioModal student={s} onClose={()=>setShowRecordatorioPago(false)} sendNotification={sendNotification} getRem={()=>getRem(s,classes)} getCombo={()=>getCombo(s)} isStudentActiveNow={isStudentActiveNow}/>}
