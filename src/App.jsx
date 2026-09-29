@@ -9684,6 +9684,19 @@ export default function App() {
     };
   },[mode,isCoachOperational,user?.id]);
 
+  // Drops every piece of business state held for the previous identity — the six coach_data keys and
+  // the coach profile — and forgets which identity dataReady/dataLoadFailed described. Used on EVERY
+  // identity change (hydration effect below) and by handleLogout, so whatever way the identity changed
+  // (logout, another tab, an expired/replaced session, the student portal), nothing of the previous
+  // coach's data can stay on screen or be written back under the new one.
+  const resetBusinessState=()=>{
+    applyStudentsLocally([]);applyClassesLocally([]);setCourtsRaw([]);setPackagesRaw([]);setFamiliesRaw([]);
+    setCoachProfileRaw({name:"Coach",sport:"",photo:null});setExpensesRaw([]);latestExpensesRef.current=[];
+    setDataReady(false);
+    setDataLoadFailed(false);
+    hydratedIdentityRef.current=null;
+  };
+
   // Business-data hydration for a resolved identity (Fase D). resolveSession (now in
   // auth/, owned by AuthProvider) only resolves identity — it has no access to these
   // data-state closures, since AuthProvider is mounted above App in main.jsx. This
@@ -9705,7 +9718,12 @@ export default function App() {
     // reconcile (this tab or another) must still be able to recover/flush it.
     const previousIdentity=activeIdentityRef.current;
     const nextIdentity=user?.id||null;
-    if(previousIdentity&&previousIdentity!==nextIdentity) cancelPendingSync(previousIdentity);
+    if(previousIdentity!==nextIdentity){
+      if(previousIdentity) cancelPendingSync(previousIdentity);
+      // Identity changed (A→B, A→null, null→A): nothing held for the previous identity survives into
+      // the next one, whichever way the change happened.
+      resetBusinessState();
+    }
     activeIdentityRef.current=nextIdentity;
     if(!user){
       setDataReady(false);
@@ -9937,10 +9955,7 @@ export default function App() {
       // (izi_mode, izi_onboarded, the old non-namespaced izi_students/
       // izi_classes/etc.) should go; the outbox must not.
       clearLocalStateExceptOutbox();
-      applyStudentsLocally([]);applyClassesLocally([]);setCourtsRaw([]);setPackagesRaw([]);setFamiliesRaw([]);
-      setCoachProfileRaw({name:"Coach",sport:"",photo:null});setExpensesRaw([]);
-      setDataReady(false);
-      setDataLoadFailed(false);
+      resetBusinessState();
     }
   };
 

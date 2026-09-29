@@ -59,6 +59,11 @@ const _inMemoryLocks = {}; // lockName -> chained promise (no-Web-Locks fallback
 const _reconcileInFlight = {}; // coachId -> promise (single-flight)
 const _generation = {}; // coachId -> number, bumped by cancelPendingSync to invalidate stale work
 const _activeSendTokens = {}; // scopedKey -> mutationToken this OWN instance is genuinely awaiting an RPC response for right now (verification finding: repairOutboxStructure must not treat this as orphaned)
+// coachId -> true once reconcileCoachData(coachId) completed a real read AND applied it while that
+// coachId was still the active identity in this tab. The only thing that authorizes a NEW write for a
+// coachId (enqueueCoachDataWrite). Cleared by cancelPendingSync (identity change/logout), so an
+// identity is never "hydrated" by a response that arrived after it stopped being the active one.
+const _hydratedFor = {};
 
 function scopedKeyOf(coachId, dataKey) {
   return `${coachId}:${dataKey}`;
@@ -242,7 +247,22 @@ function withOutboxLock(coachId, dataKey, clientInstanceId, fn) {
 // ----------------------------------------------------------------------------
 // RPC call
 // ----------------------------------------------------------------------------
-async function callCompareAndSet(dataKey, entry) {
+// The RPC writes into the row of the SESSION's auth.uid(), never into the coachId this module is
+// processing — so right before every send (first attempt, retry, promoted pendingLatest, "keep mine",
+// volatile send) the current session must still be authenticated as exactly that coachId. The session
+// is shared across tabs, so this also catches an identity switched from another tab before this tab's
+// own identity change reached cancelPendingSync. Any doubt (no session, error) means "don't send".
+async function sessionIsCoach(coachId) {
+  try {
+    const { data } = await supabase.auth.getSession();
+    return !!coachId && data?.session?.user?.id === coachId;
+  } catch {
+    return false;
+  }
+}
+
+async function callCompareAndSet(coachId, dataKey, entry) {
+  if (!(await sessionIsCoach(coachId))) return { failed: false, superseded: true };
   try {
     const { data, error } = await supabase.rpc("coach_data_compare_and_set", {
       p_data_key: dataKey,
@@ -350,7 +370,7 @@ async function processOutboxSlotInner(coachId, dataKey, clientInstanceId) {
     _activeSendTokens[activeSendKey] = entry.mutationToken;
     let outcome;
     try {
-      outcome = await callCompareAndSet(dataKey, entry);
+      outcome = await callCompareAndSet(coachId, dataKey, entry);
     } finally {
       // callCompareAndSet never actually throws today (it has its own
       // try/catch), but this registry exists specifically to stop
@@ -359,6 +379,19 @@ async function processOutboxSlotInner(coachId, dataKey, clientInstanceId) {
       // (that would permanently block crash-recovery for this key in this
       // instance, exactly the failure mode this registry was added to fix).
       if (_activeSendTokens[activeSendKey] === entry.mutationToken) delete _activeSendTokens[activeSendKey];
+    }
+
+    if (outcome.superseded) {
+      // Never sent: the session is no longer this coachId. The entry stays durable as "pending" and
+      // no retry is armed — only a later reconcile for this same coach (authenticated as it) sends it.
+      const reread = readOutboxSlot(coachId, dataKey, clientInstanceId, "inFlight");
+      if (reread.ok && reread.value && reread.value.mutationToken === entry.mutationToken) {
+        reread.value.status = "pending";
+        writeOutboxSlot(coachId, dataKey, clientInstanceId, "inFlight", reread.value);
+      }
+      resolvePendingPromise(coachId, dataKey, entry.mutationToken, { status: "superseded" });
+      notifyStatusChange(coachId, dataKey);
+      return "superseded";
     }
 
     if (outcome.failed) {
@@ -459,9 +492,17 @@ async function sendVolatileEntryNow(coachId, dataKey, clientInstanceId, entry, r
   _activeSendTokens[activeSendKey] = entry.mutationToken;
   let outcome;
   try {
-    outcome = await callCompareAndSet(dataKey, entry);
+    outcome = await callCompareAndSet(coachId, dataKey, entry);
   } finally {
     if (_activeSendTokens[activeSendKey] === entry.mutationToken) delete _activeSendTokens[activeSendKey];
+  }
+
+  if (outcome.superseded) {
+    // The session is no longer this coachId: never send this volatile payload under another identity,
+    // and stop retrying it. The volatile-unsafe banner for this coach stays as it was.
+    entry.status = "pending";
+    resolvers.forEach((r) => r({ status: "superseded" }));
+    return;
   }
 
   if (outcome.failed) {
@@ -534,6 +575,12 @@ async function sendVolatileEntryNow(coachId, dataKey, clientInstanceId, entry, r
 export function enqueueCoachDataWrite(coachId, dataKey, payload) {
   if (!coachId || !DATA_KEYS.includes(dataKey) || !Array.isArray(payload)) {
     return Promise.resolve({ status: "skipped-invalid-args" });
+  }
+  // Identity invariant: a new write is only accepted for a coachId whose own data this tab has
+  // hydrated (reconcileCoachData) while it was the active identity. Nothing is written to the outbox
+  // otherwise — state that was never verified to belong to this coach can never be persisted as its.
+  if (!_hydratedFor[coachId]) {
+    return Promise.resolve({ status: "skipped-not-hydrated" });
   }
   const clientInstanceId = getClientInstanceId();
   const scopedKey = scopedKeyOf(coachId, dataKey);
@@ -995,10 +1042,15 @@ export function reconcileCoachData(coachId, rawSetters, isStillActive) {
           return;
         }
         const setter = rawSetters && rawSetters[rawSetterName(dataKey)];
-        if (setter && info.exists) setter(info.dataValue || []);
-        // !info.exists: row genuinely absent — leave local state as-is.
+        // A row that doesn't exist for THIS coach means this coach has nothing for that key — never
+        // keep whatever local state held (it may belong to a previous identity in this tab).
+        if (setter) setter(info.exists ? info.dataValue || [] : []);
       });
 
+      // Same synchronous turn as the stillActive() check right after the fetch above — this coach
+      // was still the active identity when its data was applied, so it may now write.
+      if (!stillActive()) return { ok: false, superseded: true };
+      _hydratedFor[coachId] = true;
       return { ok: true, revisions: appliedRevisions };
     } catch (e) {
       return { ok: false, error: e };
@@ -1088,6 +1140,8 @@ export function discardQuarantined(coachId, dataKey, rawSetters, isStillActive) 
 export function cancelPendingSync(coachId) {
   if (!coachId) return;
   _generation[coachId] = (_generation[coachId] || 0) + 1;
+  // No longer the active identity in this tab: it must be hydrated again before writing again.
+  delete _hydratedFor[coachId];
   const prefix = coachId + ":";
   // A debounce timer left running would fire processOutboxSlot after this
   // identity is no longer current — the RPC resolves coach_id from the
