@@ -1,0 +1,38 @@
+-- ============================================================================
+-- Student Portal — Migration B: retire "student_read_coach_data" on public.coach_data
+--
+-- WHY: this policy lets any linked, active student SELECT all six coach_data
+-- keys of their coach (every other student's record, rosters, attendance,
+-- studentData/studentPacks, the coach's whole ledger). The Student Portal no
+-- longer depends on it: since commit dcb31c0 (deployed and smoke-tested in
+-- production 2026-09-30) it loads exclusively through get_my_student_portal()
+-- (Migration A, 20260929230000_student_portal_rpc.sql), which is SECURITY
+-- DEFINER and does not need this policy.
+--
+-- SCOPE — exactly one effective statement below. Deliberately NOT touched:
+--   - coach_select_own_data / coach_insert_own_data / coach_update_own_data
+--   - any table grant on public.coach_data
+--   - get_my_student_portal() / portal_filter_id_array() and their grants
+--   - "student_read_coach" on public.coaches (that is Migration C, later)
+--
+-- No IF EXISTS on purpose: if the policy is not there, this must fail loudly
+-- instead of silently succeeding against an unexpected schema.
+--
+-- ROLLBACK (only if ever needed) — the exact definition this removes, as
+-- created by 20260911142144_account_access_control_phase_c2_rls.sql:
+--
+--   CREATE POLICY "student_read_coach_data"
+--     ON public.coach_data
+--     FOR SELECT
+--     TO authenticated
+--     USING (
+--       EXISTS (
+--         SELECT 1 FROM public.student_auth sa
+--         WHERE sa.id = (select auth.uid())
+--           AND sa.coach_id = coach_data.coach_id
+--       )
+--       AND (select public.student_portal_has_access((select auth.uid())))
+--     );
+-- ============================================================================
+
+drop policy "student_read_coach_data" on public.coach_data;
