@@ -535,6 +535,62 @@ const buildMensualHistoryEvents=(row,expenses)=>{
       isActive:!incompleta&&e.estado==="pagado"&&!!row.fechaPago&&link===rowLink};
   });
 };
+// ESTADO MENSUAL of ONE modern mensual combo — the single reading shared by the Cobros card and the Student
+// Portal (pure; only the canonical helpers above: getMensualEstado, getMontoVigente, mensualAddMonths).
+// Próxima mensualidad = always the month right after the current one; its amount is the vigente one
+// (getMontoVigente), or the stored amount if it was already paid in advance. showNext is false when the
+// combo only starts after that month. currentRow is the current month's row (null before the combo starts).
+const buildMensualSummary=(combo)=>{
+  const est=getMensualEstado(combo);
+  const oldestMora=est.mensualidades.find(m=>m.estado==="mora");
+  let diasV=0;
+  if(oldestMora){
+    const venc=new Date(oldestMora.fechaVencimiento+"T12:00:00");
+    const hoy=new Date(TODAY_DATE+"T12:00:00");
+    diasV=Math.floor((hoy-venc)/(1000*60*60*24));
+  }
+  const isMora=est.mora>0;
+  const isPendiente=est.pendiente>0&&!isMora;
+  const isAlDia=!isMora&&!isPendiente;
+  const moraMonths=est.mensualidades.filter(m=>m.estado==="mora").map(m=>{const [,mm]=m.mes.split("-");return MESES_LARGO[parseInt(mm)-1];});
+  const curMes=TODAY_DATE.slice(0,7);
+  const currentRow=est.mensualidades.find(m=>m.mes===curMes)||null;
+  const nextMes=mensualAddMonths(curMes,1);
+  const showNext=!(nextMes<(combo.date||"").slice(0,7));
+  const nextRow=est.mensualidades.find(m=>m.mes===nextMes);
+  const nextPaid=!!(nextRow&&nextRow.estado==="pagado");
+  const nextMonto=nextPaid?nextRow.monto:getMontoVigente(combo,nextMes);
+  return {est,isMora,isPendiente,isAlDia,diasV,moraMonths,cobroDia:combo.cobroDia,graciaDias:combo.graciaDias||5,curMes,currentRow,nextMes,showNext,nextPaid,nextMonto};
+};
+// ESTADO MENSUAL of a LEGACY mensual entry (no mensualidades[]) — the original paid/payDate reading, shared by
+// the Cobros card and the Student Portal. Pure.
+const buildMensualLegacySummary=(legacyMensual)=>{
+  const lastDate=legacyMensual?.payDate||legacyMensual?.date||TODAY_DATE;
+  const lastPay=new Date(lastDate+"T12:00:00");
+  const today=new Date(TODAY_DATE+"T12:00:00");
+  const isPaid=legacyMensual?.paid===true;
+  const nextDue=isPaid?new Date(lastPay.getFullYear(),lastPay.getMonth()+1,lastPay.getDate()):lastPay;
+  const diffDays=Math.floor((today-nextDue)/(1000*60*60*24))+1;
+  const overdue=!isPaid||diffDays>0;
+  return {isPaid,diffDays,overdue};
+};
+// Historial de Pagos of ONE student — the single list shared by the Cobros "Historial de Pagos" sheet and the
+// Student Portal: every combo/individual/legacy payment (payments[]) plus one entry per payment EVENT of each
+// mensual month (buildMensualHistoryEvents: a voided payment stays listed as anulado next to the later one that
+// replaced it). Each entry's key is the record's own identity (its combo's identity + the payment's own fields /
+// the mensualidad's mes), never a position in any array. Read-only, never written back.
+const buildStudentPaymentHistory=(s,expenses)=>(s.combos||[]).flatMap(c=>{
+  const comboKey=[c.packType,c.id,c.sourceClassId,c.date].map(v=>v===undefined||v===null?"":String(v)).join("|");
+  const reg=(c.payments||[]).map(p=>({...p,comboTotal:c.total,packType:c.packType,key:"p|"+comboKey+"|"+[p.id,p.date,p.amount,p.qty,p.method].map(v=>v===undefined||v===null?"":String(v)).join("|")}));
+  const mens=(c.mensualidades||[]).flatMap(m=>{
+    const events=buildMensualHistoryEvents(m,expenses);
+    return events.map(ev=>({key:"m|"+comboKey+"|"+m.mes+"|"+(ev.pagoLinkId===null?"sin-vinculo:"+ev.estado:ev.pagoLinkId),
+      id:m.id,qty:1,amount:ev.monto,method:ev.method||"",date:ev.fechaPago,comboTotal:null,
+      detail:"Mensualidad "+mensualPeriodLabel(m.mes),mes:m.mes,pagoLinkId:ev.pagoLinkId,packType:c.packType,
+      eventEstado:ev.estado,anuladoEl:ev.anuladoEl,isActive:ev.isActive,monthEvents:events}));
+  });
+  return [...reg,...mens];
+});
 // Months the Detalles selector offers — present/future and still-open operations only, never a
 // history browser: every unpaid past month since the combo started (open debt), the current month and
 // the next two, paid months still inside the void window, and half-done voids of any age. Sorted, unique.
@@ -7566,19 +7622,8 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
         {getAllMensualEntitlements(s).length>0&&(()=>{
           const modernMensual=displayedModernMensual;
           if(modernMensual){
-            const est=getMensualEstado(modernMensual);
-            const oldestMora=est.mensualidades.find(m=>m.estado==="mora");
-            let diasV=0;
-            if(oldestMora){
-              const venc=new Date(oldestMora.fechaVencimiento+"T12:00:00");
-              const hoy=new Date(TODAY_DATE+"T12:00:00");
-              diasV=Math.floor((hoy-venc)/(1000*60*60*24));
-            }
-            const isMora=est.mora>0;
-            const isPendiente=est.pendiente>0&&!isMora;
-            const isAlDia=!isMora&&!isPendiente;
-            const MESES_LABEL=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
-            const moraMonths=est.mensualidades.filter(m=>m.estado==="mora").map(m=>{const [,mm]=m.mes.split("-");return MESES_LABEL[parseInt(mm)-1];});
+            // Shared reading (buildMensualSummary) — the Student Portal shows the same states from the same helper.
+            const {isMora,isAlDia,diasV,moraMonths,nextMes,showNext,nextPaid,nextMonto}=buildMensualSummary(modernMensual);
             return (
               <div style={{marginBottom:12}}>
                 <div style={{fontSize:11,fontWeight:800,color:C.blue2,letterSpacing:1,marginBottom:6}}>ESTADO MENSUAL</div>
@@ -7591,13 +7636,8 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
                   {isMora&&<span style={{color:"#C62828",fontWeight:700}}> — Debe {moraMonths.join(", ")}</span>}
                 </div>
                 {(()=>{
-                  // Próxima mensualidad = always the month right after the current one; its amount is the
-                  // vigente one (getMontoVigente), or the stored amount if it was already paid in advance.
-                  const nextMes=mensualAddMonths(TODAY_DATE.slice(0,7),1);
-                  if(nextMes<(modernMensual.date||"").slice(0,7)) return null;
-                  const nextRow=est.mensualidades.find(m=>m.mes===nextMes);
-                  const nextPaid=!!(nextRow&&nextRow.estado==="pagado");
-                  const nextMonto=nextPaid?nextRow.monto:getMontoVigente(modernMensual,nextMes);
+                  // Próxima mensualidad (buildMensualSummary): the month right after the current one.
+                  if(!showNext) return null;
                   return (
                     <div style={{marginTop:10,background:nextPaid?"#E8F5E9":"#FFF8E1",borderRadius:10,padding:"9px 12px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
                       <div style={{fontSize:12,color:"#1A237E",lineHeight:1.35,textAlign:"left"}}>
@@ -7615,13 +7655,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
           const legacyEntries=getAllMensualEntitlements(s).filter(c=>!isModernMensual(c));
           const legacyMensual=legacyEntries[legacyEntries.length-1];
           if(!legacyMensual) return null;
-          const lastDate=legacyMensual?.payDate||legacyMensual?.date||TODAY_DATE;
-          const lastPay=new Date(lastDate+"T12:00:00");
-          const today=new Date(TODAY_DATE+"T12:00:00");
-          const isPaid=legacyMensual?.paid===true;
-          const nextDue=isPaid?new Date(lastPay.getFullYear(),lastPay.getMonth()+1,lastPay.getDate()):lastPay;
-          const diffDays=Math.floor((today-nextDue)/(1000*60*60*24))+1;
-          const overdue=!isPaid||diffDays>0;
+          const {diffDays,overdue}=buildMensualLegacySummary(legacyMensual);
           return (
             <div style={{marginBottom:12}}>
               <div style={{fontSize:11,fontWeight:800,color:C.blue2,letterSpacing:1,marginBottom:6}}>ESTADO MENSUAL</div>
@@ -7710,20 +7744,10 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
         // Selection key = the record's own identity (its combo's identity + the payment's own fields /
         // the mensualidad's mes), never a position in any array — reordering, filtering or adding
         // records can never make a selection show another payment's data.
-        const historyPayments=(s.combos||[]).flatMap(c=>{
-          const comboKey=[c.packType,c.id,c.sourceClassId,c.date].map(v=>v===undefined||v===null?"":String(v)).join("|");
-          const reg=(c.payments||[]).map(p=>({...p,comboTotal:c.total,packType:c.packType,key:"p|"+comboKey+"|"+[p.id,p.date,p.amount,p.qty,p.method].map(v=>v===undefined||v===null?"":String(v)).join("|")}));
-          // One entry per payment EVENT of each month (historialPagos): a voided payment stays listed as
-          // anulado next to the later one that replaced it — the record, not just the current state.
-          const mens=(c.mensualidades||[]).flatMap(m=>{
-            const events=buildMensualHistoryEvents(m,expenses);
-            return events.map(ev=>({key:"m|"+comboKey+"|"+m.mes+"|"+(ev.pagoLinkId===null?"sin-vinculo:"+ev.estado:ev.pagoLinkId),
-              id:m.id,qty:1,amount:ev.monto,method:ev.method||"",date:ev.fechaPago,comboTotal:null,
-              detail:"Mensualidad "+mensualPeriodLabel(m.mes),mes:m.mes,pagoLinkId:ev.pagoLinkId,packType:c.packType,
-              eventEstado:ev.estado,anuladoEl:ev.anuladoEl,isActive:ev.isActive,monthEvents:events}));
-          });
-          return [...reg,...mens];
-        });
+        // One entry per payment EVENT of each month (historialPagos): a voided payment stays listed as
+        // anulado next to the later one that replaced it — the record, not just the current state.
+        // Built by buildStudentPaymentHistory, the same list the Student Portal filters for its own view.
+        const historyPayments=buildStudentPaymentHistory(s,expenses);
         const selected=historyPayments.find(x=>x.key===histKey)||historyPayments[historyPayments.length-1]||null;
         const wDFull=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
         const mNShort=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
@@ -8589,7 +8613,72 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
   );
 }
 
-function StudentApp({ student: initialStudent, onExit, classes=[], notifications=[], sendNotification, coachId, students=[], families=[] }) {
+// Student Portal — payment-method label: stored values keep their original casing ("Efectivo"/"efectivo");
+// only what the student reads is normalized.
+const portalMethodLabel=(m)=>{const k=String(m||"").trim().toLowerCase();return ({efectivo:"Efectivo",transferencia:"Transferencia",tarjeta:"Tarjeta"})[k]||(k?k.charAt(0).toUpperCase()+k.slice(1):"");};
+const portalDate=(ds)=>{const [y,m,d]=String(ds||"").split("-");return y&&m&&d?d+"/"+m+"/"+y:"";};
+// Student Portal payment list: the same history the coach's Historial de Pagos is built from
+// (buildStudentPaymentHistory), keeping every combo/individual/legacy payment exactly as before and, for mensual
+// months, ONLY the effective payment events — voided or half-voided events stay coach-only information.
+const buildPortalPaymentList=(s,expenses)=>buildStudentPaymentHistory(s,expenses).filter(p=>p.eventEstado===undefined||p.eventEstado==="pagado");
+// Student Portal — ESTADO MENSUAL of ONE mensual obligation (the one Cobros shows: getVisibleMensualEntitlement),
+// read through the same helpers as the Cobros card: buildMensualSummary (modern) / buildMensualLegacySummary
+// (legacy). Never a class-package reading. compact = the Mi Familia variant.
+function MensualPortalBlock({ combo, compact=false }) {
+  if(!combo) return null;
+  const header=<div style={{fontSize:11,fontWeight:700,color:C.mutedDark,letterSpacing:1,marginBottom:8,textAlign:"center"}}>ESTADO MENSUAL</div>;
+  const pill=(tone,text)=><span style={{display:"inline-block",fontSize:compact?10:12,fontWeight:800,color:tone.color,background:tone.bg,border:"1.5px solid "+tone.border,borderRadius:20,padding:compact?"2px 8px":"4px 12px",whiteSpace:"nowrap"}}>{text}</span>;
+  const OK={bg:"#E8F5E9",border:"#66BB6A",color:"#2E7D32"}, WAIT={bg:"#FFF8E1",border:"#FFB74D",color:"#F57F17"}, BAD={bg:"#FFEBEE",border:"#EF5350",color:"#C62828"};
+  if(!isModernMensual(combo)){
+    const {diffDays,overdue}=buildMensualLegacySummary(combo);
+    const status=overdue?pill(BAD,diffDays+" días vencido"):pill(OK,"Pago al día ✓");
+    if(compact) return <div data-portal-mensual="legacy" style={{marginTop:8,textAlign:"left"}}>{status}</div>;
+    return (
+      <div data-portal-mensual="legacy" style={{margin:"8px 12px 0"}}>
+        {header}
+        <div style={{background:C.white,borderRadius:20,padding:"14px 16px",boxShadow:"0 2px 12px rgba(44,94,247,0.08)",textAlign:"center"}}>{status}</div>
+      </div>
+    );
+  }
+  const sm=buildMensualSummary(combo);
+  const status=sm.isAlDia?pill(OK,"✓ Al día"):sm.isMora?pill(BAD,"En mora · "+sm.diasV+" días"):pill(WAIT,"⏳ Pendiente");
+  const row=sm.currentRow;
+  const rowStatus=row?(row.estado==="pagado"?pill(OK,"✓ Pagado"):row.estado==="mora"?pill(BAD,"En mora"):pill(WAIT,"Pendiente")):null;
+  const nextStatus=sm.showNext?(sm.nextPaid?pill(OK,"✓ Pagado"):pill(WAIT,"Pendiente")):null;
+  const line=(label,value,badge,sub)=>(
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:compact?"4px 0":"9px 0",borderTop:compact?"none":"1px solid "+C.border}}>
+      <div style={{textAlign:"left",minWidth:0}}>
+        <div style={{fontSize:compact?10:11,fontWeight:700,color:C.mutedDark}}>{label}</div>
+        <div style={{fontSize:compact?12:14,fontWeight:800,color:C.text}}>{value}</div>
+        {sub&&<div style={{fontSize:11,color:C.mutedDark,marginTop:1}}>{sub}</div>}
+      </div>
+      {badge}
+    </div>
+  );
+  if(compact) return (
+    <div data-portal-mensual="modern" style={{marginTop:8}}>
+      <div style={{textAlign:"left",marginBottom:2}}>{status}</div>
+      {sm.showNext&&line("Próxima mensualidad",mensualPeriodLabel(sm.nextMes)+" · "+fmtMoney(sm.nextMonto),nextStatus)}
+    </div>
+  );
+  return (
+    <div data-portal-mensual="modern" style={{margin:"8px 12px 0"}}>
+      {header}
+      <div style={{background:C.white,borderRadius:20,padding:"12px 16px",boxShadow:"0 2px 12px rgba(44,94,247,0.08)"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,paddingBottom:10}}>
+          {status}
+          <div style={{fontSize:11,color:C.mutedDark,textAlign:"right"}}>Cobro: día {sm.cobroDia} de cada mes · Gracia: {sm.graciaDias} días</div>
+        </div>
+        {sm.isMora&&<div style={{fontSize:12,color:"#C62828",fontWeight:700,paddingBottom:8,textAlign:"left"}}>Debe: {sm.moraMonths.join(", ")}</div>}
+        {row&&line("Mes actual",mensualPeriodLabel(sm.curMes)+" · "+fmtMoney(row.monto),rowStatus,
+          row.estado==="pagado"&&row.fechaPago?"Pagado el "+portalDate(row.fechaPago)+(row.method?" · "+portalMethodLabel(row.method):""):null)}
+        {sm.showNext&&line("Próxima mensualidad",mensualPeriodLabel(sm.nextMes)+" · "+fmtMoney(sm.nextMonto),nextStatus)}
+      </div>
+    </div>
+  );
+}
+
+function StudentApp({ student: initialStudent, onExit, classes=[], notifications=[], sendNotification, coachId, students=[], families=[], expenses=[] }) {
   const [tab,setTab]=useState("home");
   const [student,setStudent]=useState(initialStudent);
   const [saveError,setSaveError]=useState(null); // null | "error"
@@ -8681,6 +8770,11 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
   // (getAccountCounters). Thin wrapper only so the own account and family members
   // share one call shape; it does not recompute or override any rule.
   const computeAccountStats=(memberStudent,memberClasses)=>getAccountCounters(memberStudent,memberClasses);
+  // Per OBLIGATION, never per student (a student can hold mensual + combo/individual at once): the class-package
+  // boxes show whenever the person has a visible combo/individual (same getVisibleClassEntitlements as Cobros), and
+  // stay exactly as before for anyone without a visible mensual; they are hidden only for a mensual-only person,
+  // whose ESTADO MENSUAL (getVisibleMensualEntitlement, the one Cobros shows) is shown instead/as well.
+  const showClassBoxesFor=(person,personClasses)=>getVisibleClassEntitlements(person,personClasses).length>0||!getVisibleMensualEntitlement(person);
 
   // Shared "Mis Clases" card rendering — same logic used for the own classes and for family members' classes
   const renderClassCards=(person,personClasses)=>{
@@ -8688,11 +8782,11 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
       const deduped=buildPersonSlotRows(person,personClasses,TODAY_DATE);
       return (
         <WhiteCard key={cls.id} style={{marginBottom:12}}>
-          <div style={{fontWeight:800,fontSize:15,color:C.text,marginBottom:6}}>{cls.title}</div>
+          {/* The class title is the coach's internal label — the student reads days, time and place only. */}
           <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
             {(cls.days||[]).map(d=><span key={d} style={{fontSize:11,padding:"3px 10px",borderRadius:20,background:C.blueL,color:C.blue2,fontWeight:600}}>{d}</span>)}
             <span style={{fontSize:12,color:C.mutedDark}}>🕐 {cls.time}{cls.timeEnd?" – "+cls.timeEnd:""}</span>
-            <span style={{fontSize:12,color:C.mutedDark}}>📍 {cls.court}</span>
+            {cls.court&&<span style={{fontSize:12,color:C.mutedDark}}>📍 {cls.court}</span>}
           </div>
           {deduped.length===0?<div style={{fontSize:12,color:C.mutedDark}}>Sin clases asignadas</div>:(
             <div>
@@ -8808,8 +8902,8 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
               );
             })()}
 
-            {/* Estado de Cuenta */}
-            {(()=>{
+            {/* Estado de Cuenta — class obligations (combo/individual) */}
+            {showClassBoxesFor(student,myClasses)&&(()=>{
               const stats=computeAccountStats(student,myClasses);
               const boxes=[
                 {label:"Pendiente",val:stats.noPagadas,bg:"#FFEBEE",color:"#C62828"},
@@ -8831,6 +8925,8 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                 </div>
               );
             })()}
+            {/* Estado Mensual — mensual obligation, same reading as Cobros */}
+            <MensualPortalBlock combo={getVisibleMensualEntitlement(student)}/>
 
             {/* Mi Familia — visible solo si sos el responsable de pago de la familia. Solo lectura: cada alumno mantiene su cuenta separada. */}
             {familyMembers.length>0&&(
@@ -8863,14 +8959,15 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
                             )}
                           </div>
                         </div>
-                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginTop:8}}>
+                        {showClassBoxesFor(m,mClassesList)&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginTop:8}}>
                           {mBoxes.map(b=>(
                             <div key={b.label} style={{background:b.bg,borderRadius:10,padding:"8px 4px",textAlign:"center"}}>
                               <div style={{fontSize:16,fontWeight:900,color:b.color,lineHeight:1}}>{b.val}</div>
                               <div style={{fontSize:8,fontWeight:700,color:b.color,marginTop:2}}>{b.label}</div>
                             </div>
                           ))}
-                        </div>
+                        </div>}
+                        <MensualPortalBlock combo={getVisibleMensualEntitlement(m)} compact/>
                       </div>
                     );
                   })}
@@ -8961,18 +9058,18 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
         {tab==="pagos"&&(
           <div style={{flex:1,overflowY:"auto",padding:16,paddingBottom:"calc(120px + env(safe-area-inset-bottom, 34px))"}}>
             <div style={{fontSize:16,fontWeight:800,color:C.text,marginBottom:16}}>Historial de Pagos</div>
-            {(student.combos||[]).flatMap(c=>(c.payments||[]).map(p=>({...p,packType:c.packType,comboTotal:c.total}))).length===0&&(
+            {buildPortalPaymentList(student,expenses).length===0&&(
               <div style={{textAlign:"center",padding:"32px 0",color:C.mutedDark}}>Sin pagos registrados aún</div>
             )}
-            {(student.combos||[]).flatMap(c=>(c.payments||[]).map(p=>({...p,packType:c.packType,comboTotal:c.total}))).sort((a,b)=>b.date.localeCompare(a.date)).map((p,i)=>(
+            {buildPortalPaymentList(student,expenses).sort((a,b)=>String(b.date||"").localeCompare(String(a.date||""))).map((p,i)=>(
               <WhiteCard key={i} style={{marginBottom:10}}>
                 <div style={{display:"flex",alignItems:"center",gap:12}}>
                   <div style={{width:44,height:44,borderRadius:12,background:"linear-gradient(135deg,#52C048,#65CE5A)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>✓</div>
                   <div style={{flex:1}}>
                     <div style={{fontWeight:700,fontSize:14,color:C.text}}>
-                      {p.comboTotal===null?"📅 Plan Mensual":"📦 "+p.qty+" clase"+(p.qty>1?"s":"")}
+                      {p.eventEstado!==undefined?"📅 Mensualidad "+mensualPeriodLabel(p.mes):p.comboTotal===null?"📅 Plan Mensual":"📦 "+p.qty+" clase"+(p.qty>1?"s":"")}
                     </div>
-                    <div style={{fontSize:12,color:C.mutedDark,marginTop:2}}>{p.date}</div>
+                    <div style={{fontSize:12,color:C.mutedDark,marginTop:2}}>{p.eventEstado!==undefined?(p.date?"Pagado el "+portalDate(p.date):"")+(p.method?(p.date?" · ":"")+portalMethodLabel(p.method):""):p.date}</div>
                     {p.payMonth&&<div style={{fontSize:11,color:C.blue2,fontWeight:600,marginTop:2}}>Mes: {(["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"][parseInt(p.payMonth?.split("-")[1])-1]||"")} {p.payMonth?.split("-")[0]}</div>}
                   </div>
                   <div style={{textAlign:"right"}}>
@@ -9717,9 +9814,12 @@ export default function App() {
         applyStudentsLocally(mapped.students);
         applyClassesLocally(mapped.classes);
         setFamiliesRaw(mapped.families);
+        // Read-only: the student's own payment movements (history) — raw setter, never an outbox write.
+        setExpensesRaw(mapped.expenses);
+        if(mapped.currency){setCUR(mapped.currency);setCurrency(mapped.currency);}
       } else {
         console.error("student portal: payload identity does not match this session's student_auth");
-        applyStudentsLocally([]);applyClassesLocally([]);setFamiliesRaw([]);
+        applyStudentsLocally([]);applyClassesLocally([]);setFamiliesRaw([]);setExpensesRaw([]);
       }
       setDataLoadFailed(false);
       setDataReady(true);
@@ -9727,7 +9827,7 @@ export default function App() {
       const msg=String(result.error?.message||"");
       if(msg.includes("student_not_found")||msg.includes("no_student_link")){
         // No own record for this session: same fail-closed screen as before, no retry loop.
-        applyStudentsLocally([]);applyClassesLocally([]);setFamiliesRaw([]);
+        applyStudentsLocally([]);applyClassesLocally([]);setFamiliesRaw([]);setExpensesRaw([]);
         setDataLoadFailed(false);
         setDataReady(true);
       } else {
@@ -11182,7 +11282,7 @@ export default function App() {
     }
     return (
       <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden"}}>
-        <StudentApp student={studentData} onExit={async()=>{await authLogout();clearLocalStateExceptOutbox();}} classes={xClasses} notifications={notifications} sendNotification={sendNotification} coachId={(()=>{try{const v=localStorage.getItem("izi_student_coach_id");return v?JSON.parse(v):null;}catch{return localStorage.getItem("izi_student_coach_id");}})()} students={students} families={families}/>
+        <StudentApp student={studentData} onExit={async()=>{await authLogout();clearLocalStateExceptOutbox();}} classes={xClasses} notifications={notifications} sendNotification={sendNotification} coachId={(()=>{try{const v=localStorage.getItem("izi_student_coach_id");return v?JSON.parse(v):null;}catch{return localStorage.getItem("izi_student_coach_id");}})()} students={students} families={families} expenses={expenses}/>
       </div>
     );
   }

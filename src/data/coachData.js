@@ -1244,10 +1244,12 @@ export async function loadMyStudentPortal() {
 }
 
 // Pure: maps a get_my_student_portal() payload onto the exact state shapes the
-// student_portal branch already feeds StudentApp — students (the caller plus,
-// when responsible, their family members), classes (still unexpanded), and
-// families (only the fields StudentApp reads: id, name, responsible.studentId).
-// Nothing else from the payload is consumed yet.
+// student_portal branch feeds StudentApp — students (the caller plus, when
+// responsible, their family members), classes (still unexpanded), families
+// (only the fields StudentApp reads: id, name, responsible.studentId), expenses
+// (the caller's own payment_movements — income rows linked to their payments,
+// already reduced server-side; used only to read payment history) and the
+// coach's display currency. packages are not consumed.
 export function mapStudentPortalPayload(payload) {
   const student = payload && payload.student && typeof payload.student === "object" ? payload.student : null;
   const family = payload && payload.family && typeof payload.family === "object" ? payload.family : null;
@@ -1258,5 +1260,7 @@ export function mapStudentPortalPayload(payload) {
     students: student ? [student, ...members] : [],
     classes: payload && Array.isArray(payload.classes) ? payload.classes : [],
     families: family ? [{ id: family.id, name: family.name, responsible: { studentId: family.responsibleStudentId } }] : [],
+    expenses: payload && Array.isArray(payload.payment_movements) ? payload.payment_movements : [],
+    currency: payload && payload.coach && payload.coach.currency ? payload.coach.currency : null,
   };
 }
