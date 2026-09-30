@@ -1,7 +1,8 @@
 import { useState, useEffect, useLayoutEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import { supabase } from "./services/supabaseClient.js";
 import {
-  loadAllFromSupabase,
+  loadMyStudentPortal,
+  mapStudentPortalPayload,
   cancelPendingSync,
   enqueueCoachDataWrite,
   reconcileCoachData,
@@ -46,13 +47,13 @@ const C = {
 // a combo package silently saved with qty:null.
 const isValidComboQty=(v)=>{const n=Number(v);return Number.isInteger(n)&&n>0;};
 
-// loadAllFromSupabase / cancelPendingSync / enqueueCoachDataWrite /
+// loadMyStudentPortal / cancelPendingSync / enqueueCoachDataWrite /
 // reconcileCoachData live in src/data/coachData.js. The six coach_data keys
 // (students/classes/expenses/courts/packages/families) write exclusively via
 // enqueueCoachDataWrite (durable outbox + coach_data_compare_and_set RPC) —
 // the old debounced direct-upsert syncToSupabase is gone (Fase 2 rollout).
-// loadAllFromSupabase stays for the student_portal read-only path (students
-// never write these keys, so no revision/outbox concern applies there).
+// The student_portal branch reads only through get_my_student_portal
+// (loadMyStudentPortal) — never coach_data — and never writes these keys.
 const TODAY_DATE=(()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
 
 // --- MENSUAL HELPERS ---
@@ -9440,7 +9441,7 @@ export default function App() {
 
   // activeIdentityRef always reflects the identity (user?.id) as of the most
   // recent hydration-effect invocation, updated synchronously as its first line
-  // — so a loadData/loadAllFromSupabase call started for a superseded identity
+  // — so a loadData/loadStudentPortalData call started for a superseded identity
   // can tell, after its await, that it's no longer current and must not call
   // any setter. hydratedIdentityRef records which identity dataReady/dataLoadFailed
   // actually settled for. dataReady/dataLoadFailed alone say nothing about *whose*
@@ -9697,6 +9698,47 @@ export default function App() {
     hydratedIdentityRef.current=null;
   };
 
+  // Student Portal hydration — the ONLY data path for mode==="student_portal": one call to
+  // get_my_student_portal (never coach_data, never reconcileCoachData). Shared by the hydration effect
+  // and retryLoadData. The payload must describe exactly the identity resolveSession resolved from this
+  // user's own student_auth row (izi_student_id_raw / izi_student_coach_id); a mismatch, or "no such
+  // student", fails closed to the existing "No pudimos cargar tu perfil" screen (students left empty).
+  // Any other failure surfaces the retry screen — never a fallback read of coach_data.
+  const loadStudentPortalData=async(myUserId)=>{
+    const result=await loadMyStudentPortal();
+    if(activeIdentityRef.current!==myUserId) return;
+    if(result.ok){
+      const mapped=mapStudentPortalPayload(result.data);
+      const expectedStudentId=localStorage.getItem("izi_student_id_raw");
+      const expectedCoachId=ls("izi_student_coach_id",null);
+      const matches=mapped.studentId!=null&&String(mapped.studentId)===expectedStudentId
+        &&mapped.coachId!=null&&String(mapped.coachId)===String(expectedCoachId);
+      if(matches){
+        applyStudentsLocally(mapped.students);
+        applyClassesLocally(mapped.classes);
+        setFamiliesRaw(mapped.families);
+      } else {
+        console.error("student portal: payload identity does not match this session's student_auth");
+        applyStudentsLocally([]);applyClassesLocally([]);setFamiliesRaw([]);
+      }
+      setDataLoadFailed(false);
+      setDataReady(true);
+    } else {
+      const msg=String(result.error?.message||"");
+      if(msg.includes("student_not_found")||msg.includes("no_student_link")){
+        // No own record for this session: same fail-closed screen as before, no retry loop.
+        applyStudentsLocally([]);applyClassesLocally([]);setFamiliesRaw([]);
+        setDataLoadFailed(false);
+        setDataReady(true);
+      } else {
+        console.error("student portal load error:",result.error);
+        setDataReady(false);
+        setDataLoadFailed(true);
+      }
+    }
+    hydratedIdentityRef.current=myUserId;
+  };
+
   // Business-data hydration for a resolved identity (Fase D). resolveSession (now in
   // auth/, owned by AuthProvider) only resolves identity — it has no access to these
   // data-state closures, since AuthProvider is mounted above App in main.jsx. This
@@ -9706,7 +9748,7 @@ export default function App() {
   // reused as-is, no new loading state introduced.
   useEffect(()=>{
     // First line, synchronous: this is the identity as of *this* invocation.
-    // Any reconcileCoachData/loadCoachProfile/loadAllFromSupabase call started
+    // Any reconcileCoachData/loadCoachProfile/loadStudentPortalData call started
     // by a previous invocation checks this after its await — if it no longer
     // matches what it started with, that call is superseded and must not
     // call any setter.
@@ -9782,26 +9824,7 @@ export default function App() {
       const myUserId=user.id;
       const coachId=ls("izi_student_coach_id",null);
       if(!coachId){setDataReady(true);hydratedIdentityRef.current=myUserId;return;}
-      (async()=>{
-        try{
-          const cdResult=await loadAllFromSupabase(coachId);
-          if(activeIdentityRef.current!==myUserId) return;
-          if(!cdResult.ok){console.error("student load error:",cdResult.error);}
-          else{
-            const cd=cdResult.data;
-            const s=cd.students||[];const cl=cd.classes||[];const f=cd.families||[];
-            if(s.length>0){applyStudentsLocally(s);}
-            if(cl.length>0){applyClassesLocally(cl);}
-            if(f.length>0){setFamiliesRaw(f);}
-          }
-        }catch(e){
-          console.error("student load error:",e);
-          if(activeIdentityRef.current!==myUserId) return;
-        }
-        setDataReady(true);
-        setDataLoadFailed(false);
-        hydratedIdentityRef.current=myUserId;
-      })();
+      loadStudentPortalData(myUserId);
     }
   },[mode,user?.id,isCoachOperational,isStudentOperational]);
 
@@ -9965,6 +9988,14 @@ export default function App() {
   const retryLoadData=async()=>{
     if(!user?.id) return;
     const myUserId=user.id;
+    if(mode==="student_portal"){
+      // Same single read path as the hydration effect — never reconcileCoachData for a student.
+      if(!isStudentOperational) return;
+      setCheckingProfile(true);
+      await loadStudentPortalData(myUserId);
+      setCheckingProfile(false);
+      return;
+    }
     setCheckingProfile(true);
     const [businessResult]=await Promise.all([
       reconcileCoachData(myUserId,rawSetters,()=>activeIdentityRef.current===myUserId),

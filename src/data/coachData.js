@@ -1187,9 +1187,9 @@ export function cancelPendingSync(coachId) {
 
 // ----------------------------------------------------------------------------
 // Legacy helpers kept as-is — unrelated to the six-key CAS path.
-// loadAllFromSupabase is still the read path for the student_portal branch
-// (a student reads their own coach's data_value; students never write these
-// keys, so no revision/outbox concern applies there).
+// loadAllFromSupabase is no longer called by the app: the student_portal branch
+// reads through get_my_student_portal (below) and never touches coach_data.
+// Kept exported until the planned cleanup.
 // ----------------------------------------------------------------------------
 export async function loadFromSupabase(coachId, key) {
   if (!coachId) return null;
@@ -1222,4 +1222,41 @@ export async function loadAllFromSupabase(coachId) {
   } catch (e) {
     return { ok: false, error: e };
   }
+}
+
+// ----------------------------------------------------------------------------
+// Student Portal read path. get_my_student_portal() (SECURITY DEFINER, no
+// parameters) derives coach and student from auth.uid() -> student_auth and
+// returns only what this student may see: own record (+ family members when
+// the caller is the family's payment responsible), classes with rosters and
+// attendance reduced to those ids, own packages and payment movements, and a
+// minimal coach profile. No coach_data read ever happens on this path.
+// ----------------------------------------------------------------------------
+export async function loadMyStudentPortal() {
+  try {
+    const { data, error } = await supabase.rpc("get_my_student_portal");
+    if (error) return { ok: false, error };
+    if (!data || typeof data !== "object") return { ok: false, error: new Error("get_my_student_portal: empty response") };
+    return { ok: true, data };
+  } catch (e) {
+    return { ok: false, error: e };
+  }
+}
+
+// Pure: maps a get_my_student_portal() payload onto the exact state shapes the
+// student_portal branch already feeds StudentApp — students (the caller plus,
+// when responsible, their family members), classes (still unexpanded), and
+// families (only the fields StudentApp reads: id, name, responsible.studentId).
+// Nothing else from the payload is consumed yet.
+export function mapStudentPortalPayload(payload) {
+  const student = payload && payload.student && typeof payload.student === "object" ? payload.student : null;
+  const family = payload && payload.family && typeof payload.family === "object" ? payload.family : null;
+  const members = family && Array.isArray(family.members) ? family.members : [];
+  return {
+    studentId: student ? student.id : null,
+    coachId: payload && payload.coach ? payload.coach.id : null,
+    students: student ? [student, ...members] : [],
+    classes: payload && Array.isArray(payload.classes) ? payload.classes : [],
+    families: family ? [{ id: family.id, name: family.name, responsible: { studentId: family.responsibleStudentId } }] : [],
+  };
 }
