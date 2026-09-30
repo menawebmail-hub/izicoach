@@ -1,0 +1,43 @@
+-- ============================================================================
+-- Student Portal — Migration C: retire "student_read_coach" on public.coaches
+--
+-- WHY: this policy lets any linked, active student SELECT their coach's whole
+-- public.coaches row — id, name, sport, email, phone, photo, country,
+-- currency, created_at, onboarded (authenticated has table-level SELECT with
+-- no column restriction). Nothing needs it anymore: the Student Portal gets a
+-- minimal coach profile (id, name, photo, sport, currency) from
+-- get_my_student_portal() (Migration A), and every function that reads
+-- public.coaches for the invitation/auth/portal flows is SECURITY DEFINER
+-- (get_student_invite_preview, accept_student_invite, get_my_account_status,
+-- create_student_invite, get_my_student_portal, …), so none depends on RLS.
+-- Verified read-only in production on 2026-09-30: no non-definer function,
+-- no other table's policy, no view and no Realtime publication reads coaches.
+--
+-- SCOPE — exactly one effective statement below. Deliberately NOT touched:
+--   - coach_select_own_profile / coach_insert_own_profile / coach_update_own_profile
+--   - any table grant on public.coaches
+--   - any function (get_my_student_portal, get_student_invite_preview, …)
+--   - any other table or policy
+--
+-- No IF EXISTS on purpose: if the policy is not there, this must fail loudly
+-- instead of silently succeeding against an unexpected schema.
+--
+-- ROLLBACK (only if ever needed) — the exact definition this removes, as
+-- created by 20260911142144_account_access_control_phase_c2_rls.sql and
+-- confirmed identical in production (pg_policies.qual, 2026-09-30):
+--
+--   CREATE POLICY "student_read_coach"
+--     ON public.coaches
+--     FOR SELECT
+--     TO authenticated
+--     USING (
+--       EXISTS (
+--         SELECT 1 FROM public.student_auth sa
+--         WHERE sa.id = (select auth.uid())
+--           AND sa.coach_id = coaches.id
+--       )
+--       AND (select public.student_portal_has_access((select auth.uid())))
+--     );
+-- ============================================================================
+
+drop policy "student_read_coach" on public.coaches;
