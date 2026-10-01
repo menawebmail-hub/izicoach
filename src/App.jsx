@@ -3956,7 +3956,8 @@ function InviteModal({ student, onClose }) {
       });
     return ()=>{cancelled=true;};
   },[student?.id]);
-  const url="https://izicoach.vercel.app?invite="+code;
+  // Built from the origin the coach is using — like the signups' emailRedirectTo, never a hardcoded domain.
+  const url=window.location.origin+"/?invite="+code;
   return (
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.5)",zIndex:999,display:"flex",alignItems:"flex-end"}}>
       <div style={{background:"#fff",borderRadius:"24px 24px 0 0",padding:"28px 20px 44px",width:"100%",boxSizing:"border-box"}}>
