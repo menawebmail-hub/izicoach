@@ -9521,10 +9521,10 @@ export default function App() {
   // Supabase (loadData / handleOnboardingComplete) es la única fuente real.
   const [coachProfile,setCoachProfileRaw]=useState({name:"Coach",sport:"",photo:null});
   const [expenses,setExpensesRaw]=useState([]);
-  // True only once the active coachId's own data has been loaded (existing coach)
-  // or explicitly confirmed to not exist yet (coach_new) — gates the auto-sync
-  // effect below so it can never push data that hasn't been verified to belong
-  // to the currently authenticated coach.
+  // True only once the active identity's own data has been loaded — for a coach,
+  // a successful reconcileCoachData (rows, or confirmed zero); coach_new never sets
+  // it (onboarding needs no business data) — so nothing is treated as loaded, and
+  // no write is enabled, before a real read for the authenticated coach.
   const [dataReady,setDataReady]=useState(false);
   // TEMPORARY (Fase B, P0) — distinguishes "loadData confirmed real failure"
   // from "loadData confirmed a legitimately empty account", which dataReady
@@ -9549,6 +9549,9 @@ export default function App() {
   // effect should read; the raw booleans stay for setting, never for gating.
   const activeIdentityRef=useRef(null);
   const hydratedIdentityRef=useRef(null);
+  // {uid,courts,packages} from a just-completed onboarding, waiting for that uid's first reconcile
+  // (see applyPendingOnboarding). null otherwise.
+  const pendingOnboardingRef=useRef(null);
   const dataReadyForCurrentIdentity=dataReady&&hydratedIdentityRef.current===user?.id;
   const dataLoadFailedForCurrentIdentity=dataLoadFailed&&hydratedIdentityRef.current===user?.id;
 
@@ -9793,6 +9796,20 @@ export default function App() {
     setDataReady(false);
     setDataLoadFailed(false);
     hydratedIdentityRef.current=null;
+    pendingOnboardingRef.current=null;
+  };
+
+  // Courts/packages chosen in OnboardingFlow (stashed by handleOnboardingComplete) are persisted here,
+  // called only right after a successful reconcileCoachData for myUserId — so the identity is hydrated
+  // (writes accepted by enqueueCoachDataWrite) and the reconcile's own remote apply is already queued
+  // ahead of these functional updates: they append onto the reconciled value, never get replaced by it.
+  // One-shot per onboarding; never applied to a different identity.
+  const applyPendingOnboarding=(myUserId)=>{
+    const pending=pendingOnboardingRef.current;
+    if(!pending||pending.uid!==myUserId) return;
+    pendingOnboardingRef.current=null;
+    if(pending.courts.length) setCourts(prev=>[...prev,...pending.courts]);
+    if(pending.packages.length) setPackages(prev=>[...prev,...pending.packages]);
   };
 
   // Student Portal hydration — the ONLY data path for mode==="student_portal": one call to
@@ -9897,6 +9914,7 @@ export default function App() {
           // zero) — only now is it safe to let the setters' outbox writes run.
           setDataLoadFailed(false);
           setDataReady(true);
+          applyPendingOnboarding(myUserId);
         } else {
           // reconcileCoachData couldn't get a real read — never treat that as
           // "empty account". dataReady stays false and dataLoadFailed surfaces
@@ -9910,9 +9928,10 @@ export default function App() {
         hydratedIdentityRef.current=myUserId;
       })();
     } else if(mode==="coach_new"){
-      // Confirmed new coach: no profile, no data — the auto-sync effect can run
-      // safely because state is (and must stay) empty until they create something.
-      if(!dataReadyForCurrentIdentity){setDataReady(true);setDataLoadFailed(false);hydratedIdentityRef.current=user.id;}
+      // Confirmed new coach: onboarding needs no business data. dataReady is NOT marked here — it means
+      // "coach_data reconciled for this identity", and marking it would make the coach branch above skip
+      // the reconcile once onboarding flips this same identity to mode="coach", leaving every write
+      // refused (skipped-not-hydrated) for the whole session.
     } else if(mode==="student_portal"){
       // Account Access Control Phase C.1 — a blocked student must never have
       // student_auth/coach_data queried, and never reach the portal (decision
@@ -9996,15 +10015,15 @@ export default function App() {
       return;
     }
     // Apply the local onboarding choices only once confirmed still current
-    // (the check above). BEFORE reresolve() below, so by the time it flips
-    // isCoachOperational to true (mode="coach" AND accountStatus.coach=
-    // "active"), courts/packages/profile already hold what was just chosen —
-    // no render tick where the operational app could see empty values.
-    // (loadData's own remote read separately never downgrades non-empty
-    // local courts/packages/students/classes with empty remote data — see
-    // its hasRemoteData gate — so there is no second window here either.)
-    if(data.courts?.length) setCourts(data.courts);
-    if(data.packages?.length) setPackages(data.packages);
+    // (the check above). Profile/currency are applied now (they live in
+    // `coaches`, already written above). Courts/packages are coach_data keys:
+    // this identity is not hydrated yet (coach_new never reconciles), so a
+    // setter here would only reach React state — its write is refused
+    // (skipped-not-hydrated) and the first reconcile would replace it with
+    // the remote value. They are handed to applyPendingOnboarding instead,
+    // which persists them right after the reconcile that reresolve()'s
+    // mode="coach" triggers in the hydration effect.
+    pendingOnboardingRef.current={uid:originalUid,courts:data.courts||[],packages:data.packages||[]};
     setCUR(data.currency||"₲"); setCurrency(data.currency||"₲");
     setCoachProfileRaw(profile);
 
@@ -10102,7 +10121,7 @@ export default function App() {
       loadCoachProfile(myUserId),
     ]);
     if(activeIdentityRef.current===myUserId){
-      if(businessResult.ok){setDataLoadFailed(false);setDataReady(true);}
+      if(businessResult.ok){setDataLoadFailed(false);setDataReady(true);applyPendingOnboarding(myUserId);}
       else{setDataReady(false);setDataLoadFailed(true);}
       hydratedIdentityRef.current=myUserId;
     }
