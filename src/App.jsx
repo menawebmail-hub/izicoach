@@ -9459,8 +9459,11 @@ export default function App() {
     setMode:setModeP,setOnboarded:setOnboardedP,
     setCheckingProfile,setOnboardingSaveFailed,
     resolveSession,reresolve,resolvedUserIdRef,registerStudentFromInvite,loginStudentFromInvite,logout:authLogout,
-    lifecycleTokenRef,
+    lifecycleTokenRef,acceptMyPendingInvite,acceptInviteCode,
   }=useAuth();
+  // Bug #3 — last explicit invite acceptance failed (error / malformed / rejected code): shown on the
+  // pending-invite screen so the user can retry. Cleared at the start of every attempt.
+  const [inviteAcceptFailed,setInviteAcceptFailed]=useState(false);
   // Account Access Control Phase C.1 — true only once identity resolution
   // confirmed this specific identity is unrestricted. Used below to gate every
   // effect that reads/writes messages/coach_data/Realtime, so none of them ever
@@ -11244,6 +11247,21 @@ export default function App() {
   }
   if(mode==="student_portal"&&accountStatus?.student==="blocked"){
     return <AccountLockout kind="student_blocked" onRetry={refreshAccountStatus} onSignOut={handleLogout}/>;
+  }
+  // Bug #3 — confirmed invitee not linked yet (server-side pending_invite): never coach_new/onboarding,
+  // never any coach_data/business hydration. "single" → explicit accept_my_pending_invite(); "multiple" →
+  // nothing is picked automatically; only a specific ?invite=CODE in the URL can be accepted, explicitly,
+  // through the existing accept_student_invite(code).
+  if(mode==="student_pending_invite"||mode==="student_invite_multiple"){
+    const single=mode==="student_pending_invite";
+    const urlCode=single?null:new URLSearchParams(window.location.search).get("invite");
+    const accept=async()=>{
+      setInviteAcceptFailed(false);
+      const r=single?await acceptMyPendingInvite():await acceptInviteCode(urlCode);
+      if(r&&r.failed) setInviteAcceptFailed(true);
+    };
+    return <AccountLockout kind={single?"invite_pending":"invite_multiple"} primaryLabel={!single&&urlCode?"Aceptar esta invitación":null}
+      onRetry={single||urlCode?accept:null} onSignOut={async()=>{setInviteAcceptFailed(false);await handleLogout();}} failed={inviteAcceptFailed}/>;
   }
 
   if(awaitingBusinessData) return loadingScreen;

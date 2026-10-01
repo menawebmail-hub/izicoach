@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 // Account Access Control Phase C.1 — pure presentational full-screen gate.
 // Same visual language as the app's other full-screen states (login/loading/
@@ -22,13 +22,35 @@ const COPY = {
     title: "No pudimos verificar tu cuenta",
     body: "No pudimos verificar el estado de tu cuenta. Nada se modificó. Probá de nuevo.",
   },
+  // Bug #3 — confirmed invitee not linked yet (server-side pending_invite).
+  // Nothing about the invitation (coach, student, code, count) is ever shown.
+  invite_pending: {
+    title: "Tenés una invitación pendiente",
+    body: "Fuiste invitado a acceder al Portal Alumno.",
+    primary: "Aceptar invitación",
+    primaryBusy: "Aceptando...",
+    failure: "No pudimos aceptar la invitación. Probá de nuevo.",
+  },
+  invite_multiple: {
+    title: "Tenés más de una invitación pendiente",
+    body: "Abrí el enlace de la invitación que querés aceptar.",
+    primary: null, // only offered when the URL carries a specific ?invite=CODE (primaryLabel)
+    primaryBusy: "Aceptando...",
+    failure: "No pudimos aceptar esta invitación. Verificá el enlace o cerrá sesión.",
+  },
 };
 
-export function AccountLockout({ kind, onRetry, onSignOut }) {
+// primaryLabel overrides (or, for invite_multiple, enables) the primary
+// action's label; failed shows the kind's failure line under the body.
+export function AccountLockout({ kind, onRetry, onSignOut, primaryLabel = null, failed = false }) {
   const [retrying, setRetrying] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  // Synchronous guard — two clicks in the same tick both see retrying=false.
+  const actionInFlightRef = useRef(false);
   const copy = COPY[kind] || COPY.error;
   const busy = retrying || signingOut;
+  const primary = primaryLabel || (copy.primary === undefined ? "Volver a comprobar" : copy.primary);
+  const primaryBusy = copy.primaryBusy || "Comprobando...";
 
   // Phase C.1 audit fix — both handlers now catch: a rejection from onRetry/
   // onSignOut (refreshAccountStatus/handleLogout are both hardened not to
@@ -37,25 +59,29 @@ export function AccountLockout({ kind, onRetry, onSignOut }) {
   // stuck disabled — the finally always clears the busy flag either way, so
   // a failed attempt can always be retried.
   const handleRetry = async () => {
-    if (busy) return;
+    if (busy || actionInFlightRef.current) return;
+    actionInFlightRef.current = true;
     setRetrying(true);
     try {
       await onRetry?.();
     } catch (thrown) {
       console.error("AccountLockout: onRetry failed:", thrown);
     } finally {
+      actionInFlightRef.current = false;
       setRetrying(false);
     }
   };
 
   const handleSignOut = async () => {
-    if (busy) return;
+    if (busy || actionInFlightRef.current) return;
+    actionInFlightRef.current = true;
     setSigningOut(true);
     try {
       await onSignOut?.();
     } catch (thrown) {
       console.error("AccountLockout: onSignOut failed:", thrown);
     } finally {
+      actionInFlightRef.current = false;
       setSigningOut(false);
     }
   };
@@ -66,16 +92,17 @@ export function AccountLockout({ kind, onRetry, onSignOut }) {
         <div style={{fontSize:32,fontWeight:900,letterSpacing:-2,marginBottom:16}}>
           izi<span style={{color:"#65CE5A"}}>coach</span>
         </div>
-        <h1 style={{fontSize:17,fontWeight:800,marginBottom:8}}>{copy.title}</h1>
+        <h1 style={{fontSize:17,fontWeight:800,marginBottom:8,color:"#fff"}}>{copy.title}</h1>
         <p style={{fontSize:13,color:"rgba(255,255,255,0.75)",marginBottom:24,lineHeight:1.5}}>{copy.body}</p>
-        <button
+        {failed && copy.failure && <p style={{fontSize:13,color:"#FFCDD2",marginTop:-12,marginBottom:20,lineHeight:1.5}}>{copy.failure}</p>}
+        {primary && <button
           onClick={handleRetry}
           disabled={busy}
           aria-busy={retrying}
           style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:"#fff",color:"#1A3DB5",fontSize:15,cursor:busy?"default":"pointer",fontWeight:800,opacity:busy?0.7:1,marginBottom:12}}
         >
-          {retrying ? "Comprobando..." : "Volver a comprobar"}
-        </button>
+          {retrying ? primaryBusy : primary}
+        </button>}
         <button
           onClick={handleSignOut}
           disabled={busy}

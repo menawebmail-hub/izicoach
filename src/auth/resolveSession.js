@@ -31,6 +31,7 @@ export const queryProfile = async (table, userId, selectCols) => {
 
 const isValidCoachStatus = (v) => v === null || v === "active" || v === "blocked" || v === "deactivated";
 const isValidStudentStatus = (v) => v === null || v === "active" || v === "blocked";
+const isValidPendingInvite = (v) => v === null || v === "single" || v === "multiple";
 
 // Account Access Control Phase C.1 — single source of truth for calling
 // get_my_account_status() and validating its shape strictly, shared by the
@@ -39,7 +40,10 @@ const isValidStudentStatus = (v) => v === null || v === "active" || v === "block
 // response: both keys must be present, both values must be one of their
 // known literals, and — since a single identity is never meant to be both a
 // coach and a student — both being non-null at once is treated as an
-// anomaly, not a valid state. Any of these failures resolves to {ok:false},
+// anomaly, not a valid state. pending_invite (bug #3, additive) is optional
+// for compatibility (absent = null); a value other than null/"single"/
+// "multiple", or a non-null pending_invite next to a non-null coach/student
+// status, is an anomaly too. Any of these failures resolves to {ok:false},
 // which callers must treat as fail-closed (account_status_error), never as
 // "no restriction" or "new account". Never rejects — a thrown exception from
 // the RPC call itself resolves to {ok:false} too.
@@ -59,13 +63,15 @@ export async function fetchAccountStatus() {
     !("student_status" in data) ||
     !isValidCoachStatus(data.coach_status) ||
     !isValidStudentStatus(data.student_status) ||
-    (data.coach_status !== null && data.student_status !== null)
+    (data.coach_status !== null && data.student_status !== null) ||
+    ("pending_invite" in data && !isValidPendingInvite(data.pending_invite)) ||
+    (data.pending_invite != null && (data.coach_status !== null || data.student_status !== null))
   ) {
     if (error) console.error("fetchAccountStatus: get_my_account_status failed:", error);
     else console.error("fetchAccountStatus: get_my_account_status returned an invalid or anomalous shape:", data);
     return { ok: false };
   }
-  return { ok: true, coach: data.coach_status, student: data.student_status };
+  return { ok: true, coach: data.coach_status, student: data.student_status, pendingInvite: data.pending_invite ?? null };
 }
 
 // Single source of truth for turning a Supabase session into an identity (user, mode,
@@ -126,9 +132,13 @@ export async function fetchAccountStatus() {
 //     row present, localStorage write failed         -> accountStatusError=true, partial keys removed,
 //                                                       never mounts student_portal with incomplete transport
 //     error or no row                                -> accountStatusError=true
-//   coach_status=null AND student_status=null       -> mode="coach_new", no further query (genuinely new account)
+//   coach_status=null AND student_status=null:
+//     pending_invite="single"                      -> mode="student_pending_invite" (explicit accept screen)
+//     pending_invite="multiple"                    -> mode="student_invite_multiple" (never auto-picks one)
+//     pending_invite=null (or absent)              -> mode="coach_new", no further query (genuinely new account)
 //
-// Returns the mode it resolved to ("coach" | "coach_new" | "student_portal"), or null
+// Returns the mode it resolved to ("coach" | "coach_new" | "student_portal" |
+// "student_pending_invite" | "student_invite_multiple"), or null
 // when it didn't determine one (no session, already-resolved shortcut, an aborted
 // lookup, an account_status_error, or a superseded/stale invocation). Every existing
 // caller already treats anything other than its one expected literal as failure, so
@@ -185,7 +195,7 @@ export const makeResolveSession = ({
       setUser(null);
       setMode(null);
       setOnboarded(false);
-      setAccountStatus({ coach: null, student: null });
+      setAccountStatus({ coach: null, student: null, pendingInvite: null });
       setAccountStatusError(false);
       // Without this, a session lost while checkingProfile was true (a
       // resolution in flight when the session ended) left the app stuck on
@@ -237,14 +247,14 @@ export const makeResolveSession = ({
 
     if (!statusResult.ok) {
       resolvedUserIdRef.current = null;
-      setAccountStatus({ coach: null, student: null });
+      setAccountStatus({ coach: null, student: null, pendingInvite: null });
       setAccountStatusError(true);
       setCheckingProfile(false);
       return null;
     }
 
-    const { coach: coachStatus, student: studentStatus } = statusResult;
-    setAccountStatus({ coach: coachStatus, student: studentStatus });
+    const { coach: coachStatus, student: studentStatus, pendingInvite } = statusResult;
+    setAccountStatus({ coach: coachStatus, student: studentStatus, pendingInvite });
 
     if (coachStatus === "blocked" || coachStatus === "deactivated") {
       setCheckingProfile(false);
@@ -320,6 +330,16 @@ export const makeResolveSession = ({
     // coach_status===null && student_status===null — la única combinación que
     // llega hasta acá (blocked/deactivated/active ya retornaron arriba, y ambos
     // no-nulos ya fue rechazado por fetchAccountStatus como anomalía).
+    // Bug #3: a confirmed invitee not yet linked has a server-side pending
+    // invite — never coach_new. Only the server decides (pending_invite is
+    // derived from auth.uid() + its confirmed email; nothing here reads email,
+    // invites or ids).
+    if (pendingInvite === "single" || pendingInvite === "multiple") {
+      const pendingMode = pendingInvite === "single" ? "student_pending_invite" : "student_invite_multiple";
+      setCheckingProfile(false);
+      setMode(pendingMode); setOnboarded(false);
+      return pendingMode;
+    }
     setCheckingProfile(false);
     setMode("coach_new"); setOnboarded(false);
     return "coach_new";

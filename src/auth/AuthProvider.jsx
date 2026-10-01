@@ -42,7 +42,7 @@ export function AuthProvider({ children }) {
   // ("what kind of identity is this"); accountStatus layers restriction state on
   // top of it, orthogonal to mode, matching how the database models it (a
   // separate access-control table, not a different kind of coach/student row).
-  const [accountStatus, setAccountStatus] = useState({ coach: null, student: null });
+  const [accountStatus, setAccountStatus] = useState({ coach: null, student: null, pendingInvite: null });
   const [accountStatusError, setAccountStatusError] = useState(false);
   // Ref mirrors, kept in sync on every write. Two independent reasons this
   // matters: (1) refreshAccountStatus needs the *current* accountStatus
@@ -52,7 +52,7 @@ export function AuthProvider({ children }) {
   // reresolve() status immediately, since its own local `accountStatus`
   // closure from render time cannot reflect a state update that happened
   // inside the very call it just awaited.
-  const accountStatusRef = useRef({ coach: null, student: null });
+  const accountStatusRef = useRef({ coach: null, student: null, pendingInvite: null });
   const accountStatusErrorRef = useRef(false);
   const setAccountStatusBoth = (v) => { accountStatusRef.current = v; setAccountStatus(v); };
   const setAccountStatusErrorBoth = (v) => { accountStatusErrorRef.current = v; setAccountStatusError(v); };
@@ -173,6 +173,25 @@ export function AuthProvider({ children }) {
   // regardless of which setup is calling it.
   const inviteCallbackInFlightRef = useRef(null);
 
+  // Bug #3 (S10) — { uid } of the invite acceptance currently running in this
+  // provider (Confirm Email callback, accept_my_pending_invite, or an explicit
+  // invite-code accept from the multiple-invites screen), else null. While set,
+  // a session event for that SAME uid must not run an intermediate
+  // resolveSession: before student_auth exists the server still answers
+  // {null,null} for it, and every acceptance chain ends in its own reresolve().
+  // Events without a session or for another uid are never held back. Each
+  // acceptance clears only its own marker, in a finally, so it can never stay
+  // set after the attempt ends (success, failure or throw).
+  const inviteAcceptInFlightRef = useRef(null);
+  const beginInviteAccept = (uid) => {
+    const marker = { uid };
+    inviteAcceptInFlightRef.current = marker;
+    return marker;
+  };
+  const endInviteAccept = (marker) => {
+    if (inviteAcceptInFlightRef.current === marker) inviteAcceptInFlightRef.current = null;
+  };
+
   // Account Access Control Phase C.1 — refreshAccountStatus(), redesigned.
   //
   // activeResolutionIdRef is used here purely as a cancellation epoch: the
@@ -263,7 +282,7 @@ export function AuthProvider({ children }) {
         console.error("refreshAccountStatus: getSession failed:", sessionError);
         ++activeResolutionIdRef.current;
         resolvedUserIdRef.current = null;
-        setAccountStatusBoth({ coach: null, student: null });
+        setAccountStatusBoth({ coach: null, student: null, pendingInvite: null });
         setAccountStatusErrorBoth(true);
         setCheckingProfile(false);
         return;
@@ -290,16 +309,17 @@ export function AuthProvider({ children }) {
         // just passed above), so applying it directly is safe.
         ++activeResolutionIdRef.current;
         resolvedUserIdRef.current = null;
-        setAccountStatusBoth({ coach: null, student: null });
+        setAccountStatusBoth({ coach: null, student: null, pendingInvite: null });
         setAccountStatusErrorBoth(true);
         setCheckingProfile(false);
         return;
       }
 
-      const { coach: newCoach, student: newStudent } = statusResult;
+      const { coach: newCoach, student: newStudent, pendingInvite: newPendingInvite } = statusResult;
       const prev = accountStatusRef.current;
       const recoveringFromError = accountStatusErrorRef.current;
-      const unchanged = !recoveringFromError && prev.coach === newCoach && prev.student === newStudent;
+      const unchanged = !recoveringFromError && prev.coach === newCoach && prev.student === newStudent &&
+        (prev.pendingInvite ?? null) === newPendingInvite;
       if (unchanged) return; // fully silent — no generation touch, no resolveSession call
 
       // Real change, or recovering from a prior error — force one canonical
@@ -323,7 +343,7 @@ export function AuthProvider({ children }) {
       if (!stillCurrent()) return; // this invocation no longer owns the epoch either
       ++activeResolutionIdRef.current;
       resolvedUserIdRef.current = null;
-      setAccountStatusBoth({ coach: null, student: null });
+      setAccountStatusBoth({ coach: null, student: null, pendingInvite: null });
       setAccountStatusErrorBoth(true);
       setCheckingProfile(false);
     } finally {
@@ -398,6 +418,12 @@ export function AuthProvider({ children }) {
         // moot now that the explicit flow is handling things — discard it so
         // it can't fire later for an unrelated event in this same tab.
         pendingCallbackInviteRef.current = null;
+        settleFirstEvent();
+        return;
+      }
+      if (session?.user && inviteAcceptInFlightRef.current && inviteAcceptInFlightRef.current.uid === session.user.id) {
+        // Bug #3 (S10): an invite acceptance for this same identity is in
+        // flight and will reresolve() itself once student_auth exists.
         settleFirstEvent();
         return;
       }
@@ -743,6 +769,7 @@ export function AuthProvider({ children }) {
     // genuinely-attempted flow. Restored by resumeInviteFromCallback itself
     // if this specific attempt turns out to be stale before the RPC ran.
     pendingCallbackInviteRef.current = null;
+    const acceptMarker = beginInviteAccept(session.user.id);
     setCheckingProfile(true);
     resumeInviteFromCallback(code, session, isAutomaticRetry)
       .catch((thrown) => {
@@ -752,6 +779,7 @@ export function AuthProvider({ children }) {
         // Ownership-checked — see the long comment on inviteCallbackInFlightRef's
         // declaration for why an unconditional clear here would be wrong.
         if (inviteCallbackInFlightRef.current === myLifecycleToken) inviteCallbackInFlightRef.current = null;
+        endInviteAccept(acceptMarker);
       });
     return true;
   };
@@ -771,6 +799,7 @@ export function AuthProvider({ children }) {
     // possible, so a stale response can never land after this and resurrect
     // user/mode/accountStatus that logout just cleared.
     activeResolutionIdRef.current++;
+    inviteAcceptInFlightRef.current = null;
     try {
       await supabase.auth.signOut();
     } catch (thrown) {
@@ -787,7 +816,7 @@ export function AuthProvider({ children }) {
       setUser(null);
       setModeP(null);
       setOnboardedP(false);
-      setAccountStatusBoth({ coach: null, student: null });
+      setAccountStatusBoth({ coach: null, student: null, pendingInvite: null });
       setAccountStatusErrorBoth(false);
       // A stale, superseded resolveSession call never reaches its own
       // setCheckingProfile(false) (every branch after the dedupe check is
@@ -1194,6 +1223,86 @@ export function AuthProvider({ children }) {
       return { ok: true };
     }, code);
 
+  // Bug #3 — explicit acceptance from the pending-invite screens. Shared
+  // wrapper: one attempt at a time (synchronous marker, so a double click
+  // never sends twice), same identity/lifecycle preconditions as the other
+  // invite flows, and ALWAYS a reresolve() afterwards so the server decides
+  // what comes next. Never signs out on its own. `attempt(uid, token)`
+  // returns { linked } (the RPC confirmed the link) or { failed } (error,
+  // malformed response, or rejected code — shown to the user, retry allowed).
+  // Returns { ok:true } only once the session resolved to student_portal.
+  const runExplicitInviteAccept = async (attempt) => {
+    if (inviteAcceptInFlightRef.current) return { ok: false, inProgress: true };
+    const expectedUid = resolvedUserIdRef.current;
+    const myLifecycleToken = lifecycleTokenRef.current;
+    if (!expectedUid || myLifecycleToken == null) return { ok: false, cancelled: true };
+    const marker = beginInviteAccept(expectedUid);
+    try {
+      let session = null;
+      try {
+        const result = await supabase.auth.getSession();
+        session = result.error ? null : result.data.session;
+      } catch (thrown) {
+        console.error("invite accept: getSession threw:", thrown);
+      }
+      if (session?.user?.id !== expectedUid || lifecycleTokenRef.current !== myLifecycleToken) return { ok: false, cancelled: true };
+      const outcome = await attempt(expectedUid, myLifecycleToken);
+      if (lifecycleTokenRef.current !== myLifecycleToken) return { ok: false, cancelled: true };
+      const resolvedMode = await reresolve(myLifecycleToken);
+      if (resolvedMode === RESOLUTION_CANCELLED) return { ok: false, cancelled: true };
+      if (outcome.linked) return resolvedMode === "student_portal" ? { ok: true } : { ok: false, failed: true };
+      return { ok: false, failed: outcome.failed === true };
+    } finally {
+      endInviteAccept(marker);
+    }
+  };
+
+  // The only accepted shapes of accept_my_pending_invite(); anything else
+  // (extra keys included) is treated as a failed attempt, never as a result.
+  const isKnownPendingAcceptResult = (d) => {
+    if (!d || typeof d !== "object" || Array.isArray(d)) return false;
+    const keys = Object.keys(d).sort().join(",");
+    if (d.ok === true) return keys === "ok" || (keys === "already_linked,ok" && d.already_linked === true);
+    if (d.ok === false) return keys === "ok,reason" && ["none", "multiple", "not_eligible"].includes(d.reason);
+    return false;
+  };
+
+  // mode "student_pending_invite": no arguments — the server links auth.uid()
+  // to its single valid pending invite (or answers none/multiple/not_eligible).
+  const acceptMyPendingInvite = () =>
+    runExplicitInviteAccept(async () => {
+      let data, error;
+      try {
+        ({ data, error } = await supabase.rpc("accept_my_pending_invite"));
+      } catch (thrown) {
+        console.error("acceptMyPendingInvite: accept_my_pending_invite threw:", thrown);
+        return { failed: true };
+      }
+      if (error || !isKnownPendingAcceptResult(data)) {
+        console.error("acceptMyPendingInvite: failed or unexpected response:", error || data);
+        return { failed: true };
+      }
+      return { linked: data.ok === true };
+    });
+
+  // mode "student_invite_multiple" with a ?invite=CODE in the URL: accepts
+  // exactly THAT invitation through the existing accept_student_invite(code)
+  // (callAcceptStudentInvite: same precondition, same RPC, server checks the
+  // confirmed email). Unlike the sign-up/login invite flows it does not sign
+  // out when the code is rejected — the user stays on the screen and can sign
+  // out explicitly.
+  const acceptInviteCode = (code) =>
+    runExplicitInviteAccept(async (uid, token) => {
+      if (!code) return { failed: true };
+      const result = await callAcceptStudentInvite(code, uid, { expectedLifecycleToken: token });
+      if (result.outcome !== "success") return { failed: result.outcome !== "not_attempted" };
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete("invite");
+      cleanUrl.searchParams.delete("invite_callback");
+      window.history.replaceState({}, "", cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
+      return { linked: true };
+    });
+
   const value = {
     user, mode, onboarded, loadingAuth, checkingProfile, onboardingSaveFailed,
     accountStatus, accountStatusError, accountStatusRef, refreshAccountStatus,
@@ -1201,6 +1310,7 @@ export function AuthProvider({ children }) {
     setCheckingProfile, setLoadingAuth, setOnboardingSaveFailed,
     resolvedUserIdRef, resolveSession, reresolve,
     registerStudentFromInvite, loginStudentFromInvite, logout,
+    acceptMyPendingInvite, acceptInviteCode,
     // Hallazgo v5 punto 4 — exposed read-only so a caller like App.jsx's
     // handleOnboardingComplete can extend its own stillSameIdentity() check
     // with the SAME already-hardened mechanism AuthProvider's own internal
