@@ -45,6 +45,9 @@ const C = {
 // again — that exact divergence (one copy defaulting pQty to "" while the
 // other two defaulted to "8") was the root cause of a real production bug:
 // a combo package silently saved with qty:null.
+// OnboardingFlow now starts pQty at "" on purpose (no suggested number): that
+// is only safe because every save path still runs isValidComboQty first —
+// never remove or bypass this check.
 const isValidComboQty=(v)=>{const n=Number(v);return Number.isInteger(n)&&n>0;};
 
 // loadMyStudentPortal / cancelPendingSync / enqueueCoachDataWrite /
@@ -9179,7 +9182,8 @@ function OnboardingFlow({ onComplete, saveFailed }) {
   const [courts,setCourts]=useState([]);
   const [cName,setCName]=useState(""); const [cCity,setCCity]=useState("");
   const [packages,setPackages]=useState([]);
-  const [pType,setPType]=useState("combo"); const [pQty,setPQty]=useState("8"); const [pPrice,setPPrice]=useState(""); const [pNameOnboard,setPNameOnboard]=useState("");
+  const [pType,setPType]=useState(""); const [pQty,setPQty]=useState(""); const [pPrice,setPPrice]=useState(""); const [pNameOnboard,setPNameOnboard]=useState("");
+  const [packErr,setPackErr]=useState(null); // "type" | "qty" | "price" — first blocking field after the name; display only
 
   const COUNTRIES=[
     {code:"PY",name:"Paraguay",currency:"₲",currencyName:"Guaraní"},
@@ -9196,8 +9200,37 @@ function OnboardingFlow({ onComplete, saveFailed }) {
   ];
   const selectedCountry=COUNTRIES.find(c=>c.code===profCountry)||null;
 
-  const iS={width:"100%",padding:"14px 16px",borderRadius:14,border:"none",fontSize:15,boxSizing:"border-box",background:"rgba(255,255,255,0.15)",color:"#fff",outline:"none"};
-  const lS={fontSize:12,color:"rgba(255,255,255,0.7)",fontWeight:700,display:"block",marginBottom:6,letterSpacing:0.5};
+  // Onboarding visual tokens, shared by every step so the screens can't drift apart:
+  // field, label, title block, option/chip, "+ Agregar" and footer button.
+  const iS={width:"100%",height:52,padding:"0 16px",borderRadius:14,border:"1.5px solid rgba(255,255,255,0.3)",fontSize:16,boxSizing:"border-box",background:"rgba(255,255,255,0.16)",color:"#fff",outline:"none"};
+  const lS={fontSize:12,color:"rgba(255,255,255,0.75)",fontWeight:700,display:"block",marginBottom:8,letterSpacing:0.5,textAlign:"center"};
+  const titleBlock=(title,subtitle)=>(
+    <div style={{textAlign:"center",marginBottom:24}}>
+      <div style={{fontSize:"clamp(30px, 9vw, 40px)",fontWeight:900,color:"#fff",letterSpacing:-0.5,lineHeight:1.1,marginBottom:8}}>{title}</div>
+      <div style={{fontSize:15,color:"rgba(255,255,255,0.8)"}}>{subtitle}</div>
+    </div>
+  );
+  const optS=on=>({border:"1.5px solid "+(on?"#65CE5A":"rgba(255,255,255,0.45)"),background:on?"#65CE5A":"rgba(255,255,255,0.06)",color:"#fff",cursor:"pointer",fontWeight:on?700:500,boxShadow:on?"0 2px 8px rgba(0,0,0,0.15)":"none"});
+  const addBtnS={height:52,padding:"0 18px",borderRadius:14,border:"none",background:"#fff",color:"#1565C0",fontSize:14,cursor:"pointer",fontWeight:800,flexShrink:0};
+  const footBtnS={height:52,borderRadius:14,fontSize:15,cursor:"pointer",fontWeight:800};
+
+  // "+ Agregar" flags the first blocking field (name → type → combo qty → price): bring the coach straight to it.
+  const packNameRef=useRef(null); const packTypeRef=useRef(null); const packQtyRef=useRef(null); const packPriceRef=useRef(null);
+  useEffect(()=>{
+    if(step!==2) return;
+    const el=pNameOnboard===null?packNameRef.current
+      :packErr==="type"?packTypeRef.current?.querySelector("button")
+      :packErr==="qty"?packQtyRef.current
+      :packErr==="price"?packPriceRef.current?.querySelector("input")
+      :null;
+    if(el){el.focus();el.scrollIntoView({block:"center",behavior:"smooth"});}
+  },[step,pNameOnboard,packErr]);
+  const fieldErr=(id,text)=>(
+    <div id={id} role="alert" style={{display:"flex",alignItems:"center",gap:8,marginTop:8,background:"#fff",color:"#C62828",borderRadius:10,padding:"9px 12px",fontSize:13,fontWeight:700,textAlign:"left",boxShadow:"0 2px 8px rgba(0,0,0,0.18)"}}>
+      <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#C62828" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+      {text}
+    </div>
+  );
 
   const steps=[
     {title:"Tu perfil",subtitle:"Contanos sobre vos",icon:"👤"},
@@ -9206,81 +9239,79 @@ function OnboardingFlow({ onComplete, saveFailed }) {
     {title:"¡Todo listo!",subtitle:"Ya podés empezar",icon:"🎉"},
   ];
 
-  const Progress=()=>(
-    <div style={{display:"flex",gap:6,justifyContent:"center",marginBottom:28}}>
-      {steps.slice(0,3).map((_,i)=>(
-        <div key={i} style={{height:4,borderRadius:2,background:i<=step?"rgba(255,255,255,0.9)":"rgba(255,255,255,0.25)",flex:1,maxWidth:60,transition:"background 0.3s"}}></div>
-      ))}
-    </div>
-  );
-
   return (
-    <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#1565C0,#2196F3)",display:"flex",flexDirection:"column",padding:"32px 24px 24px"}}>
-      {/* Logo */}
-      <div style={{textAlign:"center",marginBottom:32}}>
-        <div style={{fontSize:22,fontWeight:900,color:"#fff",letterSpacing:-1}}>izi<span style={{color:"#90CAF9"}}>coach</span></div>
+    <div className="izi-ob" style={{minHeight:"100vh",background:"linear-gradient(160deg,#1565C0,#2196F3)",display:"flex",flexDirection:"column",padding:"32px 24px 24px",boxSizing:"border-box",
+      // Steps 0–2 have a fixed footer: reserve its height (+ iPhone safe area) so no content hides behind it.
+      ...(step<3?{paddingBottom:"calc(104px + env(safe-area-inset-bottom,0px))"}:{})}}>
+      {/* All onboarding fields: typed value white (inline), placeholder white at lower opacity and hidden on focus
+          (same behaviour as Auth), brighter border on focus, error state for the package name. Select options get
+          dark text so the native dropdown list stays readable. */}
+      <style>{`.izi-ob input::placeholder{color:rgba(255,255,255,0.75);opacity:1;font-size:14px;letter-spacing:0.3px}.izi-ob input:focus::placeholder{color:transparent}.izi-ob input:focus,.izi-ob select:focus{border-color:rgba(255,255,255,0.9)!important}.izi-ob .ob-err,.izi-ob .ob-err:focus,.izi-ob .ob-err-wrap input,.izi-ob .ob-err-wrap input:focus{border-color:#FF8A80!important;box-shadow:0 0 0 3px rgba(255,82,82,0.45)}.izi-ob select option{color:#0D1B4B}`}</style>
+      {/* Shared header: same logo on every step; the progress track only on steps 0–2. */}
+      <div style={{textAlign:"center",marginBottom:24}}>
+        <img src="/izicoach-logo.png" alt="izicoach" style={{width:96,height:"auto",display:"block",margin:"0 auto 16px"}}/>
+        {step<3&&(
+          <div style={{display:"flex",gap:6,justifyContent:"center",background:"rgba(255,255,255,0.14)",borderRadius:12,padding:"10px 14px",maxWidth:240,margin:"0 auto"}}>
+            {steps.slice(0,3).map((_,i)=>(
+              <div key={i} style={{height:4,borderRadius:2,background:i<=step?"#fff":"rgba(255,255,255,0.3)",flex:1,transition:"background 0.3s"}}></div>
+            ))}
+          </div>
+        )}
       </div>
-
-      {step<3&&<Progress/>}
 
       {/* Step 0 — Profile */}
       {step===0&&(
         <div style={{flex:1,display:"flex",flexDirection:"column"}}>
-          <div style={{textAlign:"center",marginBottom:28}}>
-            <div style={{fontSize:40,marginBottom:8}}>👤</div>
-            <div style={{fontSize:22,fontWeight:900,color:"#fff",marginBottom:6}}>Tu perfil</div>
-            <div style={{fontSize:14,color:"rgba(255,255,255,0.7)"}}>Contanos quién sos</div>
-          </div>
+          {titleBlock("Tu Perfil","Contanos quién sos")}
           {/* Avatar upload */}
           <div style={{textAlign:"center",marginBottom:24}}>
             <div style={{position:"relative",width:88,height:88,margin:"0 auto"}}>
               {profPhoto
                 ?<img src={profPhoto} style={{width:88,height:88,borderRadius:"50%",objectFit:"cover",border:"3px solid rgba(255,255,255,0.5)"}}/>
-                :<div style={{width:88,height:88,borderRadius:"50%",background:"rgba(255,255,255,0.2)",border:"3px dashed rgba(255,255,255,0.4)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:32}}>📷</div>
+                :<div style={{width:88,height:88,borderRadius:"50%",background:"rgba(255,255,255,0.16)",border:"2px dashed rgba(255,255,255,0.55)",boxSizing:"border-box",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.9)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                </div>
               }
-              <label htmlFor="obAvInput" style={{position:"absolute",bottom:0,right:0,width:28,height:28,borderRadius:"50%",background:"#43A047",border:"2px solid #fff",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>
+              <label htmlFor="obAvInput" aria-label="Subir foto" style={{position:"absolute",bottom:0,right:0,width:30,height:30,borderRadius:"50%",background:"#65CE5A",border:"2px solid #fff",boxShadow:"0 2px 6px rgba(0,0,0,0.2)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
               </label>
               <input id="obAvInput" type="file" accept="image/*" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f){const r=new FileReader();r.onload=ev=>setProfPhoto(ev.target.result);r.readAsDataURL(f);}}}/>
             </div>
             <div style={{fontSize:12,color:"rgba(255,255,255,0.6)",marginTop:8}}>Subí tu foto (opcional)</div>
           </div>
-          <div style={{marginBottom:14}}><label style={lS}>TU NOMBRE *</label><input value={profName} onChange={e=>setProfName(e.target.value)} placeholder="Ej: Carlos García" style={iS}/></div>
+          <div style={{marginBottom:18}}><input aria-label="Tu nombre" value={profName} onChange={e=>setProfName(e.target.value)} placeholder="TU NOMBRE" style={iS}/></div>
           <div style={{marginBottom:14}}>
             <label style={lS}>DEPORTE / ESPECIALIDAD</label>
             <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:profSport==="Otras"?10:0}}>
               {["Tenis","Padel","Squash","Fútbol","Volley","Karate","Golf","Natación","Otras"].map(sport=>(
-                <button key={sport} onClick={()=>setProfSport(sport)} style={{padding:"8px 14px",borderRadius:20,border:"2px solid "+(profSport===sport?"#fff":"rgba(255,255,255,0.3)"),background:profSport===sport?"rgba(255,255,255,0.25)":"transparent",color:"#fff",fontSize:13,cursor:"pointer",fontWeight:profSport===sport?700:400}}>
+                <button key={sport} onClick={()=>setProfSport(sport)} aria-pressed={profSport===sport} style={{padding:"9px 16px",borderRadius:22,fontSize:14,...optS(profSport===sport)}}>
                   {sport}
                 </button>
               ))}
             </div>
             {profSport==="Otras"&&(
-              <input value={profSportCustom||""} onChange={e=>setProfSportCustom(e.target.value)} placeholder="Especificá tu deporte..." style={{...iS,marginTop:8}}/>
+              <input aria-label="Especificá tu deporte" value={profSportCustom||""} onChange={e=>setProfSportCustom(e.target.value)} placeholder="ESPECIFICÁ TU DEPORTE" style={{...iS,marginTop:8}}/>
             )}
           </div>
-          <div style={{marginBottom:28}}>
-            <label style={lS}>PAÍS *</label>
-            <select value={profCountry} onChange={e=>{setProfCountry(e.target.value);const c=COUNTRIES.find(x=>x.code===e.target.value);if(c){setCUR(c.currency);}}} style={{...iS,cursor:"pointer",appearance:"none"}}>
-              <option value="" disabled>Seleccioná tu país...</option>
+          <div style={{marginBottom:12}}>
+            <div style={{position:"relative"}}>
+              <select aria-label="País" value={profCountry} onChange={e=>{setProfCountry(e.target.value);const c=COUNTRIES.find(x=>x.code===e.target.value);if(c){setCUR(c.currency);}}} style={{...iS,cursor:"pointer",appearance:"none",WebkitAppearance:"none",paddingRight:40,...(profCountry?{fontSize:16}:{fontSize:14,color:"rgba(255,255,255,0.75)",letterSpacing:0.3})}}>
+              <option value="" disabled>SELECCIONÁ TU PAÍS</option>
               {COUNTRIES.map(c=><option key={c.code} value={c.code}>{c.name+" — "+c.currency+" ("+c.currencyName+")"}</option>)}
             </select>
+            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.85)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{position:"absolute",right:16,top:"50%",transform:"translateY(-50%)",pointerEvents:"none"}}><path d="M6 9l6 6 6-6"/></svg>
+            </div>
             {selectedCountry&&<div style={{marginTop:8,fontSize:12,color:"rgba(255,255,255,0.8)",textAlign:"center"}}>
               {"💰 Moneda: "+selectedCountry.currency+" · "+selectedCountry.currencyName}
             </div>}
           </div>
-          <button onClick={()=>{if(!profName.trim()||!profCountry)return;setStep(1);}} style={{width:"100%",padding:"16px",borderRadius:14,border:"none",background:(profName.trim()&&profCountry)?"#fff":"rgba(255,255,255,0.3)",color:(profName.trim()&&profCountry)?"#1565C0":"rgba(255,255,255,0.5)",fontSize:15,cursor:"pointer",fontWeight:800}}>Siguiente →</button>
         </div>
       )}
 
       {/* Step 1 — Courts */}
       {step===1&&(
         <div style={{flex:1,display:"flex",flexDirection:"column"}}>
-          <div style={{textAlign:"center",marginBottom:24}}>
-            <div style={{fontSize:40,marginBottom:8}}>🏟</div>
-            <div style={{fontSize:22,fontWeight:900,color:"#fff",marginBottom:6}}>Tus canchas</div>
-            <div style={{fontSize:14,color:"rgba(255,255,255,0.7)"}}>¿Dónde dás clases?</div>
-          </div>
+          {titleBlock("Tus Canchas","¿Dónde dás clases?")}
           {courts.length>0&&(
             <div style={{marginBottom:16}}>
               {courts.map(c=>(
@@ -9293,12 +9324,8 @@ function OnboardingFlow({ onComplete, saveFailed }) {
             </div>
           )}
           <div style={{display:"flex",gap:8,marginBottom:12}}>
-            <input value={cName} onChange={e=>setCName(e.target.value)} placeholder="Nombre de la cancha" style={{...iS,flex:1}}/>
-            <button onClick={()=>{if(!cName.trim())return;setCourts(p=>[...p,{id:Date.now(),name:cName.trim()}]);setCName("");}} style={{padding:"14px 18px",borderRadius:14,border:"none",background:"#fff",color:"#1565C0",fontSize:14,cursor:"pointer",fontWeight:800,flexShrink:0}}>+ Agregar</button>
-          </div>
-          <div style={{marginTop:"auto",display:"flex",gap:10}}>
-            <button onClick={()=>setStep(2)} style={{flex:1,padding:"14px",borderRadius:14,border:"2px solid rgba(255,255,255,0.3)",background:"transparent",color:"rgba(255,255,255,0.7)",fontSize:14,cursor:"pointer",fontWeight:700}}>Saltar</button>
-            <button onClick={()=>setStep(2)} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:"#fff",color:"#1565C0",fontSize:15,cursor:"pointer",fontWeight:800}}>Siguiente →</button>
+            <input aria-label="Nombre de la cancha" value={cName} onChange={e=>setCName(e.target.value)} placeholder="CANCHA" style={{...iS,flex:1,minWidth:0}}/>
+            <button onClick={()=>{if(!cName.trim())return;setCourts(p=>[...p,{id:Date.now(),name:cName.trim()}]);setCName("");}} style={addBtnS}>+ Agregar</button>
           </div>
         </div>
       )}
@@ -9306,11 +9333,7 @@ function OnboardingFlow({ onComplete, saveFailed }) {
       {/* Step 2 — Packages */}
       {step===2&&(
         <div style={{flex:1,display:"flex",flexDirection:"column"}}>
-          <div style={{textAlign:"center",marginBottom:24}}>
-            <div style={{fontSize:40,marginBottom:8}}>💳</div>
-            <div style={{fontSize:22,fontWeight:900,color:"#fff",marginBottom:6}}>Tus paquetes</div>
-            <div style={{fontSize:14,color:"rgba(255,255,255,0.7)"}}>¿Cómo cobrás tus clases?</div>
-          </div>
+          {titleBlock("Tus Paquetes","¿Cómo cobrás tus clases?")}
           {packages.length>0&&(
             <div style={{marginBottom:16}}>
               {packages.map(p=>(
@@ -9322,40 +9345,47 @@ function OnboardingFlow({ onComplete, saveFailed }) {
               ))}
             </div>
           )}
-          <div style={{marginBottom:10}}>
-            <label style={lS}>NOMBRE DEL PAQUETE *</label>
-            <input value={pNameOnboard} onChange={e=>setPNameOnboard(e.target.value)} placeholder="Ej: Combo 8 clases, Plan Mensual..." style={{...iS,border:pNameOnboard===null&&"2px solid #FF6B6B"}}/>
-            {pNameOnboard===null&&<div style={{fontSize:11,color:"#FF6B6B",marginTop:4,fontWeight:600}}>⚠️ El nombre es requerido</div>}
+          <div style={{marginBottom:12}}>
+            <label htmlFor="obPackName" style={lS}>NOMBRE DEL PAQUETE *</label>
+            {/* Error state = pNameOnboard===null (set by "+ Agregar"); typing clears it. */}
+            <input id="obPackName" ref={packNameRef} value={pNameOnboard} onChange={e=>setPNameOnboard(e.target.value)} className={pNameOnboard===null?"ob-err":undefined} aria-invalid={pNameOnboard===null} aria-describedby={pNameOnboard===null?"obPackNameErr":undefined} style={iS}/>
+            {pNameOnboard===null&&fieldErr("obPackNameErr","Ingresá un nombre para el paquete")}
           </div>
-          <div style={{display:"flex",gap:8,marginBottom:10}}>
+          {/* No type preselected: the coach must pick one. */}
+          <span id="obPackTypeLbl" style={lS}>ELEGIR EL TIPO DE CLASE</span>
+          <div ref={packTypeRef} role="group" aria-labelledby="obPackTypeLbl" aria-describedby={packErr==="type"?"obPackTypeErr":undefined} style={{display:"flex",gap:8,marginBottom:packErr==="type"?0:14}}>
             {[["individual","🎯"],["combo","📦"],["mensual","📅"]].map(([k,ic])=>(
-              <button key={k} onClick={()=>setPType(k)} style={{flex:1,padding:"10px 4px",borderRadius:12,border:"2px solid "+(pType===k?"#fff":"rgba(255,255,255,0.3)"),background:pType===k?"rgba(255,255,255,0.25)":"transparent",color:"#fff",fontSize:12,cursor:"pointer",fontWeight:700}}>{ic+" "+k.charAt(0).toUpperCase()+k.slice(1)}</button>
+              <button key={k} onClick={()=>{setPType(k);setPackErr(x=>x==="type"?null:x);}} aria-pressed={pType===k} className={packErr==="type"?"ob-err":undefined} style={{flex:1,minWidth:0,padding:"10px 2px",borderRadius:14,fontSize:"clamp(11px, 3.5vw, 13px)",whiteSpace:"nowrap",...optS(pType===k)}}>{ic+" "+k.charAt(0).toUpperCase()+k.slice(1)}</button>
             ))}
           </div>
+          {packErr==="type"&&<div style={{marginBottom:14}}>{fieldErr("obPackTypeErr","Elegí el tipo de clase")}</div>}
           {pType==="combo"&&(
-            <div style={{marginBottom:8}}>
-              <label style={lS}>CANTIDAD DE CLASES</label>
-              <input value={pQty} onChange={e=>setPQty(e.target.value)} placeholder="Ej: 8" type="text" inputMode="numeric" pattern="[0-9]*" style={iS}/>
+            <div style={{marginBottom:12}}>
+              <label htmlFor="obPackQty" style={lS}>CANTIDAD DE CLASES</label>
+              <input id="obPackQty" ref={packQtyRef} value={pQty} onChange={e=>{setPQty(e.target.value);setPackErr(x=>x==="qty"?null:x);}} type="text" inputMode="numeric" pattern="[0-9]*" className={packErr==="qty"?"ob-err":undefined} aria-invalid={packErr==="qty"} aria-describedby={packErr==="qty"?"obPackQtyErr":undefined} style={iS}/>
+              {packErr==="qty"&&fieldErr("obPackQtyErr","Ingresá la cantidad de clases")}
             </div>
           )}
-          <div style={{display:"flex",gap:8,marginBottom:20,alignItems:"flex-end"}}>
-            <div style={{flex:1}}>
-              <label style={lS}>PRECIO ({selectedCountry?.currency||getCUR()})</label>
-              <MoneyInput value={parseInt(pPrice)||0} onChange={v=>setPPrice(v)} placeholder="400000" style={iS}/>
-            </div>
+          <div style={{display:"flex",gap:8,marginBottom:packErr==="price"?8:20,alignItems:"flex-end"}}>
+            {/* Wrapping <label> = accessible name for MoneyInput (shared component, left untouched). */}
+            <label ref={packPriceRef} className={packErr==="price"?"ob-err-wrap":undefined} style={{flex:1,minWidth:0,display:"block"}}>
+              <span style={lS}>PRECIO ({selectedCountry?.currency||getCUR()})</span>
+              {/* " ": MoneyInput falls back to a "0" placeholder when given an empty one — the field must look empty. */}
+              <MoneyInput value={parseInt(pPrice)||0} onChange={v=>{setPPrice(v);setPackErr(x=>x==="price"?null:x);}} placeholder=" " style={iS}/>
+            </label>
             <button onClick={()=>{
-              if(!pNameOnboard||!pNameOnboard.trim()){setPNameOnboard(null);return;}
-              if(!pPrice)return;
-              if(pType==="combo"&&!isValidComboQty(pQty)){alert("Ingresá la cantidad de clases del combo");return;}
+              // Same rules as before (name always; qty only for combo via isValidComboQty; price always), plus a
+              // type now that none is preselected — checked in form order and shown inline, one error at a time.
+              if(!pNameOnboard||!pNameOnboard.trim()){setPNameOnboard(null);setPackErr(null);return;}
+              if(!pType){setPackErr("type");return;}
+              if(pType==="combo"&&!isValidComboQty(pQty)){setPackErr("qty");return;}
+              if(!pPrice){setPackErr("price");return;}
               const qty=pType==="combo"?parseInt(pQty):null;
               setPackages(p=>[...p,{id:Date.now(),name:pNameOnboard.trim(),type:pType,qty,price:parseInt(pPrice)}]);
-              setPPrice("");setPQty("8");setPNameOnboard("");
-            }} style={{padding:"14px 18px",borderRadius:14,border:"none",background:"#fff",color:"#1565C0",fontSize:14,cursor:"pointer",fontWeight:800,flexShrink:0}}>+ Agregar</button>
+              setPPrice("");setPQty("");setPNameOnboard("");setPType("");setPackErr(null);
+            }} style={addBtnS}>+ Agregar</button>
           </div>
-          <div style={{marginTop:"auto",display:"flex",gap:10}}>
-            <button onClick={()=>setStep(3)} style={{flex:1,padding:"14px",borderRadius:14,border:"2px solid rgba(255,255,255,0.3)",background:"transparent",color:"rgba(255,255,255,0.7)",fontSize:14,cursor:"pointer",fontWeight:700}}>Saltar</button>
-            <button onClick={()=>setStep(3)} style={{flex:2,padding:"14px",borderRadius:14,border:"none",background:"#fff",color:"#1565C0",fontSize:15,cursor:"pointer",fontWeight:800}}>Siguiente →</button>
-          </div>
+          {packErr==="price"&&<div style={{marginBottom:20}}>{fieldErr("obPackPriceErr","Ingresá el precio")}</div>}
         </div>
       )}
 
@@ -9382,6 +9412,26 @@ function OnboardingFlow({ onComplete, saveFailed }) {
           <button onClick={()=>onComplete({name:profName,sport:profSport,photo:profPhoto,courts,packages,skipToHome:true,country:profCountry,currency:selectedCountry?.currency||"₲"})} style={{background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,0.6)",fontSize:13}}>
             Ir al dashboard →
           </button>
+        </div>
+      )}
+
+      {/* Fixed footer for steps 0–2: always visible while the step content scrolls; respects the iPhone safe area.
+          The buttons and their handlers are the ones each step had before, unchanged. */}
+      {step<3&&(
+        <div style={{position:"fixed",left:0,right:0,bottom:0,zIndex:20,padding:"14px 24px calc(14px + env(safe-area-inset-bottom,0px))",background:"linear-gradient(180deg,rgba(30,136,229,0.92),#1E88E5)",boxShadow:"0 -6px 20px rgba(13,71,161,0.25)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)"}}>
+          <div style={{display:"flex",gap:10,maxWidth:520,margin:"0 auto"}}>
+            {step===0&&(
+              <button onClick={()=>{if(!profName.trim()||!profCountry)return;setStep(1);}} style={{...footBtnS,width:"100%",border:"none",background:(profName.trim()&&profCountry)?"#fff":"rgba(255,255,255,0.3)",color:(profName.trim()&&profCountry)?"#1565C0":"rgba(255,255,255,0.5)"}}>Siguiente →</button>
+            )}
+            {step===1&&<>
+              <button onClick={()=>setStep(2)} style={{...footBtnS,flex:1,border:"2px solid rgba(255,255,255,0.3)",background:"transparent",color:"rgba(255,255,255,0.7)",fontSize:14,fontWeight:700}}>Saltar</button>
+              <button onClick={()=>setStep(2)} style={{...footBtnS,flex:2,border:"none",background:"#fff",color:"#1565C0"}}>Siguiente →</button>
+            </>}
+            {step===2&&<>
+              <button onClick={()=>setStep(3)} style={{...footBtnS,flex:1,border:"2px solid rgba(255,255,255,0.3)",background:"transparent",color:"rgba(255,255,255,0.7)",fontSize:14,fontWeight:700}}>Saltar</button>
+              <button onClick={()=>setStep(3)} style={{...footBtnS,flex:2,border:"none",background:"#fff",color:"#1565C0"}}>Siguiente →</button>
+            </>}
+          </div>
         </div>
       )}
     </div>
