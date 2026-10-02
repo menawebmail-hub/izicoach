@@ -2799,7 +2799,8 @@ function AuthFlow({ onLogin, registerStudentFromInvite, loginStudentFromInvite }
   // never the underlying state.
   const [pendingCoachConfirmation,setPendingCoachConfirmation]=useState(false);
   const iS={width:"100%",padding:"13px 16px",borderRadius:12,border:"1.5px solid rgba(255,255,255,0.3)",fontSize:14,boxSizing:"border-box",background:"rgba(255,255,255,0.15)",color:"#fff",outline:"none",marginBottom:12};
-  const lS={fontSize:12,color:"rgba(255,255,255,0.7)",fontWeight:700,display:"block",marginBottom:6};
+  // Login screen only — clearer inputs that stay below the white "Iniciar sesión" CTA. 16px avoids iOS focus zoom.
+  const loginIS={...iS,background:"rgba(255,255,255,0.16)",border:"1.5px solid rgba(255,255,255,0.55)",fontSize:16,lineHeight:"22px",padding:"10px 16px"};
 
   useEffect(()=>{
     if(!inviteCode) return;
@@ -2902,13 +2903,16 @@ function AuthFlow({ onLogin, registerStudentFromInvite, loginStudentFromInvite }
     setLoading(false);
   };
   return (
-    <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
-      <div style={{marginBottom:32,textAlign:"center"}}>
-        <div style={{fontWeight:900,fontSize:36,color:"#fff",letterSpacing:-1}}>izi<span style={{color:"#65CE5A"}}>coach</span></div>
-        <div style={{fontSize:14,color:"rgba(255,255,255,0.7)",marginTop:4}}>
-          {screen==="register_student"?"Portal del Alumno":"Gestión de clases y pagos"}
-        </div>
+    <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,paddingBottom:screen==="login"?88:24,boxSizing:"border-box"}}>
+      {/* Full logo asset (symbol + wordmark, transparent PNG) with the tagline as text below.
+          Login composition raised (extra bottom padding on the container). */}
+      {/* Register/Portal screens are taller: smaller logo so they fit a 375x812 screen without scrolling. */}
+      <div style={{marginBottom:screen==="login"?36:28,textAlign:"center"}}>
+        <img src="/izicoach-logo.png" alt="izicoach" style={{width:screen==="login"?172:140,height:"auto",display:"block",margin:"0 auto"}}/>
+        <div style={{fontSize:14,color:"rgba(255,255,255,0.8)",marginTop:10}}>{screen==="register_student"?"Portal del Alumno":"Gestión de clases y pagos"}</div>
       </div>
+      {/* All auth screens: shared field font (value 16px avoids iOS focus zoom; placeholder 14px). */}
+      <style>{`.izi-auth-input::placeholder{color:rgba(255,255,255,0.75);opacity:1;font-size:14px}`}</style>
       <div style={{width:"100%",maxWidth:380}}>
         {screen==="register_student"?(
           <>
@@ -2928,25 +2932,35 @@ function AuthFlow({ onLogin, registerStudentFromInvite, loginStudentFromInvite }
               </div>}
               {err&&<div style={{background:"rgba(229,57,53,0.3)",borderRadius:10,padding:"10px 14px",fontSize:13,color:"#FFCDD2",marginBottom:16}}>{err}</div>}
               {!err&&inviteMode==="create"&&<>
-                <div><label style={lS}>TU NOMBRE</label><input value={name} onChange={e=>setName(e.target.value)} placeholder="Ej: Ana García" style={iS}/></div>
-                <div><label style={lS}>CORREO</label><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="tu@correo.com" style={iS}/></div>
-                <div><label style={lS}>CONTRASEÑA</label><input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="Mínimo 6 caracteres" style={iS}/></div>
+                <div><input aria-label="Tu nombre" value={name} onChange={e=>setName(e.target.value)} placeholder="TU NOMBRE" className="izi-auth-input" style={{...iS,fontSize:16}}/></div>
+                <div><input aria-label="Correo" value={email} onChange={e=>setEmail(e.target.value)} placeholder="CORREO" className="izi-auth-input" style={{...iS,fontSize:16}}/></div>
+                <div><input type="password" aria-label="Contraseña" value={pass} onChange={e=>setPass(e.target.value)} placeholder="CONTRASEÑA" className="izi-auth-input" style={{...iS,fontSize:16}}/><div style={{fontSize:11,color:"rgba(255,255,255,0.6)",margin:"-6px 0 14px"}}>Mínimo 6 caracteres</div></div>
                 <button onClick={handleStudentRegister} disabled={loading} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:"#65CE5A",color:"#fff",fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:16,opacity:loading?0.7:1}}>{loading?"Registrando...":"Crear cuenta de alumno"}</button>
               </>}
               {!err&&inviteMode==="login"&&<>
-                <div><label style={lS}>CORREO</label><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="tu@correo.com" style={iS} onKeyDown={e=>e.key==="Enter"&&handleStudentLoginWithInvite()}/></div>
-                <div><label style={lS}>CONTRASEÑA</label><input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="••••••••" style={iS} onKeyDown={e=>e.key==="Enter"&&handleStudentLoginWithInvite()}/></div>
+                <div><input aria-label="Correo" value={email} onChange={e=>setEmail(e.target.value)} placeholder="CORREO" className="izi-auth-input" style={{...iS,fontSize:16}} onKeyDown={e=>e.key==="Enter"&&handleStudentLoginWithInvite()}/></div>
+                <div><input type="password" aria-label="Contraseña" value={pass} onChange={e=>setPass(e.target.value)} placeholder="CONTRASEÑA" className="izi-auth-input" style={{...iS,fontSize:16}} onKeyDown={e=>e.key==="Enter"&&handleStudentLoginWithInvite()}/></div>
                 <button onClick={handleStudentLoginWithInvite} disabled={loading} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:"#65CE5A",color:"#fff",fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:16,opacity:loading?0.7:1}}>{loading?"Entrando...":"Iniciar sesión"}</button>
               </>}
             </>)}
           </>
         ):screen==="login"?(
           <>
-            <div><label style={lS}>CORREO</label><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="tu@correo.com" style={iS} onKeyDown={e=>e.key==="Enter"&&handleLogin()}/></div>
-            <div><label style={lS}>CONTRASEÑA</label><input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="••••••••" style={iS} onKeyDown={e=>e.key==="Enter"&&handleLogin()}/></div>
+            {/* Login-only input look (placeholder/focus/autofill need CSS, scoped to this class). */}
+            <style>{`
+              .izi-login-input:focus::placeholder{color:transparent}
+              .izi-login-input:focus{border-color:rgba(255,255,255,0.95)!important}
+              .izi-login-input:-webkit-autofill,.izi-login-input:-webkit-autofill:hover,.izi-login-input:-webkit-autofill:focus{
+                -webkit-text-fill-color:#fff;caret-color:#fff;-webkit-box-shadow:0 0 0 1000px #26408F inset;transition:background-color 9999s ease-out 0s}
+            `}</style>
+            <input className="izi-auth-input izi-login-input" type="email" autoComplete="username" autoCapitalize="none" aria-label="Correo" value={email} onChange={e=>setEmail(e.target.value)} placeholder="TU CORREO" style={loginIS} onKeyDown={e=>e.key==="Enter"&&handleLogin()}/>
+            <input className="izi-auth-input izi-login-input" type="password" autoComplete="current-password" aria-label="Contraseña" value={pass} onChange={e=>setPass(e.target.value)} placeholder="CONTRASEÑA" style={loginIS} onKeyDown={e=>e.key==="Enter"&&handleLogin()}/>
             {err&&<div style={{background:"rgba(229,57,53,0.3)",borderRadius:10,padding:"10px 14px",fontSize:13,color:"#FFCDD2",marginBottom:16}}>{err}</div>}
             <button onClick={handleLogin} disabled={loading} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:"#fff",color:"#1A3DB5",fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:16,opacity:loading?0.7:1}}>{loading?"Entrando...":"Iniciar sesión"}</button>
-            <div style={{textAlign:"center",fontSize:13,color:"rgba(255,255,255,0.7)"}}>¿No tenés cuenta?{" "}<button onClick={()=>{setScreen("register");setErr("");}} style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:"#fff",fontWeight:800}}>Registrarse</button></div>
+            <div style={{textAlign:"center",fontSize:13,color:"rgba(255,255,255,0.75)"}}>¿No tenés cuenta?</div>
+            <div style={{textAlign:"center",marginTop:6}}>
+              <button onClick={()=>{setScreen("register");setErr("");}} style={{background:"#65CE5A",border:"none",borderRadius:10,cursor:"pointer",padding:"10px 26px",minHeight:40,fontSize:14,color:"#fff",fontWeight:700,letterSpacing:0.4}}>REGISTRARME</button>
+            </div>
           </>
         ):pendingCoachConfirmation?(
           <div style={{background:"rgba(255,255,255,0.15)",borderRadius:12,padding:"16px",textAlign:"center"}}>
@@ -2955,9 +2969,9 @@ function AuthFlow({ onLogin, registerStudentFromInvite, loginStudentFromInvite }
           </div>
         ):(
           <>
-            <div><label style={lS}>TU NOMBRE</label><input value={name} onChange={e=>setName(e.target.value)} placeholder="Ej: Carlos García" style={iS}/></div>
-            <div><label style={lS}>CORREO</label><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="tu@correo.com" style={iS}/></div>
-            <div><label style={lS}>CONTRASEÑA</label><input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="Mínimo 6 caracteres" style={iS}/></div>
+            <div><input aria-label="Tu nombre" value={name} onChange={e=>setName(e.target.value)} placeholder="TU NOMBRE" className="izi-auth-input" style={{...iS,fontSize:16}}/></div>
+            <div><input aria-label="Correo" value={email} onChange={e=>setEmail(e.target.value)} placeholder="CORREO" className="izi-auth-input" style={{...iS,fontSize:16}}/></div>
+            <div><input type="password" aria-label="Contraseña" value={pass} onChange={e=>setPass(e.target.value)} placeholder="CONTRASEÑA" className="izi-auth-input" style={{...iS,fontSize:16}}/><div style={{fontSize:11,color:"rgba(255,255,255,0.6)",margin:"-6px 0 14px"}}>Mínimo 6 caracteres</div></div>
             {err&&<div style={{background:"rgba(229,57,53,0.3)",borderRadius:10,padding:"10px 14px",fontSize:13,color:"#FFCDD2",marginBottom:16}}>{err}</div>}
             <button onClick={handleRegister} disabled={loading} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:"#65CE5A",color:"#fff",fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:16,opacity:loading?0.7:1}}>{loading?"Creando cuenta...":"Crear cuenta"}</button>
             <div style={{textAlign:"center",fontSize:13,color:"rgba(255,255,255,0.7)"}}>¿Ya tenés cuenta?{" "}<button onClick={()=>{setScreen("login");setErr("");}} style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:"#fff",fontWeight:800}}>Iniciar sesión</button></div>
