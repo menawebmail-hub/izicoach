@@ -45,8 +45,9 @@ const C = {
 // again — that exact divergence (one copy defaulting pQty to "" while the
 // other two defaulted to "8") was the root cause of a real production bug:
 // a combo package silently saved with qty:null.
-// OnboardingFlow now starts pQty at "" on purpose (no suggested number): that
-// is only safe because every save path still runs isValidComboQty first —
+// OnboardingFlow and PackageForm (now shared by NewPackageModal and
+// ConfigScreen) start pQty at "" on purpose (no suggested number): that is
+// only safe because every save path still runs isValidComboQty first —
 // never remove or bypass this check.
 const isValidComboQty=(v)=>{const n=Number(v);return Number.isInteger(n)&&n>0;};
 
@@ -2199,42 +2200,94 @@ function TopBar({ onExit, onConfig }) {
   );
 }
 
-function NewPackageModal({ onSave, onClose, currency }) {
+// Light-background version of the onboarding design system, for the package/court creation forms
+// (ConfigScreen → Canchas/Paquetes and NewPackageModal). Scoped to .izi-cfg so nothing else changes.
+const CFG_CSS=`.izi-cfg input::placeholder{color:rgba(13,27,75,0.45);opacity:1;font-size:14px;letter-spacing:0.3px}.izi-cfg input:focus::placeholder{color:transparent}.izi-cfg input:focus{border-color:#1A3DB5!important;box-shadow:0 0 0 3px rgba(26,61,181,0.15)}.izi-cfg .cfg-err,.izi-cfg .cfg-err:focus,.izi-cfg .cfg-err-wrap input,.izi-cfg .cfg-err-wrap input:focus{border-color:#E53935!important;box-shadow:0 0 0 3px rgba(229,57,53,0.18)}`;
+const cfgFieldS={width:"100%",height:52,padding:"0 16px",borderRadius:14,border:"1.5px solid rgba(26,61,181,0.18)",fontSize:16,boxSizing:"border-box",background:"#F5F7FF",color:C.text,outline:"none"};
+const cfgLabelS={fontSize:12,color:C.mutedDark,fontWeight:700,display:"block",marginBottom:8,letterSpacing:0.5,textAlign:"center",textTransform:"uppercase"};
+const cfgOptS=on=>({border:"1.5px solid "+(on?"#65CE5A":"rgba(26,61,181,0.18)"),background:on?"#65CE5A":C.white,color:on?C.white:C.text,cursor:"pointer",fontWeight:on?700:500,boxShadow:on?"0 2px 8px rgba(101,206,90,0.35)":"none"});
+const cfgBtnS={flex:1,height:52,borderRadius:14,cursor:"pointer",fontSize:15,fontWeight:800};
+const cfgCancelS={...cfgBtnS,border:"1.5px solid "+C.border,background:C.white,color:C.mutedDark,fontWeight:700};
+const cfgSaveS={...cfgBtnS,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white};
+function CfgFieldErr({ id, text }) {
+  return (
+    <div id={id} role="alert" style={{display:"flex",alignItems:"center",gap:8,marginTop:8,background:"#FFEBEE",color:"#C62828",border:"1px solid #FFCDD2",borderRadius:10,padding:"9px 12px",fontSize:13,fontWeight:700,textAlign:"left"}}>
+      <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#C62828" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+      {text}
+    </div>
+  );
+}
+
+// Package creation form shared by ConfigScreen → Paquetes and NewPackageModal, with the same rules as
+// OnboardingFlow's "Tus Paquetes": nothing preselected or prefilled; validation in form order
+// name → type → combo qty (isValidComboQty) → price, one inline error at a time with focus on it.
+// Builds the same package object both callers saved before; persistence stays with the caller (onSave).
+function PackageForm({ onSave, onCancel, currency }) {
   const [pName,setPName]=useState("");
-  const [pType,setPType]=useState("combo");
-  const [pQty,setPQty]=useState("8");
+  const [pType,setPType]=useState("");
+  const [pQty,setPQty]=useState("");
   const [pPrice,setPPrice]=useState("");
-  const iS={width:"100%",padding:"12px 14px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:14,boxSizing:"border-box",background:C.white,color:C.text,outline:"none"};
+  const [err,setErr]=useState(null); // "name" | "type" | "qty" | "price" — display only
+  const nameRef=useRef(null); const typeRef=useRef(null); const qtyRef=useRef(null); const priceRef=useRef(null);
+  useEffect(()=>{
+    const el=err==="name"?nameRef.current
+      :err==="type"?typeRef.current?.querySelector("button")
+      :err==="qty"?qtyRef.current
+      :err==="price"?priceRef.current?.querySelector("input")
+      :null;
+    if(el){el.focus();if(el.scrollIntoView)el.scrollIntoView({block:"center",behavior:"smooth"});}
+  },[err]);
+  const clearErr=k=>setErr(x=>x===k?null:x);
+  const save=()=>{
+    if(!pName.trim()){setErr("name");return;}
+    if(!pType){setErr("type");return;}
+    if(pType==="combo"&&!isValidComboQty(pQty)){setErr("qty");return;}
+    if(!pPrice){setErr("price");return;}
+    onSave({id:Date.now(),name:pName.trim(),type:pType,qty:pType==="combo"?parseInt(pQty):null,price:parseInt(pPrice)});
+  };
+  return (
+    <div className="izi-cfg">
+      <style>{CFG_CSS}</style>
+      <div style={{marginBottom:14}}>
+        <label htmlFor="cfgPackName" style={cfgLabelS}>NOMBRE DEL PAQUETE *</label>
+        <input id="cfgPackName" ref={nameRef} value={pName} onChange={e=>{setPName(e.target.value);clearErr("name");}} className={err==="name"?"cfg-err":undefined} aria-invalid={err==="name"} aria-describedby={err==="name"?"cfgPackNameErr":undefined} style={cfgFieldS}/>
+        {err==="name"&&<CfgFieldErr id="cfgPackNameErr" text="Ingresá un nombre para el paquete"/>}
+      </div>
+      <span id="cfgPackTypeLbl" style={cfgLabelS}>ELEGIR EL TIPO DE CLASE</span>
+      <div ref={typeRef} role="group" aria-labelledby="cfgPackTypeLbl" aria-describedby={err==="type"?"cfgPackTypeErr":undefined} style={{display:"flex",gap:8,marginBottom:err==="type"?0:14}}>
+        {[["individual","🎯 Individual"],["combo","📦 Combo"],["mensual","📅 Mensual"]].map(([k,l])=>(
+          <button key={k} onClick={()=>{setPType(k);clearErr("type");}} aria-pressed={pType===k} className={err==="type"?"cfg-err":undefined} style={{flex:1,minWidth:0,height:44,padding:"0 2px",borderRadius:14,fontSize:"clamp(11px, 3.4vw, 13px)",whiteSpace:"nowrap",...cfgOptS(pType===k)}}>{l}</button>
+        ))}
+      </div>
+      {err==="type"&&<div style={{marginBottom:14}}><CfgFieldErr id="cfgPackTypeErr" text="Elegí el tipo de clase"/></div>}
+      {pType==="combo"&&(
+        <div style={{marginBottom:14}}>
+          <label htmlFor="cfgPackQty" style={cfgLabelS}>CANTIDAD DE CLASES</label>
+          <input id="cfgPackQty" ref={qtyRef} type="text" inputMode="numeric" pattern="[0-9]*" value={pQty} onChange={e=>{setPQty(e.target.value);clearErr("qty");}} className={err==="qty"?"cfg-err":undefined} aria-invalid={err==="qty"} aria-describedby={err==="qty"?"cfgPackQtyErr":undefined} style={cfgFieldS}/>
+          {err==="qty"&&<CfgFieldErr id="cfgPackQtyErr" text="Ingresá la cantidad de clases"/>}
+        </div>
+      )}
+      {/* Wrapping <label> = accessible name for MoneyInput (shared component, left untouched). */}
+      <label ref={priceRef} className={err==="price"?"cfg-err-wrap":undefined} style={{display:"block",marginBottom:err==="price"?0:18}}>
+        <span style={cfgLabelS}>PRECIO ({currency||getCUR()}) *</span>
+        {/* " ": MoneyInput falls back to a "0" placeholder when given an empty one — the field must look empty. */}
+        <MoneyInput value={parseInt(pPrice)||0} onChange={v=>{setPPrice(v);clearErr("price");}} placeholder=" " style={cfgFieldS}/>
+      </label>
+      {err==="price"&&<div style={{marginBottom:18}}><CfgFieldErr id="cfgPackPriceErr" text="Ingresá el precio"/></div>}
+      <div style={{display:"flex",gap:10}}>
+        <button onClick={onCancel} style={cfgCancelS}>Cancelar</button>
+        <button onClick={save} style={cfgSaveS}>Guardar</button>
+      </div>
+    </div>
+  );
+}
+
+function NewPackageModal({ onSave, onClose, currency }) {
   return (
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.5)",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 20px"}}>
-      <div style={{background:C.white,borderRadius:20,padding:24,width:"100%",boxShadow:"0 20px 60px rgba(0,0,0,0.2)",border:"1.5px solid "+C.blue2}}>
+      <div style={{background:C.white,borderRadius:20,padding:24,width:"100%",boxShadow:"0 20px 60px rgba(0,0,0,0.2)",border:"1.5px solid "+C.blue2,maxHeight:"90vh",overflowY:"auto",boxSizing:"border-box"}}>
         <div style={{fontWeight:800,fontSize:17,color:C.text,marginBottom:20}}>Nuevo paquete</div>
-        <div style={{marginBottom:12}}>
-          <label style={{fontSize:12,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>NOMBRE *</label>
-          <input value={pName} onChange={e=>setPName(e.target.value)} placeholder="Ej: Combo 8 clases" style={iS}/>
-        </div>
-        <div style={{marginBottom:12}}>
-          <label style={{fontSize:12,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>TIPO</label>
-          <div style={{display:"flex",gap:6}}>
-            {[["individual","🎯 Individual"],["combo","📦 Combo"],["mensual","📅 Mensual"]].map(([k,l])=>(
-              <button key={k} onClick={()=>setPType(k)} style={{flex:1,padding:"10px 4px",borderRadius:10,border:"2px solid "+(pType===k?C.blue2:C.border),background:pType===k?C.blueL:C.white,color:pType===k?C.blue2:C.mutedDark,fontSize:12,cursor:"pointer",fontWeight:700}}>{l}</button>
-            ))}
-          </div>
-        </div>
-        {pType==="combo"&&<div style={{marginBottom:12}}><label style={{fontSize:12,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>CANTIDAD DE CLASES</label><input type="text" inputMode="numeric" pattern="[0-9]*" value={pQty} onChange={e=>setPQty(e.target.value)} placeholder="8" style={iS}/></div>}
-        <div style={{marginBottom:20}}>
-          <label style={{fontSize:12,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>PRECIO ({currency||getCUR()}) *</label>
-          <MoneyInput value={parseInt(pPrice)||0} onChange={v=>setPPrice(v)} placeholder="400000" style={iS}/>
-        </div>
-        <div style={{display:"flex",gap:10}}>
-          <button onClick={onClose} style={{flex:1,padding:"13px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:14,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
-          <button onClick={()=>{
-            if(!pName.trim()||!pPrice) return;
-            if(pType==="combo"&&!isValidComboQty(pQty)){alert("Ingresá la cantidad de clases del combo");return;}
-            const pkg={id:Date.now(),name:pName.trim(),type:pType,qty:pType==="combo"?parseInt(pQty):null,price:parseInt(pPrice)};
-            onSave(pkg);
-          }} style={{flex:1,padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:14,fontWeight:800}}>Guardar</button>
-        </div>
+        <PackageForm onSave={onSave} onCancel={onClose} currency={currency}/>
       </div>
     </div>
   );
@@ -2533,7 +2586,13 @@ function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, famil
   const [fName,setFName]=useState(""); const [fRespName,setFRespName]=useState(""); const [fRespPhone,setFRespPhone]=useState(""); const [fRespEmail,setFRespEmail]=useState("");
   const [editFamilyId,setEditFamilyId]=useState(null);
   const [cName,setCName]=useState(""); const [cAddr,setCAddr]=useState(""); const [cCity,setCCity]=useState("");
-  const [pName,setPName]=useState(""); const [pType,setPType]=useState("combo"); const [pQty,setPQty]=useState("8"); const [pPrice,setPPrice]=useState("");
+  const [courtNameErr,setCourtNameErr]=useState(false); // "Guardar" without a court name — display only
+  const courtNameRef=useRef(null);
+  useEffect(()=>{if(courtNameErr&&courtNameRef.current){courtNameRef.current.focus();if(courtNameRef.current.scrollIntoView)courtNameRef.current.scrollIntoView({block:"center",behavior:"smooth"});}},[courtNameErr]);
+  // Canchas/Paquetes cards: same structure, harmonised with the onboarding design system (radius/border/tile).
+  const cfgCardS={marginBottom:10,borderRadius:16,border:"1px solid rgba(26,61,181,0.10)",boxShadow:"0 2px 10px rgba(26,61,181,0.06)"};
+  const cfgTileS={width:44,height:44,borderRadius:12,background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0};
+  const cfgAddS={width:"100%",height:52,borderRadius:14,border:"1.5px dashed "+C.blue2,background:C.blueL,color:C.blue2,fontSize:15,cursor:"pointer",fontWeight:700,marginTop:4};
   // Profile fields — init from coachProfile
   const [profName,setProfName]=useState(coachProfile?.name||"");
   const [profEmail,setProfEmail]=useState(coachProfile?.email||"");
@@ -2671,11 +2730,11 @@ function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, famil
           <>
             <div style={{fontSize:13,color:C.mutedDark,marginBottom:16}}>Configurá los lugares donde dás clases. Aparecerán como opciones rápidas al crear una clase.</div>
             {courts.map(c=>(
-              <WhiteCard key={c.id} style={{marginBottom:10}}>
+              <WhiteCard key={c.id} style={cfgCardS}>
                 <div style={{display:"flex",alignItems:"center",gap:12}}>
-                  <div style={{width:40,height:40,borderRadius:10,background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>🏟</div>
+                  <div style={cfgTileS}>🏟</div>
                   <div style={{flex:1}}>
-                    <div style={{fontWeight:700,fontSize:14,color:C.text}}>{c.name}</div>
+                    <div style={{fontWeight:700,fontSize:15,color:C.text}}>{c.name}</div>
                     {c.address&&<div style={{fontSize:12,color:C.mutedDark}}>📍 {c.address}</div>}
                     {c.city&&<div style={{fontSize:11,color:C.mutedDark}}>{c.city}</div>}
                   </div>
@@ -2687,18 +2746,25 @@ function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, famil
             ))}
             {courts.length===0&&<div style={{textAlign:"center",padding:"24px 0",color:C.mutedDark,fontSize:13}}>Aún no hay canchas configuradas</div>}
             {showNewCourt?(
-              <WhiteCard style={{border:"1.5px solid "+C.blue2}}>
-                <div style={{fontWeight:700,fontSize:14,color:C.text,marginBottom:12}}>Nueva cancha</div>
-                <div style={{marginBottom:10}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>NOMBRE *</label><input value={cName} onChange={e=>setCName(e.target.value)} placeholder="Ej: Cancha A" style={iS}/></div>
-                <div style={{marginBottom:10}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>DIRECCIÓN</label><input value={cAddr} onChange={e=>setCAddr(e.target.value)} placeholder="Ej: Av. España 1234" style={iS}/></div>
-                <div style={{marginBottom:14}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>LOCALIDAD</label><input value={cCity} onChange={e=>setCCity(e.target.value)} placeholder="Ej: Asunción" style={iS}/></div>
-                <div style={{display:"flex",gap:8}}>
-                  <button onClick={()=>{setShowNewCourt(false);setCName("");setCAddr("");setCCity("");}} style={{flex:1,padding:"11px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:13,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
-                  <button onClick={()=>{if(!cName.trim())return;setCourts(p=>[...p,{id:Date.now(),name:cName.trim(),address:cAddr.trim(),city:cCity.trim()}]);setCName("");setCAddr("");setCCity("");setShowNewCourt(false);}} style={{flex:1,padding:"11px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:13,fontWeight:800}}>Guardar</button>
+              <WhiteCard style={{border:"1.5px solid "+C.blue2,borderRadius:16}}>
+                <div className="izi-cfg">
+                  <style>{CFG_CSS}</style>
+                  <div style={{fontWeight:800,fontSize:15,color:C.text,marginBottom:14}}>Nueva cancha</div>
+                  <div style={{marginBottom:14}}>
+                    <label htmlFor="cfgCourtName" style={cfgLabelS}>NOMBRE *</label>
+                    <input id="cfgCourtName" ref={courtNameRef} value={cName} onChange={e=>{setCName(e.target.value);setCourtNameErr(false);}} placeholder="NOMBRE DE LA CANCHA" className={courtNameErr?"cfg-err":undefined} aria-invalid={courtNameErr} aria-describedby={courtNameErr?"cfgCourtNameErr":undefined} style={cfgFieldS}/>
+                    {courtNameErr&&<CfgFieldErr id="cfgCourtNameErr" text="Ingresá un nombre para la cancha"/>}
+                  </div>
+                  <div style={{marginBottom:14}}><label htmlFor="cfgCourtAddr" style={cfgLabelS}>DIRECCIÓN (OPCIONAL)</label><input id="cfgCourtAddr" value={cAddr} onChange={e=>setCAddr(e.target.value)} placeholder="CALLE Y NÚMERO" style={cfgFieldS}/></div>
+                  <div style={{marginBottom:18}}><label htmlFor="cfgCourtCity" style={cfgLabelS}>LOCALIDAD (OPCIONAL)</label><input id="cfgCourtCity" value={cCity} onChange={e=>setCCity(e.target.value)} placeholder="CIUDAD O BARRIO" style={cfgFieldS}/></div>
+                  <div style={{display:"flex",gap:10}}>
+                    <button onClick={()=>{setShowNewCourt(false);setCName("");setCAddr("");setCCity("");setCourtNameErr(false);}} style={cfgCancelS}>Cancelar</button>
+                    <button onClick={()=>{if(!cName.trim()){setCourtNameErr(true);return;}setCourts(p=>[...p,{id:Date.now(),name:cName.trim(),address:cAddr.trim(),city:cCity.trim()}]);setCName("");setCAddr("");setCCity("");setCourtNameErr(false);setShowNewCourt(false);}} style={cfgSaveS}>Guardar</button>
+                  </div>
                 </div>
               </WhiteCard>
             ):(
-              <button onClick={()=>setShowNewCourt(true)} style={{width:"100%",padding:"13px",borderRadius:12,border:"1.5px dashed "+C.blue2,background:C.blueL,color:C.blue2,fontSize:14,cursor:"pointer",fontWeight:700,marginTop:4}}>+ Agregar cancha</button>
+              <button onClick={()=>setShowNewCourt(true)} style={cfgAddS}>+ Agregar cancha</button>
             )}
           </>
         )}
@@ -2707,11 +2773,11 @@ function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, famil
           <>
             <div style={{fontSize:13,color:C.mutedDark,marginBottom:16}}>Configurá tus paquetes con precios sugeridos. Aparecerán como opciones al actualizar pagos.</div>
             {packages.map(p=>(
-              <WhiteCard key={p.id} style={{marginBottom:10}}>
+              <WhiteCard key={p.id} style={cfgCardS}>
                 <div style={{display:"flex",alignItems:"center",gap:12}}>
-                  <div style={{width:40,height:40,borderRadius:10,background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{packIcon(p.type)}</div>
+                  <div style={cfgTileS}>{packIcon(p.type)}</div>
                   <div style={{flex:1}}>
-                    <div style={{fontWeight:700,fontSize:14,color:C.text}}>{p.name}</div>
+                    <div style={{fontWeight:700,fontSize:15,color:C.text}}>{p.name}</div>
                     <div style={{fontSize:12,color:C.mutedDark}}>{packTypeLabel(p.type)}{p.qty?" · "+p.qty+" clases":""}</div>
                     <div style={{fontSize:13,fontWeight:700,color:C.blue2}}>{fmtMoneyShort(p.price)}</div>
                   </div>
@@ -2723,26 +2789,13 @@ function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, famil
             ))}
             {packages.length===0&&<div style={{textAlign:"center",padding:"24px 0",color:C.mutedDark,fontSize:13}}>Aún no hay paquetes configurados</div>}
             {showNewPack?(
-              <WhiteCard style={{border:"1.5px solid "+C.blue2}}>
-                <div style={{fontWeight:700,fontSize:14,color:C.text,marginBottom:12}}>Nuevo paquete</div>
-                <div style={{marginBottom:10}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>NOMBRE *</label><input value={pName} onChange={e=>setPName(e.target.value)} placeholder="Ej: Combo 8 clases" style={iS}/></div>
-                <div style={{marginBottom:10}}>
-                  <label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:6}}>TIPO</label>
-                  <div style={{display:"flex",gap:6}}>
-                    {[["individual","🎯 Individual"],["combo","📦 Combo"],["mensual","📅 Mensual"]].map(([k,l])=>(
-                      <button key={k} onClick={()=>setPType(k)} style={{flex:1,padding:"8px 4px",borderRadius:10,border:"2px solid "+(pType===k?C.blue2:C.border),background:pType===k?C.blueL:C.white,color:pType===k?C.blue2:C.mutedDark,fontSize:11,cursor:"pointer",fontWeight:700}}>{l}</button>
-                    ))}
-                  </div>
-                </div>
-                {pType==="combo"&&<div style={{marginBottom:10}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>CANTIDAD DE CLASES</label><input type="text" inputMode="numeric" pattern="[0-9]*" value={pQty} onChange={e=>setPQty(e.target.value)} placeholder="8" style={iS}/></div>}
-                <div style={{marginBottom:14}}><label style={{fontSize:12,color:C.blue,fontWeight:700,display:"block",marginBottom:4}}>PRECIO (₲) *</label><MoneyInput value={parseInt(pPrice)||0} onChange={v=>setPPrice(v)} placeholder="400000" style={iS}/></div>
-                <div style={{display:"flex",gap:8}}>
-                  <button onClick={()=>{setShowNewPack(false);setPName("");setPQty("8");setPPrice("");}} style={{flex:1,padding:"11px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:13,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
-                  <button onClick={()=>{if(!pName.trim()||!pPrice)return;if(pType==="combo"&&!isValidComboQty(pQty)){alert("Ingresá la cantidad de clases del combo");return;}setPackages(prev=>[...prev,{id:Date.now(),name:pName.trim(),type:pType,qty:pType==="combo"?parseInt(pQty):null,price:parseInt(pPrice)}]);setPName("");setPQty("8");setPPrice("");setShowNewPack(false);}} style={{flex:1,padding:"11px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:13,fontWeight:800}}>Guardar</button>
-                </div>
+              <WhiteCard style={{border:"1.5px solid "+C.blue2,borderRadius:16}}>
+                <div style={{fontWeight:800,fontSize:15,color:C.text,marginBottom:14}}>Nuevo paquete</div>
+                {/* Same form/rules as NewPackageModal; the form unmounts on close, so it always reopens clean. */}
+                <PackageForm onCancel={()=>setShowNewPack(false)} onSave={pkg=>{setPackages(prev=>[...prev,pkg]);setShowNewPack(false);}}/>
               </WhiteCard>
             ):(
-              <button onClick={()=>setShowNewPack(true)} style={{width:"100%",padding:"13px",borderRadius:12,border:"1.5px dashed "+C.blue2,background:C.blueL,color:C.blue2,fontSize:14,cursor:"pointer",fontWeight:700,marginTop:4}}>+ Agregar paquete</button>
+              <button onClick={()=>setShowNewPack(true)} style={cfgAddS}>+ Agregar paquete</button>
             )}
           </>
         )}
