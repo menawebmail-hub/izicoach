@@ -9491,31 +9491,77 @@ function OnboardingFlow({ onComplete, saveFailed }) {
   );
 }
 
-function EmptyDashboard({ onNewClass, onNewStudent, onInvite }) {
+// First-run home (no students and no classes yet): one primary step (create a class), two follow-up steps
+// and a tip. Same actions as before (onNewClass / onNewStudent) plus opening Configuración (same as the
+// header gear). The app container already reserves the fixed NavBar + safe area; 24px is just breathing room.
+function EmptyDashboard({ onNewClass, onNewStudent, onConfig, coachName }) {
+  const firstName=(coachName||"").trim().split(/\s+/)[0];
+  const greeting=firstName&&firstName!=="Coach"?"¡Bienvenido, "+firstName+"!":"¡Bienvenido a izicoach!";
+  const ico=(d,size=20)=>(<svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>);
+  const icCalendarPlus=ico(<><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="12" y1="13" x2="12" y2="18"/><line x1="9.5" y1="15.5" x2="14.5" y2="15.5"/></>,22);
+  const icUserPlus=ico(<><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="16" y1="11" x2="22" y2="11"/></>);
+  const icGear=ico(<><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></>);
+  const icChevron=ico(<polyline points="9 18 15 12 9 6"/>,18);
+  const icPlus=ico(<><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></>,18);
+  const icBulb=ico(<><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 00-4 12.7c.6.5 1 1.3 1 2.3h6c0-1 .4-1.8 1-2.3A7 7 0 0012 2z"/></>,18);
+  const num=(n,primary)=>(<span style={{width:22,height:22,borderRadius:"50%",background:primary?C.green:C.blueL,color:primary?C.white:C.blue2,fontSize:11,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{n}</span>);
+  const tile=(icon,size=40)=>(<div className="izi-home-tile" style={{width:size,height:size,borderRadius:12,background:C.blueL,color:C.blue2,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{icon}</div>);
+  const cardS={background:C.white,borderRadius:16,border:"1px solid rgba(26,61,181,0.10)"};
   return (
-    <div style={{flex:1,overflowY:"auto",background:C.bg}}>
+    <div className="izi-home" style={{flex:1,overflowY:"auto",background:C.bg,textAlign:"left",paddingBottom:24}}>
+      {/* Narrow phones: step 2/3 drop their icon tile so titles never get cut. */}
+      <style>{`@media (max-width:340px){.izi-home .izi-home-step .izi-home-tile{display:none!important}}`}</style>
       <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"20px 16px 40px",flexShrink:0}}>
-        <div style={{fontSize:20,fontWeight:800,color:"#fff",marginBottom:4}}>¡Bienvenido a izicoach! 👋</div>
-        <div style={{fontSize:14,color:"rgba(255,255,255,0.75)"}}>Seguí estos pasos para empezar</div>
+        <div style={{maxWidth:520,margin:"0 auto"}}>
+          <div style={{fontSize:21,fontWeight:800,color:C.white,marginBottom:4}}>{greeting}</div>
+          <div style={{fontSize:14,color:"rgba(255,255,255,0.78)"}}>Seguí estos pasos para empezar</div>
+        </div>
       </div>
-      <div style={{padding:16,marginTop:-20}}>
-        {[
-          {icon:"📅",title:"Creá tu primera clase",desc:"Configurá horario, días y cancha",action:onNewClass,btn:"Crear clase",color:C.blue2,bg:C.blueL},
-          {icon:"👤",title:"Agregá un alumno",desc:"Invitá a tus alumnos a la plataforma",action:onNewStudent,btn:"Agregar alumno",color:"#43A047",bg:"#E8F5E9"},
-          {icon:"📲",title:"Invitá por link o QR",desc:"Compartí el link y que se registren solos",action:onInvite,btn:"Ver link",color:"#7B1FA2",bg:"#F3E5F5"},
-        ].map((s,i)=>(
-          <div key={i} style={{background:"#fff",borderRadius:16,padding:16,marginBottom:12,border:"1px solid "+C.border,display:"flex",gap:14,alignItems:"center"}}>
-            <div style={{width:52,height:52,borderRadius:14,background:s.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,flexShrink:0}}>{s.icon}</div>
-            <div style={{flex:1}}>
-              <div style={{fontWeight:800,fontSize:15,color:C.text,marginBottom:2}}>{s.title}</div>
-              <div style={{fontSize:12,color:C.mutedDark}}>{s.desc}</div>
-            </div>
-            <button onClick={s.action} style={{padding:"8px 14px",borderRadius:10,border:"none",background:s.color,color:"#fff",fontSize:12,cursor:"pointer",fontWeight:700,flexShrink:0}}>{s.btn}</button>
+      <div style={{padding:"0 14px",marginTop:-24,maxWidth:548,marginLeft:"auto",marginRight:"auto",boxSizing:"border-box"}}>
+        {/* Step 1 — primary action */}
+        <div style={{...cardS,padding:16}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+            {num(1,true)}
+            <span style={{fontSize:11,fontWeight:800,letterSpacing:0.5,color:"#3B8A33",textTransform:"uppercase"}}>Empezá por acá</span>
           </div>
-        ))}
-        <div style={{background:"linear-gradient(135deg,#1565C0,#1976D2)",borderRadius:16,padding:"16px 18px",marginTop:4,display:"flex",alignItems:"center",gap:14}}>
-          <div style={{fontSize:28}}>💡</div>
-          <div><div style={{fontSize:13,fontWeight:700,color:"#fff",marginBottom:2}}>Consejo rápido</div><div style={{fontSize:12,color:"rgba(255,255,255,0.8)"}}>Configurá tus canchas y paquetes en ⚙ Configuración para agilizar la creación de clases.</div></div>
+          <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:14}}>
+            {tile(icCalendarPlus,44)}
+            <div style={{minWidth:0}}>
+              <div style={{fontSize:16,fontWeight:800,color:C.text}}>Creá tu primera clase</div>
+              <div style={{fontSize:12,color:C.mutedDark,marginTop:2}}>Días, horario, cancha y alumnos</div>
+            </div>
+          </div>
+          <button onClick={onNewClass} style={{width:"100%",height:48,borderRadius:14,border:"none",background:C.green,color:C.white,fontSize:15,fontWeight:800,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>{icPlus}Crear clase</button>
+        </div>
+
+        <div style={{fontSize:11,fontWeight:800,letterSpacing:0.5,color:C.mutedDark,textTransform:"uppercase",margin:"18px 4px 8px"}}>Después</div>
+        {/* Step 2 — whole row is the button */}
+        <button onClick={onNewStudent} className="izi-home-step" style={{...cardS,width:"100%",display:"flex",alignItems:"center",gap:12,padding:14,cursor:"pointer",textAlign:"left"}}>
+          {num(2)}
+          {tile(icUserPlus)}
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:14,fontWeight:800,color:C.text}}>Agregá un alumno</div>
+            <div style={{fontSize:12,color:C.mutedDark}}>Cargalo vos en segundos</div>
+          </div>
+          <span style={{color:"#9BACCB",display:"flex"}}>{icChevron}</span>
+        </button>
+        {/* Step 3 — Configuración (same as the header gear: opens on Perfil) */}
+        <div className="izi-home-step" style={{...cardS,padding:14,marginTop:10}}>
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            {num(3)}
+            {tile(icGear)}
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:14,fontWeight:800,color:C.text}}>Configurá canchas y paquetes</div>
+              <div style={{fontSize:12,color:C.mutedDark}}>Así creás clases más rápido</div>
+            </div>
+          </div>
+          <button onClick={onConfig} style={{width:"100%",height:44,marginTop:12,borderRadius:14,border:"1.5px solid rgba(26,61,181,0.25)",background:C.white,color:C.blue2,fontSize:14,fontWeight:800,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>Ir a Configuración{icChevron}</button>
+        </div>
+
+        {/* Tip */}
+        <div style={{display:"flex",gap:10,alignItems:"flex-start",margin:"16px 4px 0",padding:12,borderRadius:14,border:"1px dashed rgba(26,61,181,0.25)"}}>
+          <span style={{color:C.blue2,display:"flex",marginTop:1}}>{icBulb}</span>
+          <div style={{fontSize:13,color:"#44506F",lineHeight:1.5}}>Cargá tus canchas y paquetes para crear clases más rápido.</div>
         </div>
       </div>
     </div>
@@ -11464,7 +11510,7 @@ export default function App() {
     <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden",position:"relative"}}>
       <TopBar onExit={handleLogout} onConfig={()=>setShowConfig(true)}/>
       <div key={"cur-"+currency} style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",position:"relative",overflow:"hidden",paddingBottom:"calc(64px + env(safe-area-inset-bottom, 34px))"}}>
-        {tab==="dashboard"&&isFirstTime&&<EmptyDashboard onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)}/>}
+        {tab==="dashboard"&&isFirstTime&&<EmptyDashboard onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onConfig={()=>setShowConfig(true)} coachName={coachProfile.name}/>}
         {tab==="dashboard"&&!isFirstTime&&<Dashboard students={students} classes={xClasses} onNavigate={handleNavigate} onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)} expenses={expenses} coachProfile={coachProfile} onRefresh={handleRefresh}/>}
         {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onAddStudentDirect={(s)=>setStudents(p=>[...p,s])} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={xClasses} onInvite={()=>setShowInvite(true)} userId={user?.id} onInviteStudent={(s)=>setInviteTarget(s)} onRefresh={handleRefresh} families={families} setFamilies={setFamilies} getLatestClasses={()=>latestClassesRef.current} getLatestStudents={()=>latestStudentsRef.current}/>}
         {inviteTarget&&<InviteModal student={inviteTarget} userId={user?.id} coachName={coachProfile.name} onClose={()=>setInviteTarget(null)}/>}
