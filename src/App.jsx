@@ -707,6 +707,34 @@ function MoneyInput({value, onChange, placeholder, style, showZero=false}) {
   return <input type="text" inputMode="numeric" value={display} onChange={handleChange} placeholder={placeholder||"0"} style={style}/>;
 }
 
+// Day-of-month (1–31) input for DÍA DE COBRO MENSUAL. Keeps the typed text locally so the field can be
+// empty/invalid WHILE editing and reports only valid days (number 1–31) to onChange. On blur, an invalid
+// text restores the day the field had when editing started — also undoing any valid intermediate step
+// (deleting "20" passes through "2"). The old inline `parseInt(v)||1` turned the empty state into a
+// sticky 1. External value changes re-sync, like MoneyInput.
+function DayOfMonthInput({ value, onChange, style }) {
+  const [text,setText]=useState(value==null?"":String(value));
+  const [lastValue,setLastValue]=useState(value);
+  const startRef=useRef(null);
+  if(value!==lastValue){
+    setLastValue(value);
+    setText(value==null?"":String(value));
+  }
+  const isDay=n=>Number.isInteger(n)&&n>=1&&n<=31;
+  return <input type="number" min="1" max="31" value={text} onFocus={()=>{startRef.current=value;}} onChange={e=>{
+    const t=e.target.value.replace(/\D/g,"").slice(0,2);
+    setText(t);
+    const n=parseInt(t,10);
+    if(isDay(n)&&n!==value) onChange(n);
+  }} onBlur={()=>{
+    const start=startRef.current??value;
+    startRef.current=null;
+    if(isDay(parseInt(text,10))) return;
+    setText(start==null?"":String(start));
+    if(isDay(start)&&start!==value) onChange(start);
+  }} style={style} placeholder="Día 1-31"/>;
+}
+
 // Hide number input spinners globally
 const styleEl=document.createElement('style');
 styleEl.textContent='input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}input[type=number]{-moz-appearance:textfield}*{font-family:Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}';
@@ -3247,7 +3275,7 @@ function NewClassModal({ onClose, onSave, students: initialStudents, dateLabel, 
                     {sd.pack==="mensual"?(
                       <div>
                         <label style={{fontSize:11,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>DÍA DE COBRO MENSUAL</label>
-                        <input type="number" min="1" max="31" value={sd.cobroDia||(sd.payDate?parseInt(sd.payDate.split("-")[2]):new Date().getDate())} onChange={e=>upd(s.id,"cobroDia",parseInt(e.target.value)||1)} style={{width:"100%",padding:"8px 10px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:12,boxSizing:"border-box",background:C.bg,color:C.text,outline:"none"}} placeholder="Día 1-31"/>
+                        <DayOfMonthInput value={sd.cobroDia||(sd.payDate?parseInt(sd.payDate.split("-")[2]):new Date().getDate())} onChange={n=>upd(s.id,"cobroDia",n)} style={{width:"100%",padding:"8px 10px",borderRadius:10,border:"1.5px solid "+C.border,fontSize:12,boxSizing:"border-box",background:C.bg,color:C.text,outline:"none"}}/>
                         <div style={{fontSize:10,color:C.mutedDark,marginTop:3}}>El cobro se genera cada mes en este día</div>
                       </div>
                     ):<div/>}
@@ -4316,12 +4344,10 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
                 {isMensualSelection&&(
                   <div style={{gridColumn:"1/-1"}}>
                     <label style={{fontSize:11,color:C.blue2,fontWeight:700,display:"block",marginBottom:6}}>DÍA DE COBRO MENSUAL</label>
-                    <input type="number" min="1" max="31" value={studentPacks[sid]?.cobroDia||defaultCobroDiaFor(cls)} onChange={e=>{
-                      const raw=parseInt(e.target.value)||1;
-                      const clamped=Math.min(Math.max(raw,1),31);
-                      setStudentPacks(p=>({...p,[sid]:{...(p[sid]||{}),cobroDia:clamped}}));
+                    <DayOfMonthInput value={studentPacks[sid]?.cobroDia||defaultCobroDiaFor(cls)} onChange={n=>{
+                      setStudentPacks(p=>({...p,[sid]:{...(p[sid]||{}),cobroDia:n}}));
                       setChangedPacks(prev=>new Set([...prev,sid]));
-                    }} style={{...iS,padding:"8px 10px",fontSize:12}} placeholder="Día 1-31"/>
+                    }} style={{...iS,padding:"8px 10px",fontSize:12}}/>
                     <div style={{fontSize:10,color:C.mutedDark,marginTop:3}}>El cobro se genera cada mes en este día</div>
                   </div>
                 )}
