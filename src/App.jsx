@@ -11534,6 +11534,11 @@ export default function App() {
 
   return (
     <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden",position:"relative"}}>
+      {/* Status-bar scrim: the document scrolls, so once TopBar leaves the screen the content would pass under
+          the transparent iOS status bar (Home Screen app). Height is var(--safe-top), i.e. 0 in Safari/desktop.
+          zIndex 49: above the scrolled tab content, below the Chat conversation and the FABs (50), modal
+          backdrops (99+) and full-screen screens (200+), which keep their own header color in that area. */}
+      <div aria-hidden="true" style={{position:"fixed",top:0,left:0,right:0,height:"var(--safe-top)",background:"#000000",zIndex:49,pointerEvents:"none"}}/>
       <TopBar onExit={handleLogout} onConfig={()=>setShowConfig(true)}/>
       <div key={"cur-"+currency} style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",position:"relative",overflow:"hidden",paddingBottom:"calc(var(--nav-h) + var(--safe-bottom))"}}>
         {tab==="dashboard"&&isFirstTime&&<EmptyDashboard onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onConfig={()=>setShowConfig(true)} coachName={coachProfile.name}/>}
