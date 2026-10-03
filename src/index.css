@@ -15,6 +15,13 @@
   --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
   --mono: ui-monospace, Consolas, monospace;
 
+  /* iOS safe areas (0 in Safari portrait and on desktop; non-zero in the Home Screen web app because
+     index.html uses viewport-fit=cover + black-translucent). --nav-h is the coach NavBar height without
+     the safe area: NavBar sets it as its own height, and the content reserve and the FABs read it. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --nav-h: 68px;
+
   font: 18px/145% var(--sans);
   letter-spacing: 0.18px;
   color-scheme: light dark;

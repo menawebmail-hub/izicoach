@@ -2195,7 +2195,7 @@ function NavBar({ tabs, active, onSelect, zIdx=0, badges={} }) {
     finanzas:(c)=>(<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>),
   };
   return (
-    <div style={{display:"flex",borderTop:"1px solid rgba(44,94,247,0.07)",background:C.white,paddingBottom:"env(safe-area-inset-bottom,8px)",position:"fixed",bottom:0,left:0,right:0,zIndex:Math.max(zIdx,100),boxShadow:"0 -2px 16px rgba(44,94,247,0.06)"}}>
+    <div style={{display:"flex",borderTop:"1px solid rgba(44,94,247,0.07)",background:C.white,boxSizing:"border-box",height:"calc(var(--nav-h) + var(--safe-bottom))",paddingBottom:"var(--safe-bottom)",position:"fixed",bottom:0,left:0,right:0,zIndex:Math.max(zIdx,100),boxShadow:"0 -2px 16px rgba(44,94,247,0.06)"}}>
       {tabs.map(t=>{
         const isActive=active===t.id; const col=isActive?C.blue2:"#9BACCB";
         const badge=badges[t.id]||0;
@@ -2216,7 +2216,7 @@ function NavBar({ tabs, active, onSelect, zIdx=0, badges={} }) {
 
 function TopBar({ onExit, onConfig }) {
   return (
-    <div style={{background:"#000000",padding:"12px 16px",display:"flex",alignItems:"center",flexShrink:0}}>
+    <div style={{background:"#000000",padding:"calc(12px + var(--safe-top)) 16px 12px",display:"flex",alignItems:"center",flexShrink:0}}>
       <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"flex-start"}}><IziLogoBlack height={44}/></div>
       <button onClick={onConfig} style={{background:"none",border:"none",cursor:"pointer",padding:"6px",display:"flex"}}>
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
@@ -2658,7 +2658,7 @@ function ConfigScreen({ onClose, courts, setCourts, packages, setPackages, famil
   };
   return (
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:299,display:"flex",flexDirection:"column",background:C.bg}}>
-      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
+      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"calc(14px + var(--safe-top)) 16px 14px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
         <button onClick={onClose} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
         <span style={{flex:1,fontWeight:800,fontSize:16,color:C.white}}>Configuración</span>
       </div>
@@ -3890,10 +3890,10 @@ function Students({ students, onAdd, onUpdate, onAddStudentDirect, onDelete, onC
         });
         })()}
       </div>
-      <button onClick={onAdd} style={{position:"fixed",bottom:72,right:20,width:56,height:56,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:28,cursor:"pointer",zIndex:50,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+      <button onClick={onAdd} style={{position:"fixed",bottom:"calc(var(--nav-h) + var(--safe-bottom) + 12px)",right:20,width:56,height:56,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:28,cursor:"pointer",zIndex:50,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
       {editS&&(
         <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:200,display:"flex",flexDirection:"column",background:C.bg}}>
-          <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
+          <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"calc(14px + var(--safe-top)) 16px 14px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
             <button onClick={()=>{setEditS(null);setConfirmDeactivate(false);setFreshBlockOverride(null);}} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
             <span style={{flex:1,fontWeight:800,fontSize:16,color:C.white}}>Editar Alumno</span>
           </div>
@@ -4261,7 +4261,7 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
 
   return (
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:200,display:"flex",flexDirection:"column",background:C.bg}}>
-      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
+      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"calc(14px + var(--safe-top)) 16px 14px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
         <button onClick={onClose} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
         <span style={{flex:1,fontWeight:800,fontSize:16,color:C.white}}>Modificar Clase</span>
       </div>
@@ -6247,7 +6247,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
         );
       })()}
 
-      <button onClick={()=>setShowNew(true)} style={{position:"fixed",bottom:72,right:20,width:56,height:56,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:28,cursor:"pointer",zIndex:50,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+      <button onClick={()=>setShowNew(true)} style={{position:"fixed",bottom:"calc(var(--nav-h) + var(--safe-bottom) + 12px)",right:20,width:56,height:56,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#52C048,#65CE5A)",color:C.white,fontSize:28,cursor:"pointer",zIndex:50,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
       {/* Edit scope modal */}
       {editScopeData&&(
         <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:600,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 20px"}}>
@@ -6421,7 +6421,7 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
 
   if(view==="chat"&&active) return (
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:"calc(64px + env(safe-area-inset-bottom,0px))",display:"flex",flexDirection:"column",background:C.bg,zIndex:50}}>
-      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"12px 16px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
+      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"calc(12px + var(--safe-top)) 16px 12px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
         <button onClick={()=>{setView("list");setActive(null);setMsgs([]);onClearTarget&&onClearTarget();}} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:18}}>{"<"}</button>
         <div style={{width:38,height:38,borderRadius:"50%",background:C.whiteA,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white,flexShrink:0}}>{active.avatar||"?"}</div>
         <div style={{flex:1}}>
@@ -7853,7 +7853,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
         return (
         <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:999,display:"flex",flexDirection:"column",background:C.bg}}>
           {/* Header */}
-          <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
+          <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"calc(14px + var(--safe-top)) 16px 14px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
             <button onClick={()=>setShowHistory(false)} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
             <div style={{flex:1}}><div style={{fontWeight:800,fontSize:16,color:C.white}}>Historial de Pagos</div><div style={{fontSize:12,color:C.muted}}>{s.name}</div></div>
           </div>
@@ -8100,7 +8100,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
 
       {showAtt&&(
         <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:999,display:"flex",flexDirection:"column",background:C.bg}}>
-          <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"14px 16px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
+          <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"calc(14px + var(--safe-top)) 16px 14px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
             <button onClick={()=>setShowAtt(false)} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
             <div style={{flex:1}}><div style={{fontWeight:800,fontSize:16,color:C.white}}>Registro de Asistencia</div><div style={{fontSize:12,color:C.muted}}>{s.name}</div></div>
             {attReport.total>0&&(<>
@@ -8927,7 +8927,7 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
   return (
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,display:"flex",flexDirection:"column",background:C.bg,zIndex:10}}>
       {/* Header */}
-      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"16px 16px 20px",flexShrink:0,boxShadow:"0 4px 20px rgba(26,61,181,0.3)"}}>
+      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"calc(16px + var(--safe-top)) 16px 20px",flexShrink:0,boxShadow:"0 4px 20px rgba(26,61,181,0.3)"}}>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
           <div style={{position:"relative"}}>
             {student.photo
@@ -11535,7 +11535,7 @@ export default function App() {
   return (
     <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",background:C.bg,overflow:"hidden",position:"relative"}}>
       <TopBar onExit={handleLogout} onConfig={()=>setShowConfig(true)}/>
-      <div key={"cur-"+currency} style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",position:"relative",overflow:"hidden",paddingBottom:"calc(64px + env(safe-area-inset-bottom, 34px))"}}>
+      <div key={"cur-"+currency} style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",position:"relative",overflow:"hidden",paddingBottom:"calc(var(--nav-h) + var(--safe-bottom))"}}>
         {tab==="dashboard"&&isFirstTime&&<EmptyDashboard onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onConfig={()=>setShowConfig(true)} coachName={coachProfile.name}/>}
         {tab==="dashboard"&&!isFirstTime&&<Dashboard students={students} classes={xClasses} onNavigate={handleNavigate} onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)} expenses={expenses} coachProfile={coachProfile} onRefresh={handleRefresh}/>}
         {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onAddStudentDirect={(s)=>setStudents(p=>[...p,s])} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={xClasses} onInvite={()=>setShowInvite(true)} userId={user?.id} onInviteStudent={(s)=>setInviteTarget(s)} onRefresh={handleRefresh} families={families} setFamilies={setFamilies} getLatestClasses={()=>latestClassesRef.current} getLatestStudents={()=>latestStudentsRef.current}/>}
