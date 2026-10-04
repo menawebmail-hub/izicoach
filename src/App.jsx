@@ -12,6 +12,7 @@ import {
 import SyncStatusBanner from "./components/SyncStatusBanner.jsx";
 import { useAuth } from "./auth/useAuth.js";
 import { AccountLockout } from "./auth/AccountLockout.jsx";
+import { buildCobrosReportXlsx, cobrosReportFileName, cobrosEstadoColor, COBROS_REPORT_COLORS, XLSX_MIME } from "./exports/cobrosReportXlsx.js";
 
 // Inject Inter font
 if(typeof document!=="undefined"){
@@ -1750,31 +1751,11 @@ const formatDateDDMMYYYY=(iso)=>{
   if(parts.length!==3) return "";
   const [y,m,d]=parts;
   // Each part must be purely numeric (never e.g. "no-es-fecha", whose 3 hyphen-split parts alone
-  // would otherwise pass) — checked digit-by-digit, no regex, for the same extract.mjs-tokenizer
-  // reason as escapeCsvCell above.
+  // would otherwise pass) — checked digit-by-digit, no regex: this repo's extract.mjs tokenizer has
+  // no notion of regex-literal syntax, only quotes and comments.
   const isDigits=(s)=>s.length>0&&[...s].every(ch=>ch>="0"&&ch<="9");
   if(!isDigits(y)||!isDigits(m)||!isDigits(d)) return "";
   return d+"/"+m+"/"+y;
-};
-// RFC4180 cell: numbers pass through untouched (never quoted, never subject to the injection
-// guard below — a legitimate negative amount must never be mistaken for a formula). Every other
-// value is stringified, quote-wrapped, with internal quotes doubled ("→""), and — only for text —
-// defused against CSV/formula injection by prefixing a single leading apostrophe when the value,
-// after stripping leading whitespace, starts with =, +, - or @ (the standard, widely-used
-// technique: spreadsheet apps treat a leading apostrophe as "force text" and never evaluate what
-// follows as a formula). Never substitutes quotes with apostrophes — those are two unrelated
-// mechanisms solving two unrelated problems.
-const CSV_FORMULA_PREFIXES=["=","+","-","@"];
-const escapeCsvCell=(value)=>{
-  if(value===null||value===undefined) return "";
-  if(typeof value==="number") return String(value);
-  let str=String(value);
-  // No regex literals here on purpose — trimStart()/split+join do the same job without tripping
-  // up this repo's own source-text extraction tooling (extract.mjs's brace/string scanner has no
-  // notion of regex-literal syntax, only quotes and comments).
-  const leading=str.trimStart();
-  if(leading.length>0&&CSV_FORMULA_PREFIXES.includes(leading[0])) str="'"+str;
-  return '"'+str.split('"').join('""')+'"';
 };
 const COBROS_EXPORT_COLUMNS=["Alumno","Clase","Tipo","Mes correspondiente","Estado","Monto","Fecha de pago","Día de cobro","Cantidad de clases pagadas","Total de clases","No pagadas","Restantes","Forma de pago"];
 // One row per mensualidad (pagada, pendiente or mora) — never reads combo.paid (a modern mensual
@@ -1864,11 +1845,21 @@ const buildStudentExportRows=(student,classesList)=>{
   }
   return rows;
 };
-const buildCobrosExportCsv=(students,classesList)=>{
-  const rows=filterActiveStudents(students).flatMap(s=>buildStudentExportRows(s,classesList));
-  const header=COBROS_EXPORT_COLUMNS.map(escapeCsvCell).join(",");
-  const body=rows.map(r=>COBROS_EXPORT_COLUMNS.map(col=>escapeCsvCell(r[col])).join(",")).join("\n");
-  return header+"\n"+body+(body?"\n":"");
+// The ONE source of the INFORME DE COBRO: both the in-app report screen and the .xlsx consume these
+// rows (keyed by COBROS_EXPORT_COLUMNS). _studentId is internal grouping metadata only — it is not a
+// column, never rendered, never written to the file.
+const buildCobrosExportRows=(students,classesList)=>
+  filterActiveStudents(students).flatMap(s=>buildStudentExportRows(s,classesList).map(r=>({...r,_studentId:s.id})));
+// Consecutive rows of the same student (by id, never by name — two students can share a name) form
+// one group; buildCobrosExportRows already emits each student's rows together.
+const groupCobrosReportRows=(rows)=>{
+  const groups=[];
+  rows.forEach(r=>{
+    const g=groups[groups.length-1];
+    if(g&&String(g.studentId)===String(r._studentId)) g.rows.push(r);
+    else groups.push({studentId:r._studentId,name:r.Alumno,rows:[r]});
+  });
+  return groups;
 };
 // Any mensual-shaped entry (moderno o legacy) — decides whether to show ANY mensual box at all.
 // getModernMensualEntitlements narrows to the modern shape (isModernMensual) that
@@ -8305,8 +8296,93 @@ function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], send
   );
 }
 
+// INFORME DE COBRO — read-only view of the Cobros export rows (buildCobrosExportRows) plus the .xlsx
+// built from the very same snapshot. The file is generated once when the screen opens, so Exportar /
+// Compartir hand over exactly what is on screen, and the share call runs straight from the tap (iOS
+// only opens the share sheet from the user gesture itself, not after an async build).
+const argbToHex=(argb)=>"#"+argb.slice(2);
+function CobrosReportScreen({ rows, onClose }) {
+  const [report]=useState(()=>({groups:groupCobrosReportRows(rows),dateLabel:formatDateDDMMYYYY(TODAY_DATE),fileName:cobrosReportFileName(TODAY_DATE)}));
+  const [file,setFile]=useState(null);
+  const [failed,setFailed]=useState(false);
+  const [canShareFile,setCanShareFile]=useState(false);
+  useEffect(()=>{
+    let alive=true;
+    buildCobrosReportXlsx({groups:report.groups,columns:COBROS_EXPORT_COLUMNS,dateLabel:report.dateLabel}).then(buf=>{
+      if(!alive) return;
+      const blob=new Blob([buf],{type:XLSX_MIME});
+      setFile(blob);
+      // navigator.share alone doesn't mean files can be shared — ask canShare with the real file.
+      let ok=false;
+      try{ ok=!!(navigator.share&&navigator.canShare&&navigator.canShare({files:[new File([blob],report.fileName,{type:XLSX_MIME})]})); }catch{ ok=false; }
+      setCanShareFile(ok);
+    }).catch(()=>{ if(alive) setFailed(true); });
+    return ()=>{alive=false;};
+  },[report]);
+  const download=()=>{ if(file) saveAttendanceBlob(file,report.fileName); };
+  const share=async()=>{
+    if(!file) return;
+    try{
+      await navigator.share({files:[new File([file],report.fileName,{type:XLSX_MIME})],title:"Informe de cobro"});
+    }catch(e){
+      if(e&&e.name==="AbortError") return; // user dismissed the native sheet — not an error
+      download();
+    }
+  };
+  const groupBg=COBROS_REPORT_COLORS.groupBg.map(argbToHex);
+  const cellS={padding:"7px 10px",textAlign:"left",verticalAlign:"top"};
+  const btnS={flex:1,padding:"14px",borderRadius:14,cursor:file?"pointer":"default",fontSize:15,fontWeight:800,opacity:file?1:0.6};
+  return (
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:999,display:"flex",flexDirection:"column",background:C.bg}}>
+      <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"calc(14px + var(--safe-top)) 16px 14px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
+        <button onClick={onClose} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{"‹"}</button>
+        <div style={{flex:1}}><div style={{fontWeight:800,fontSize:16,color:C.white}}>INFORME DE COBRO</div><div style={{fontSize:12,color:C.muted}}>{report.dateLabel}</div></div>
+      </div>
+      <div style={{flex:1,minHeight:0,overflow:"auto",WebkitOverflowScrolling:"touch",background:C.white}}>
+        {report.groups.length===0?(
+          <div style={{textAlign:"center",padding:"40px 20px",color:C.mutedDark,fontSize:13}}>No hay cobros para mostrar</div>
+        ):(
+          <table style={{borderCollapse:"separate",borderSpacing:0,fontSize:12,whiteSpace:"nowrap",color:C.text,minWidth:"100%"}}>
+            <thead>
+              <tr>
+                {COBROS_EXPORT_COLUMNS.map((col,i)=>(
+                  <th key={col} style={{...cellS,position:"sticky",top:0,left:i===0?0:undefined,zIndex:i===0?3:2,background:C.blue,color:C.white,fontWeight:700}}>{col}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {report.groups.map((g,gi)=>g.rows.map((r,ri)=>(
+                <tr key={String(g.studentId)+"-"+gi+"-"+ri}>
+                  {COBROS_EXPORT_COLUMNS.map((col,i)=>{
+                    const v=r[col];
+                    const base={...cellS,background:groupBg[gi%2],borderTop:ri===0&&gi>0?"2px solid "+C.white:"none"};
+                    if(i===0) return (
+                      <td key={col} style={{...base,position:"sticky",left:0,zIndex:1,fontWeight:700,whiteSpace:"normal",minWidth:96,maxWidth:132,overflowWrap:"anywhere",borderRight:"1px solid "+C.border}}>{ri===0?g.name:""}</td>
+                    );
+                    if(col==="Estado"){ const c=cobrosEstadoColor(v); return <td key={col} style={{...base,fontWeight:700,color:c?argbToHex(c):C.text}}>{v}</td>; }
+                    if(col==="Monto") return <td key={col} style={{...base,textAlign:"right"}}>{typeof v==="number"?formatNum(v,getCUR()):v}</td>;
+                    return <td key={col} style={{...base,textAlign:typeof v==="number"?"right":"left"}}>{v}</td>;
+                  })}
+                </tr>
+              )))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      <div style={{flexShrink:0,padding:"12px 16px calc(12px + var(--safe-bottom))",background:C.white,borderTop:"1px solid "+C.border}}>
+        {failed&&<div role="alert" style={{color:"#C62828",fontSize:12,fontWeight:700,textAlign:"center",marginBottom:8}}>No se pudo generar el Excel. Cerrá el informe y volvé a intentar.</div>}
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={download} disabled={!file} style={{...btnS,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white}}>{file?"Exportar Excel":failed?"Exportar Excel":"Preparando…"}</button>
+          {canShareFile&&<button onClick={share} disabled={!file} style={{...btnS,border:"1.5px solid "+C.border,background:C.white,color:C.blue2}}>Compartir</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Finances({ students, classes, initialTab="payments", onUpdate, expenses=[], setExpenses, addIncome, packages=[], sendNotification, onAttendance, families=[], onVoidMensualPayment, onRecordMensualPayment, onSaveMensualAmount, onEditLinkedMensualIncome, isStudentActiveNow }) {
   const [tab,setTab]=useState(initialTab);
+  const [reportRows,setReportRows]=useState(null);
   const [selMonth,setSelMonth]=useState((()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");})());
   const [finView,setFinView]=useState("mensual");
   const [showMovModal,setShowMovModal]=useState(null);
@@ -8338,37 +8414,17 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
             <div style={{fontSize:13,color:C.muted,marginTop:4}}>{initialTab==="payments"?"Estado de cobros por alumno":"Resumen financiero del mes"}</div>
           </div>
           {initialTab==="payments"&&<button onClick={()=>{
-            let csv="";
-            if(tab==="payments"||initialTab==="payments"){
-              // Export cobros by student — buildCobrosExportCsv already applies the same central
-              // exclusion as the Cobros list itself (filterActiveStudents), and selects exactly the
-              // same visible obligations Cobros itself shows (getVisibleClassEntitlements for
-              // combo/individual, the equivalent selection for mensual) — never getCombo(s)'s
-              // single "most representative" pick, and never a blanket scan of every combo either.
-              csv=buildCobrosExportCsv(students,classes);
-            } else {
-              // Export monthly finances
-              csv="Fecha,Tipo,Categoría,Nota,Monto\n";
-              monthFiltered.forEach(e=>{
-                csv+='"'+e.date+'","'+(e.type==="ingreso"?"Ingreso":"Gasto")+'","'+(e.category||"")+'","'+(e.note||"")+'",'+e.amount+'\n';
-              });
-              csv+='\n"","","","TOTAL INGRESOS",'+income+'\n';
-              csv+='"","","","TOTAL GASTOS",'+exp+'\n';
-              csv+='"","","","BALANCE",'+(income-exp)+'\n';
-            }
-            const blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8;"});
-            const url=URL.createObjectURL(blob);
-            const a=document.createElement("a");
-            a.href=url;
-            a.download=(tab==="payments"?"Combos Activos al "+TODAY_DATE:"finanzas-"+selMonth)+".csv";
-            a.click();
-            URL.revokeObjectURL(url);
+            // INFORME DE COBRO: a snapshot of exactly the rows the export always produced
+            // (buildCobrosExportRows — same active-student filter and visible obligations as the Cobros
+            // list). The report screen and its .xlsx both read this one snapshot.
+            setReportRows(buildCobrosExportRows(students,classes));
           }} style={{padding:"10px 16px",borderRadius:12,border:"none",background:"rgba(255,255,255,0.2)",color:C.white,fontSize:12,cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",gap:6}}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Exportar
+            Informe
           </button>}
         </div>
       </div>
+      {reportRows&&<CobrosReportScreen rows={reportRows} onClose={()=>setReportRows(null)}/>}
       <div style={{padding:"16px",marginTop:-8}}>
         {tab==="payments"&&<PaymentsTab students={students} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} families={families} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} onRecordMensualPayment={onRecordMensualPayment} onSaveMensualAmount={onSaveMensualAmount} isStudentActiveNow={isStudentActiveNow}/>}
         {tab==="expenses"&&(
