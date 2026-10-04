@@ -1812,6 +1812,40 @@ const buildComboExportRows=(student,combo,classesList)=>{
   }
   return rows;
 };
+// Individual: one row per Estado per class, not one per payment — a recurring Individual class
+// accumulates one object per occurrence (createNewClass / updateStudentPacks / Renovar), so listing
+// every payment and balance repeated the same class many times. Objects are grouped by student +
+// sourceClassId (an object without one is never merged with anything else); each group's rows are the
+// SUMS of exactly the per-object rows buildComboExportRows already yields (Pagado amounts and
+// Pendiente balances never mixed), its class counters are counted once per object, and Tipo carries
+// how many Individual objects (occurrences) the group holds — never derived from payments.
+const buildIndividualSummaryRows=(student,combos,classesList)=>{
+  const groups=new Map();
+  combos.forEach((combo,i)=>{
+    const sc=combo.sourceClassId;
+    const key=sc!==undefined&&sc!==null&&sc!==""?"class:"+String(sc):"object:"+i;
+    if(!groups.has(key)) groups.set(key,[]);
+    groups.get(key).push(combo);
+  });
+  const sum=(list,f)=>list.reduce((a,x)=>a+(f(x)||0),0);
+  const rows=[];
+  groups.forEach(objs=>{
+    const perObject=objs.flatMap(c=>buildComboExportRows(student,c,classesList));
+    const counters=objs.map(getComboExportCounters);
+    const payments=objs.flatMap(c=>c.payments||[]);
+    const baseRow={Alumno:student.name,Clase:resolveComboClassName(objs[0],classesList),Tipo:"Individual ("+objs.length+")","Mes correspondiente":"","Día de cobro":"","Total de clases":sum(counters,c=>c.total),"No pagadas":sum(counters,c=>c.noPagadas),Restantes:sum(counters,c=>c.restantes)};
+    const paidRows=perObject.filter(r=>r.Estado==="Pagado");
+    const pendingRows=perObject.filter(r=>r.Estado==="Pendiente");
+    if(paidRows.length>0){
+      // Last payment date; a single method, or "Varios" when the payments used different ones.
+      const payDates=payments.map(p=>p.date).filter(Boolean).sort();
+      const methods=[...new Set(payments.map(p=>p.method).filter(Boolean))];
+      rows.push({...baseRow,Estado:"Pagado",Monto:sum(paidRows,r=>r.Monto),"Fecha de pago":payDates.length?formatDateDDMMYYYY(payDates[payDates.length-1]):"","Cantidad de clases pagadas":payments.length?sum(payments,p=>p.qty):"","Forma de pago":methods.length>1?"Varios":methods[0]||""});
+    }
+    if(pendingRows.length>0) rows.push({...baseRow,Estado:"Pendiente",Monto:sum(pendingRows,r=>r.Monto),"Fecha de pago":"","Cantidad de clases pagadas":"","Forma de pago":""});
+  });
+  return rows;
+};
 // Mirrors PaymentCard's own "ESTADO MENSUAL" box selection exactly (see its comment: "hasMensual
 // cubre moderno... y legacy... cada ruta conserva exactamente su lógica original") — the most
 // recent MODERN mensual combo if the student has one, else the most recent LEGACY mensual entry.
@@ -1835,8 +1869,13 @@ const getVisibleMensualEntitlement=(s)=>{
 //    itself renders.
 const buildStudentExportRows=(student,classesList)=>{
   const rows=[];
-  getVisibleClassEntitlements(student,classesList).forEach(({combo})=>{
-    rows.push(...buildComboExportRows(student,combo,classesList));
+  const visible=getVisibleClassEntitlements(student,classesList).map(({combo})=>combo);
+  const individuals=visible.filter(c=>c.packType==="individual");
+  let individualsDone=false;
+  visible.forEach(combo=>{
+    if(combo.packType!=="individual"){ rows.push(...buildComboExportRows(student,combo,classesList)); return; }
+    // All Individual summary rows go where the first Individual object sat.
+    if(!individualsDone){ rows.push(...buildIndividualSummaryRows(student,individuals,classesList)); individualsDone=true; }
   });
   const mensual=getVisibleMensualEntitlement(student);
   if(mensual){
