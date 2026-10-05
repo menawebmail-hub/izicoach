@@ -6937,7 +6937,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
           return true;
         }).length;
         const paymentDates=rows.map(r=>r.date);
-        const newPayment={id:Date.now(),qty:canPay,amount:Math.round((parseInt(localAmount)||0)*(canPay/qty)),method:payMethod,date:localDate||TODAY,dates:paymentDates};
+        const newPayment={id:Date.now(),qty:canPay,amount:Math.round((parseInt(localAmount)||0)*(canPay/qty)),method:payMethod,date:localPayDate||TODAY,dates:paymentDates};
         return {...c,paid:fullyPaid,paidCount:newPaidCount,used:Math.max(c.used||0,givenCount),payments:[...(c.payments||[]),newPayment]};
       });
     } else {
