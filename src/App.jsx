@@ -1812,28 +1812,44 @@ const buildComboExportRows=(student,combo,classesList)=>{
   }
   return rows;
 };
-// Individual: one row per Estado per class, not one per payment — a recurring Individual class
-// accumulates one object per occurrence (createNewClass / updateStudentPacks / Renovar), so listing
-// every payment and balance repeated the same class many times. Objects are grouped by student +
-// sourceClassId (an object without one is never merged with anything else); each group's rows are the
-// SUMS of exactly the per-object rows buildComboExportRows already yields (Pagado amounts and
-// Pendiente balances never mixed), its class counters are counted once per object, and Tipo carries
-// how many Individual objects (occurrences) the group holds — never derived from payments.
+// Class titles for display and for the Individual grouping key: trimmed, inner runs of spaces collapsed;
+// the key is also case-insensitive. Accents are kept and nothing is fuzzy-matched. No regex on purpose
+// (extract.mjs tokenizer).
+const cleanClassTitle=(title)=>typeof title==="string"?title.split(" ").filter(Boolean).join(" "):"";
+const classTitleKey=(title)=>cleanClassTitle(title).toLowerCase();
+// Individual: one row per Estado per class, not one per payment. Coaches create each Individual session
+// as its own class (createNewClass gives every one a new id), reusing the same title, so neither
+// sourceClassId nor anything else links a series — only the student + the class title do. Grouping key
+// (within ONE student, so two students are never merged):
+//  - no sourceClassId → never grouped (legacy objects);
+//  - sourceClassId whose class no longer exists, or whose title is empty → grouped only by that id
+//    (never by "Clase no identificada");
+//  - otherwise → the normalized class title.
+// Each group's rows are the SUMS of exactly the per-object rows buildComboExportRows already yields
+// (Pagado amounts and Pendiente balances never mixed), its class counters are counted once per object,
+// and Tipo carries how many Individual objects (occurrences) the group holds — never derived from payments.
 const buildIndividualSummaryRows=(student,combos,classesList)=>{
   const groups=new Map();
   combos.forEach((combo,i)=>{
     const sc=combo.sourceClassId;
-    const key=sc!==undefined&&sc!==null&&sc!==""?"class:"+String(sc):"object:"+i;
-    if(!groups.has(key)) groups.set(key,[]);
-    groups.get(key).push(combo);
+    let key="object:"+i, title="";
+    if(sc!==undefined&&sc!==null&&sc!==""){
+      const cls=(classesList||[]).find(c=>String(c.id)===String(sc));
+      const titleKey=cls?classTitleKey(cls.title):"";
+      if(titleKey){ key="title:"+titleKey; title=cleanClassTitle(cls.title); }
+      else key="class:"+String(sc);
+    }
+    // The group's visible title is the first valid one, spaces cleaned.
+    if(!groups.has(key)) groups.set(key,{objs:[],title});
+    groups.get(key).objs.push(combo);
   });
   const sum=(list,f)=>list.reduce((a,x)=>a+(f(x)||0),0);
   const rows=[];
-  groups.forEach(objs=>{
+  groups.forEach(({objs,title})=>{
     const perObject=objs.flatMap(c=>buildComboExportRows(student,c,classesList));
     const counters=objs.map(getComboExportCounters);
     const payments=objs.flatMap(c=>c.payments||[]);
-    const baseRow={Alumno:student.name,Clase:resolveComboClassName(objs[0],classesList),Tipo:"Individual ("+objs.length+")","Mes correspondiente":"","Día de cobro":"","Total de clases":sum(counters,c=>c.total),"No pagadas":sum(counters,c=>c.noPagadas),Restantes:sum(counters,c=>c.restantes)};
+    const baseRow={Alumno:student.name,Clase:title||resolveComboClassName(objs[0],classesList),Tipo:"Individual ("+objs.length+")","Mes correspondiente":"","Día de cobro":"","Total de clases":sum(counters,c=>c.total),"No pagadas":sum(counters,c=>c.noPagadas),Restantes:sum(counters,c=>c.restantes)};
     const paidRows=perObject.filter(r=>r.Estado==="Pagado");
     const pendingRows=perObject.filter(r=>r.Estado==="Pendiente");
     if(paidRows.length>0){
