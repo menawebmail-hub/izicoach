@@ -2148,7 +2148,8 @@ const slotPaymentBadge=({isPaid,isPaused},compact)=>isPaid
   :isPaused?{bg:"#FFF3E0",color:"#E65100",label:compact?"Pausada":"⏸ Pausada"}
   :{bg:"#FFEBEE",color:"#C62828",label:"Pendiente"};
 const SLOT_BADGES={
-  reprogrammed:{bg:"#E8F5E9",color:"#2E7D32",icon:"🔄 ",text:"Reprogramada"},
+  // Reprogramada uses the app's existing orange (the same tokens as Pausada) — owner decision, BUG-COBROS-02.
+  reprogrammed:{bg:"#FFF3E0",color:"#E65100",icon:"🔄 ",text:"Reprogramada"},
   paused:{bg:"#FFF3E0",color:"#E65100",icon:"⏸ ",text:"Pausada"},
   done:{bg:"#E8F5E9",color:"#2E7D32",icon:"✓ ",text:"Realizada"},
   scheduled:{bg:"#FFF8E1",color:"#F57F17",icon:"",text:"Programada"},
@@ -2162,7 +2163,9 @@ function SlotGroup({number,item,dateText,dateTag,circle,left,right,paidNow,fmt,b
   // slot is never its terminal, so it shows only "Reprogramada" (presentation only).
   const rescheduled=(item.historyRows||[]).length>1;
   const mainBadges=slotRowBadges({rescheduled,isTerminal:!rescheduled,status:null,paid:false});
-  const pill=(bg,color,label,key)=><span key={key} style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:bg,color:color,fontWeight:700,flexShrink:0}}>{label}</span>;
+  // `hidden`: an invisible pill of the same size keeps a hidden payment badge's column, so a lone
+  // "Reprogramada" stays in the class-state column (next to "Realizada"), not under "Pagada".
+  const pill=(bg,color,label,key,hidden=false)=><span key={key} aria-hidden={hidden||undefined} style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:bg,color:color,fontWeight:700,flexShrink:0,visibility:hidden?"hidden":undefined}}>{label}</span>;
   return (
     <div data-slot-group={number} style={{padding:"8px 0",borderBottom:"1px solid "+borderColor}}>
       <div data-slot-row="main" style={{display:"flex",alignItems:"center",gap:8}}>
@@ -2173,7 +2176,7 @@ function SlotGroup({number,item,dateText,dateTag,circle,left,right,paidNow,fmt,b
           <div style={{fontSize:13,fontWeight:600,color:dateColor}}>{dateText}{dateTag}</div>
         </div>
         {mainBadges.state&&pill(left.bg,left.color,left.label,"l")}
-        {mainBadges.payment&&pill(right.bg,right.color,right.label,"r")}
+        {pill(right.bg,right.color,right.label,"r",!mainBadges.payment)}
       </div>
       {subRows.map(h=>{
         const b=SLOT_BADGES[h.status]||SLOT_BADGES.pending;
@@ -2187,7 +2190,7 @@ function SlotGroup({number,item,dateText,dateTag,circle,left,right,paidNow,fmt,b
             <div style={{flex:"1 1 120px",minWidth:0,fontSize:12,fontWeight:600,color:txt,textAlign:"left"}}>↳ {fmt(h.date)}</div>
             <div style={{display:"flex",gap:8,marginLeft:"auto",flexShrink:0}}>
               {shown.state&&pill(b.bg,b.color,(compact?"":b.icon)+b.text,"b")}
-              {shown.payment&&pill(rBg,rCol,rLabel,"p")}
+              {pill(rBg,rCol,rLabel,"p",!shown.payment)}
             </div>
           </div>
         );
@@ -7479,10 +7482,10 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               let leftBg,leftColor,leftLabel;
               // A slot with a reschedule history reads "Reprogramada" on its own (numbered) row; the
               // terminal state (Pausada, Realizada…) is shown on the last step of its group.
-              if((item.historyRows||[]).length>1){leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="🔄 Reprogramada";}
+              if((item.historyRows||[]).length>1){leftBg=SLOT_BADGES.reprogrammed.bg;leftColor=SLOT_BADGES.reprogrammed.color;leftLabel="🔄 Reprogramada";}
               else if(isPausedItem){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="⏸ Pausada";}
               else if(isCancelled){leftBg="#FFF0F0";leftColor="#C62828";leftLabel="⛔ Cancelada";}
-              else if(isReprogWithDate){leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="🔄 Reprogramada";}
+              else if(isReprogWithDate){leftBg=SLOT_BADGES.reprogrammed.bg;leftColor=SLOT_BADGES.reprogrammed.color;leftLabel="🔄 Reprogramada";}
               else if(isReprogNoDate){leftBg="#E3F2FD";leftColor="#1565C0";leftLabel="🕐 A Reprogramar";}
               else if(wasAusenteReprog){leftBg="#E8EAF6";leftColor="#3949AB";leftLabel="↩ A Reprogramar";}
               else if(wasAusenteDada){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="🚫 Ausente (Dada)";}
@@ -9015,10 +9018,10 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
             <div>
               {deduped.map((item,i)=>{
                 let leftBg,leftColor,leftLabel;
-                if((item.historyRows||[]).length>1){leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="Reprogramada";}
+                if((item.historyRows||[]).length>1){leftBg=SLOT_BADGES.reprogrammed.bg;leftColor=SLOT_BADGES.reprogrammed.color;leftLabel="Reprogramada";}
                 else if(item.isPaused){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="Pausada";}
                 else if(item.isCancelledClass){leftBg="#FFF0F0";leftColor="#C62828";leftLabel="Cancelada";}
-                else if(item.isReprogWithDate){leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="Reprogramada";}
+                else if(item.isReprogWithDate){leftBg=SLOT_BADGES.reprogrammed.bg;leftColor=SLOT_BADGES.reprogrammed.color;leftLabel="Reprogramada";}
                 else if(item.isReprogNoDate){leftBg="#E3F2FD";leftColor="#1565C0";leftLabel="A Reprogramar";}
                 else if(item.isGiven){leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="Realizada";}
                 else{leftBg=C.blueL;leftColor=C.blue2;leftLabel="Programada";}

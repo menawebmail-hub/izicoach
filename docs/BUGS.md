@@ -277,7 +277,8 @@ Relevant code:
 ### Fix
 - New pure helper `src/components/slotRowBadges.js`: `slotRowBadges({rescheduled, isTerminal, status, paid})` → which of the two badges a row shows, following the rules above.
 - `SlotGroup` draws the main row and each step through it; `paid` for a step stays `h.isPaid||paidNow` (a final date being paid right now reads "✓ Pagada").
-- Unchanged: `buildSlotHistoryRows` and all data (`isPaid`, `displayPaid`, `payableRows`), payments, attendance, dates, reschedule logic, account counters, labels, colors and layout.
+- Unchanged: `buildSlotHistoryRows` and all data (`isPaid`, `displayPaid`, `payableRows`), payments, attendance, dates, reschedule logic, account counters and labels.
+- Visual adjustment after the owner's local test (approved): a hidden payment badge leaves an invisible pill of the same size (`visibility:hidden`, `aria-hidden`), so a lone "🔄 Reprogramada" stays in the class-state column next to "✓ Realizada" instead of shifting under "✓ Pagada". "Reprogramada" now reuses the app's existing orange (`#FFF3E0` / `#E65100`, the same tokens as "Pausada"; owner decision) from `SLOT_BADGES.reprogrammed`, which the main rows of Detalles de Pagos and the Student Portal also read. Other states keep their colors.
 
 **Verification performed:** `npm test` (Node's built-in runner, no new dependency): 7/7 regression tests in `src/components/slotRowBadges.test.js` — one reschedule, multiple reschedules, intermediate dates paid or not, other final states unchanged, a final being paid now, never-rescheduled dates unchanged, and a source check of `SlotGroup` (it FAILS against the code before the fix). `vite build` clean; `oxlint` 366 = baseline, identical output. **Not verified in a browser or with real data** (the session could not open the app): check Pato Ojeda in Detalles de Pagos and in the Student Portal.
 

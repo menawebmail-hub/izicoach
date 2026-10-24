@@ -61,10 +61,20 @@ test("SlotGroup draws through slotRowBadges; the data and its helpers are untouc
   const slotGroup = app.slice(app.indexOf("function SlotGroup("), app.indexOf("function IziLogoBlack("));
   assert.match(slotGroup, /const rescheduled=\(item\.historyRows\|\|\[\]\)\.length>1;/);
   assert.match(slotGroup, /\{mainBadges\.state&&pill\(left\.bg,left\.color,left\.label,"l"\)\}/);
-  assert.match(slotGroup, /\{mainBadges\.payment&&pill\(right\.bg,right\.color,right\.label,"r"\)\}/);
+  // A hidden payment badge leaves an invisible pill in its column (the state badge keeps its column).
+  assert.match(slotGroup, /\{pill\(right\.bg,right\.color,right\.label,"r",!mainBadges\.payment\)\}/);
   assert.match(slotGroup, /const shown=slotRowBadges\(\{rescheduled,isTerminal:h\.isTerminal,status:h\.status,paid\}\);/);
   assert.match(slotGroup, /\{shown\.state&&pill\(/);
-  assert.match(slotGroup, /\{shown\.payment&&pill\(rBg,rCol,rLabel,"p"\)\}/);
+  assert.match(slotGroup, /\{pill\(rBg,rCol,rLabel,"p",!shown\.payment\)\}/);
+  assert.match(slotGroup, /aria-hidden=\{hidden\|\|undefined\}/);
+  assert.match(slotGroup, /visibility:hidden\?"hidden":undefined/);
+  // "Reprogramada" reuses the existing orange (Pausada's tokens); other states keep their colors.
+  assert.match(app, /reprogrammed:\{bg:"#FFF3E0",color:"#E65100",icon:"🔄 ",text:"Reprogramada"\}/);
+  assert.match(app, /paused:\{bg:"#FFF3E0",color:"#E65100",icon:"⏸ ",text:"Pausada"\}/);
+  assert.match(app, /done:\{bg:"#E8F5E9",color:"#2E7D32",icon:"✓ ",text:"Realizada"\}/);
+  // The main rows of Detalles de Pagos (2) and the Student Portal (2) read the same tokens.
+  assert.equal((app.match(/leftBg=SLOT_BADGES\.reprogrammed\.bg;leftColor=SLOT_BADGES\.reprogrammed\.color;leftLabel="(🔄 )?Reprogramada";/g) || []).length, 4);
+  assert.doesNotMatch(app, /leftBg="#E8F5E9";leftColor="#2E7D32";leftLabel="(🔄 )?Reprogramada"/);
   // Data unchanged: the history rows still carry the slot's payment status on every step.
   assert.match(app, /return \{date,depth,status,isPaid:!!displayPaid,isTerminal\};/);
   // Both views use the shared SlotGroup (Detalles de Pagos and the Student Portal).
