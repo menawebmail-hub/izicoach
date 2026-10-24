@@ -207,3 +207,40 @@ Does not touch `getAccountCounters`, `getRem`, `AttModal`, payment logic (`PagoM
 **Verification performed:** repeated saves on the same date (fixed a real corrupted `used:2` on a `total:1` combo, corrected to `1`, in the running app); Presente↔Ausente-Dada (no duplication); Presente↔Ausente-No Dada and back (used now correctly decreases then increases); all confirmed end-to-end against the running app via `localStorage.izi_students`. Combo-targeting logic (multi-combo after renewal, individual+combo coexistence, duplicate-date tiebreak, no-match fallback) verified by running the exact selection algorithm against synthetic data in-browser, since no student in the current dataset has multiple simultaneous combos. Production build clean after the change.
 
 ---
+## BUG-COBROS-01 — Detalles de Pagos stepper blocked at 0 for students whose first class has no weekly days
+
+**Status:** Fixed (local branch `fix/cobros-stepper-no-calendar`; pending the coach's real payment test and publication)  
+**Area:** Cobros → Detalles de Pagos (`PagoModal`, class payments)  
+**Priority:** High
+
+### Description
+In `PagoModal`, `classHasNoCalendar` is computed from the days of the student's FIRST class only (`myClasses[0].days`, `App.jsx:6673`/`6684` at time of writing). When that class has no weekly days — an Individual class with a fixed date, or a student who belongs to several classes and whose first one has no days — the modal capped the stepper at 0 (`maxUnpaid=classHasNoCalendar?0:payableRows.length`), disabled "+", showed "Esta clase no tiene días configurados…" and refused the review and the confirmation, even with real pending classes to pay.
+
+### Expected behavior
+Classes that already exist and are pending (given or not) can be paid even when the class has no weekly days: the stepper goes up to the real pending rows, and the payment pays exactly those rows. The weekly calendar matters only when new dates are generated.
+
+### Current behavior (before the fix)
+Real case: Alexia Monzon (Individual classes, member of several groups) showed 10 No pagadas / 0 Pagadas / 10 Realizadas, the stepper stuck at 0 with "+" disabled, amount 0, "Confirmar pago" disabled, and the no-calendar warning.
+
+### Notes
+The block was added by `f057fcf` ("guard recurring classes without valid days") to stop the date generators from scanning forever without a valid weekday. Paying existing rows never generates dates: the stepper is capped at `payableRows.length` and `handleConfirm` writes exactly `payableRows.slice(0,qty)`; `buildProjectedDates` already returns `[]` when there is no valid weekday. So the guard was broader than needed on this screen.
+
+Still open, out of scope here: `myClasses[0]` alone also drives projections/renewals for students with several classes. The renewal guard in the Agenda (`handleRenovar`, same message) is unchanged.
+
+Relevant code:
+- `App.jsx:6673`/`6684` (`classDays`, `classHasNoCalendar`)
+- `App.jsx:6821` (`payableRows`: pending or given-unpaid, not cancelled, not paused)
+- `App.jsx:6828` (`classPayment`), `App.jsx:7332` (stepper cap)
+- `App.jsx:6920` (`selectedRows=payableRows.slice(0,qty)` in `handleConfirm`)
+- `src/payments/classPaymentLimits.js`
+
+### Fix
+- New pure helper `src/payments/classPaymentLimits.js`:
+  - `classPaymentLimits({payableCount, classHasNoCalendar})` → `maxClasses` = real pending rows; `blockedByNoCalendar` only when the class has no calendar AND there is nothing to pay.
+  - `isPayableClassQuantity(qty, payableCount)` → a quantity must be ≥ 1 and ≤ the CURRENT pending rows.
+- `PagoModal`: the stepper cap and "+" use `classPayment`; the warning and the two refusals (`handleGoToReview`, `handleConfirm`) use `classPayment.blockedByNoCalendar`; both write paths also refuse a quantity above the current pending rows (a stale quantity is never paid silently with fewer classes for the same amount).
+- Unchanged: date generation, attendance, renewals, combos, projections, account counters (`getAccountCounters`), the payment write (`payableRows.slice(0,qty)`), the UI design.
+
+**Verification performed:** `npm test` (new script, Node's built-in runner, no new dependency): 8/8 regression tests in `src/payments/classPaymentLimits.test.js` — Individual classes without weekly days (10 payable, 11 refused), a student in several classes whose first class has no days, a class with days (unchanged), no calendar + nothing pending (still blocked), malformed counts, stale/duplicate quantities refused, and a source check that `PagoModal` uses the limits (it FAILS against the code before the fix). `vite build` clean; `oxlint` 366 = baseline, no new warning; `git diff --check` clean. **Not verified in a browser or with real data** (the session could not open the app): the coach tests Alexia's real payment (expected after paying 10: No pagadas 0, Pagadas 10, Realizadas 10) and a combo student with weekly days (expected unchanged).
+
+---
