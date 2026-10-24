@@ -13,6 +13,7 @@ import SyncStatusBanner from "./components/SyncStatusBanner.jsx";
 import { useAuth } from "./auth/useAuth.js";
 import { AccountLockout } from "./auth/AccountLockout.jsx";
 import { buildCobrosReportXlsx, cobrosReportFileName, cobrosEstadoColor, COBROS_REPORT_COLORS, XLSX_MIME } from "./exports/cobrosReportXlsx.js";
+import { classPaymentLimits, isPayableClassQuantity } from "./payments/classPaymentLimits.js";
 
 // Inject Inter font
 if(typeof document!=="undefined"){
@@ -6676,9 +6677,10 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   // empty or containing only real 0-6 day numbers, never a false-non-empty Set{undefined} that
   // would make every while loop below scan forever without ever matching a real date.
   const classDowSet=classDowSetFrom(classDays);
-  // True only when this student's own class has no day a date generator can ever match — gates
-  // the "no puede continuar" message and blocks confirming a class-based payment below; mensual
-  // payments don't need a weekly calendar at all, so they're never blocked by this.
+  // True only when this student's own class has no day a date generator can ever match. Paying
+  // classes that already exist never generates dates, so this blocks a class-based payment only
+  // when there is nothing real to pay (classPaymentLimits below); mensual payments don't need a
+  // weekly calendar at all, so they're never blocked by this.
   const classHasNoCalendar=myClasses.length>0&&!hasValidClassDays(classDays);
 
   const attendedDates=new Set();
@@ -6821,6 +6823,9 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   // classes screen is read-only: no stepper/amount/date/method/Confirmar. "Paquete de clases" as the
   // subtitle only when at least one combo is visible (same source and packType default as buildAllDates).
   const clasesConsultMode=pagoTipo==="clases"&&payableRows.length===0;
+  // Stepper cap and the no-calendar block for paying EXISTING rows: a class without weekly days
+  // never blocks paying real pending classes (it only matters when generating new dates).
+  const classPayment=classPaymentLimits({payableCount:payableRows.length,classHasNoCalendar});
   const clasesHasCombo=pagoTipo==="clases"&&getVisibleClassEntitlements(s,classes).some(({combo:c})=>(c.packType||"combo")==="combo");
 
   // For new combo projection (mora + future)
@@ -6828,7 +6833,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
     const dates=[];
     // No valid weekday to scan for — an explicit empty result, never a loop that scans hoping to
     // find a match (that never comes) and never a "match every day" invented calendar. The UI
-    // surfaces classHasNoCalendar separately to explain the empty result and block confirming.
+    // surfaces classPayment.blockedByNoCalendar separately when there is nothing real to pay.
     if(classDowSet.size===0) return dates;
     if(moraCount>0){
       const allCovered=[...paidCoveredDates].sort();
@@ -6869,9 +6874,12 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   const handleGoToReview=()=>{
     if(becameInactive){alert("Este alumno fue marcado como inactivo. Cerrá y volvé a intentar.");return;}
     if(!pagoTipo){alert("Elegí qué vas a pagar: Clases o Mensualidad.");return;}
-    if(pagoTipo==="clases"&&classHasNoCalendar){alert(NO_CALENDAR_PAGO_MESSAGE);return;}
+    if(pagoTipo==="clases"&&classPayment.blockedByNoCalendar){alert(NO_CALENDAR_PAGO_MESSAGE);return;}
     if(pagoTipo==="clases"&&(!localClasses||parseInt(localClasses)<=0)){
       alert("Ingresá la cantidad de clases usando el stepper ◀ ▶");return;
+    }
+    if(pagoTipo==="clases"&&!isPayableClassQuantity(parseInt(localClasses)||0,payableRows.length)){
+      alert("La cantidad supera las clases pendientes. Cerrá y volvé a intentar.");return;
     }
     if(isModernMensualFlow?!(parseInt(localAmount)>=0):(!localAmount||parseInt(localAmount)<=0)){
       alert("Ingresá el monto del pago.");return;
@@ -6892,8 +6900,9 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
     if(confirmingRef.current) return;
     if(becameInactive){alert("Este alumno fue marcado como inactivo. Cerrá y volvé a intentar.");return;}
     if(!pagoTipo){alert("Elegí qué vas a pagar: Clases o Mensualidad.");return;}
-    if(pagoTipo==="clases"&&classHasNoCalendar){alert(NO_CALENDAR_PAGO_MESSAGE);return;}
+    if(pagoTipo==="clases"&&classPayment.blockedByNoCalendar){alert(NO_CALENDAR_PAGO_MESSAGE);return;}
     if(pagoTipo==="clases"&&(!localClasses||parseInt(localClasses)<=0)){alert("Ingresá la cantidad de clases.");return;}
+    if(pagoTipo==="clases"&&!isPayableClassQuantity(parseInt(localClasses)||0,payableRows.length)){alert("La cantidad supera las clases pendientes. Cerrá y volvé a intentar.");return;}
     if(isModernMensualFlow?!(parseInt(localAmount)>=0):(!localAmount||parseInt(localAmount)<=0)){alert("Ingresá el monto.");return;}
     const qty=parseInt(localClasses)||0;
     let updatedCombos=[...s.combos];
@@ -7220,7 +7229,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
 
           {/* Fields */}
           {becameInactive&&<div role="alert" aria-live="polite" style={{background:"#FFF3E0",borderRadius:10,padding:"10px 14px",marginBottom:10,fontSize:12,fontWeight:700,color:"#E65100"}}>Este alumno fue marcado como inactivo. Cerrá y volvé a intentar.</div>}
-          {pagoTipo==="clases"&&classHasNoCalendar&&!clasesConsultMode&&(
+          {pagoTipo==="clases"&&classPayment.blockedByNoCalendar&&!clasesConsultMode&&(
             <div style={{gridColumn:"1/-1",background:"#FFF3E0",borderRadius:10,padding:"10px 14px",marginBottom:10,fontSize:12,fontWeight:700,color:"#E65100"}}>
               {NO_CALENDAR_PAGO_MESSAGE}
             </div>
@@ -7318,15 +7327,15 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
                 {(()=>{
                   // Cap = payableRows.length: every currently pending, payable row
                   // across ALL obligations (Combo + Individual), not just one combo.
-                  // Never above 0 when the class has no valid calendar — the +7 slack in the
-                  // date-generation caps only protects a scan that has somewhere real to look.
-                  const maxUnpaid=classHasNoCalendar?0:payableRows.length;
+                  // A class without weekly days does not block paying rows that already exist —
+                  // paying them never scans the calendar (see classPaymentLimits).
+                  const maxUnpaid=classPayment.maxClasses;
                   return (
                     // One control: − | number | + on a light-blue track, same height as Monto.
                     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:4,height:48,padding:4,boxSizing:"border-box",background:C.blueL,borderRadius:12}}>
                       <button onClick={()=>setLocalClasses(Math.max(0,(parseInt(localClasses)||0)-1))} aria-label="Restar una clase" style={{width:44,height:40,padding:0,border:"none",borderRadius:10,background:"transparent",color:"#1A237E",fontSize:28,fontWeight:700,lineHeight:1,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>−</button>
                       <div style={{flex:"0 1 60px",minWidth:0,height:40,borderRadius:10,background:"#1A237E",color:"#fff",fontSize:22,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{parseInt(localClasses)||0}</div>
-                      <button onClick={()=>setLocalClasses(Math.min(maxUnpaid,(parseInt(localClasses)||0)+1))} disabled={classHasNoCalendar} aria-label="Sumar una clase" style={{width:44,height:40,padding:0,border:"none",borderRadius:10,background:"transparent",color:classHasNoCalendar?"#B0BEC5":"#1A237E",fontSize:28,fontWeight:700,lineHeight:1,cursor:classHasNoCalendar?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>+</button>
+                      <button onClick={()=>setLocalClasses(Math.min(maxUnpaid,(parseInt(localClasses)||0)+1))} disabled={classPayment.blockedByNoCalendar} aria-label="Sumar una clase" style={{width:44,height:40,padding:0,border:"none",borderRadius:10,background:"transparent",color:classPayment.blockedByNoCalendar?"#B0BEC5":"#1A237E",fontSize:28,fontWeight:700,lineHeight:1,cursor:classPayment.blockedByNoCalendar?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>+</button>
                     </div>
                   );
                 })()}
