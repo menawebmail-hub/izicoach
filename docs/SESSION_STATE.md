@@ -1,47 +1,29 @@
 SESSION_STATE.md — IziCoach
 
-# Current tasks — Cobros bugs before the next release
+# Current state — no task in progress
 
-Replaces the previous handoff (Auth + Data/Persistence, Phases A–D). That work is in
-`origin/main` (`src/auth/`, `src/data/coachData.js`, `activeIdentityRef` in `App.jsx`, no
-`window._iziUserId`); its history stays in Git.
+## 1. Last closed task — Cobros bugs (2026-10-24)
 
-Each bug lives on its own branch from `origin/main` at `15b572d`. Nothing is merged into
-`main` or deployed; push, PR, merge and deploy each need the owner's explicit approval.
+- BUG-COBROS-01 (Detalles de Pagos stepper blocked at 0) and BUG-COBROS-02 (rescheduled dates
+  showing two badges, plus the approved visual adjustment: "Reprogramada" in the class-state
+  column, in the app's existing orange) are in `main` at `83740a4` (fast-forward from
+  `15b572d`) and deployed to Production by Vercel's automatic deployment (success).
+- Verified on `main` before the push: `npm test` 15/15; `vite build` clean; `oxlint` 366 =
+  previous `main`, no new warning. Details: `docs/BUGS.md` → BUG-COBROS-01, BUG-COBROS-02.
+- Owner's local validation approved. Still to do by the owner on Production: check Alexia
+  Monzon and Pato Ojeda in Cobros and in the Student Portal, and Alexia's real payment
+  (expected after paying the 10: No pagadas 0, Pagadas 10, Realizadas 10).
+- The branches `fix/cobros-stepper-no-calendar`, `fix/cobros-reprog-badges` and
+  `validate/cobros-01-02` remain on `origin`; they can be deleted.
 
-Validation: both fixes are integrated on the local branch `validate/cobros-01-02` (from
-`origin/main`, two `--no-ff` merges; only documentation conflicts, resolved keeping both
-BUGS entries). Not pushed. Pending: the owner's visual/functional checklist before any merge
-to `main`.
+## 2. Open items
 
-## 1. BUG-COBROS-01 — Detalles de Pagos stepper blocked at 0
-
-- Branch `fix/cobros-stepper-no-calendar`, commit `ea11313`, **pushed** (no PR, no merge).
-- Details: `docs/BUGS.md` → BUG-COBROS-01.
-- Pending: the owner's real payment test with Alexia Monzon (stepper up to 10; after paying
-  the 10: No pagadas 0, Pagadas 10, Realizadas 10).
-
-## 2. BUG-COBROS-02 — Rescheduled dates show two badges
-
-- Branch `fix/cobros-reprog-badges`, commit `8861712`, **pushed** (no PR, no merge).
-- Files: `src/components/slotRowBadges.js` (new), `src/components/slotRowBadges.test.js`
-  (new), `src/App.jsx` (`SlotGroup` only), `package.json` (`test` script), `docs/BUGS.md`,
-  `docs/SESSION_STATE.md`.
-- Verified: `npm test` 7/7; `vite build` clean; `oxlint` 366 = baseline.
-- Pending: review; visual check of Pato Ojeda in Detalles de Pagos and in the Student Portal.
-
-## 3. Merging both branches
-
-Done on `validate/cobros-01-02`: code and `package.json` merged cleanly; `docs/BUGS.md` and
-this file conflicted (documentation only) and were resolved keeping both BUGS entries.
-`npm test` runs both suites together.
-
-## 4. Known open items (not part of these fixes)
-
+- BUG-AGENDA-03 (rescheduling another class of the same series into a vacated original date
+  merges both classes): diagnosed. The full fix (solution B: slot identity = original date,
+  explicit reschedule `path` per slot, staged rollout behind a coach allowlist) is planned
+  and waits for the owner's decisions before Stage 0. Separate branch; nothing implemented.
+- BUG-ACCOUNT-01 … 04 (`docs/BUGS.md`): pending, on hold for the PaymentCard presentation
+  decision.
 - `PagoModal` reads the weekly calendar from `myClasses[0]` only; projections/renewals for
   students with several classes may be affected. Separate task.
-- BUG-ACCOUNT-01 … 04 (`docs/BUGS.md`) remain pending, on hold for the PaymentCard
-  presentation decision.
-- BUG-AGENDA-03 (reschedule into a vacated original date merges classes): diagnosed; the
-  plan for the full fix (solution B, staged) is pending the owner's decisions. Separate branch.
 - Next: keep identifying IziCoach bugs to fix before publishing a new version.
