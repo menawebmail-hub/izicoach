@@ -10,6 +10,7 @@ import {
   getSyncStatus,
 } from "./data/coachData.js";
 import SyncStatusBanner from "./components/SyncStatusBanner.jsx";
+import { slotRowBadges } from "./components/slotRowBadges.js";
 import { useAuth } from "./auth/useAuth.js";
 import { AccountLockout } from "./auth/AccountLockout.jsx";
 import { buildCobrosReportXlsx, cobrosReportFileName, cobrosEstadoColor, COBROS_REPORT_COLORS, XLSX_MIME } from "./exports/cobrosReportXlsx.js";
@@ -2156,6 +2157,10 @@ const SLOT_BADGES={
 function SlotGroup({number,item,dateText,dateTag,circle,left,right,paidNow,fmt,borderColor,dateColor,compact}) {
   const subRows=(item.historyRows||[]).filter(h=>h.depth>0);
   const groupPaused=!!item.isPaused;
+  // One badge per date of a reschedule chain (BUG-COBROS-02): the original row of a rescheduled
+  // slot is never its terminal, so it shows only "Reprogramada" (presentation only).
+  const rescheduled=(item.historyRows||[]).length>1;
+  const mainBadges=slotRowBadges({rescheduled,isTerminal:!rescheduled,status:null,paid:false});
   const pill=(bg,color,label,key)=><span key={key} style={{fontSize:10,padding:"3px 8px",borderRadius:20,background:bg,color:color,fontWeight:700,flexShrink:0}}>{label}</span>;
   return (
     <div data-slot-group={number} style={{padding:"8px 0",borderBottom:"1px solid "+borderColor}}>
@@ -2166,8 +2171,8 @@ function SlotGroup({number,item,dateText,dateTag,circle,left,right,paidNow,fmt,b
         <div style={{flex:1,minWidth:0}}>
           <div style={{fontSize:13,fontWeight:600,color:dateColor}}>{dateText}{dateTag}</div>
         </div>
-        {pill(left.bg,left.color,left.label,"l")}
-        {pill(right.bg,right.color,right.label,"r")}
+        {mainBadges.state&&pill(left.bg,left.color,left.label,"l")}
+        {mainBadges.payment&&pill(right.bg,right.color,right.label,"r")}
       </div>
       {subRows.map(h=>{
         const b=SLOT_BADGES[h.status]||SLOT_BADGES.pending;
@@ -2175,12 +2180,13 @@ function SlotGroup({number,item,dateText,dateTag,circle,left,right,paidNow,fmt,b
         const paid=h.isPaid||paidNow;
         const rb=slotPaymentBadge({isPaid:paid,isPaused:h.status==="paused"},compact);
         const rBg=rb.bg,rCol=rb.color,rLabel=rb.label;
+        const shown=slotRowBadges({rescheduled,isTerminal:h.isTerminal,status:h.status,paid});
         return (
           <div key={h.depth} data-slot-history={h.depth} style={{display:"flex",alignItems:"center",flexWrap:"wrap",gap:"4px 8px",marginTop:6,marginLeft:(compact?34:36)+(h.depth-1)*12,paddingLeft:10,borderLeft:"2px solid "+(groupPaused?"#FFCC80":"#A5D6A7"),minWidth:0}}>
             <div style={{flex:"1 1 120px",minWidth:0,fontSize:12,fontWeight:600,color:txt,textAlign:"left"}}>↳ {fmt(h.date)}</div>
             <div style={{display:"flex",gap:8,marginLeft:"auto",flexShrink:0}}>
-              {pill(b.bg,b.color,(compact?"":b.icon)+b.text,"b")}
-              {pill(rBg,rCol,rLabel,"p")}
+              {shown.state&&pill(b.bg,b.color,(compact?"":b.icon)+b.text,"b")}
+              {shown.payment&&pill(rBg,rCol,rLabel,"p")}
             </div>
           </div>
         );

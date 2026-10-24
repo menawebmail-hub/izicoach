@@ -207,3 +207,40 @@ Does not touch `getAccountCounters`, `getRem`, `AttModal`, payment logic (`PagoM
 **Verification performed:** repeated saves on the same date (fixed a real corrupted `used:2` on a `total:1` combo, corrected to `1`, in the running app); Presente↔Ausente-Dada (no duplication); Presente↔Ausente-No Dada and back (used now correctly decreases then increases); all confirmed end-to-end against the running app via `localStorage.izi_students`. Combo-targeting logic (multi-combo after renewal, individual+combo coexistence, duplicate-date tiebreak, no-match fallback) verified by running the exact selection algorithm against synthetic data in-browser, since no student in the current dataset has multiple simultaneous combos. Production build clean after the change.
 
 ---
+## BUG-COBROS-02 — Rescheduled dates show two badges ("Reprogramada" and "Pagada")
+
+**Status:** Fixed (local branch `fix/cobros-reprog-badges`; pending review and publication)  
+**Area:** Cobros → Detalles de Pagos and Student Portal (`SlotGroup`, presentation only)  
+**Priority:** Medium
+
+### Description
+In Detalles de Pagos (real case: Pato Ojeda), each date of a reschedule chain showed two badges: the state ("🔄 Reprogramada") and the payment ("✓ Pagada"). The Student Portal uses the same `SlotGroup` and showed the same.
+
+### Expected behavior
+One badge per date of a reschedule chain:
+- original and intermediate dates: only "🔄 Reprogramada";
+- final date, done and paid: only "✓ Pagada";
+- any other final state: unchanged;
+- dates that were never rescheduled: unchanged (state + payment).
+This applies to chains of any length.
+
+### Current behavior (before the fix)
+`buildSlotHistoryRows` (`App.jsx:930` at time of writing) repeats the slot's display-paid status on every step of the chain (`isPaid:!!displayPaid`, by design since `07a03e6`), and `SlotGroup` (`App.jsx:2157`) drew the state badge AND the payment badge on the numbered original row and on every "↳" step.
+
+### Notes
+How the chain is identified (unchanged): `item.historyRows` comes from `slot.reschedulePath` (original → … → final); depth 0 is the numbered original row; `isTerminal` marks the final step, whose `status` is its real state (done, scheduled, paused, cancelled, pending). A slot is rescheduled when `historyRows.length>1`.
+
+Relevant code:
+- `App.jsx:930` (`buildSlotHistoryRows`, unchanged)
+- `App.jsx:2157` (`SlotGroup`), `2163` (main row), `2183` (steps)
+- Callers: `App.jsx:7486` (`PagoModal`), `App.jsx:9021` (`StudentApp`)
+- `src/components/slotRowBadges.js`
+
+### Fix
+- New pure helper `src/components/slotRowBadges.js`: `slotRowBadges({rescheduled, isTerminal, status, paid})` → which of the two badges a row shows, following the rules above.
+- `SlotGroup` draws the main row and each step through it; `paid` for a step stays `h.isPaid||paidNow` (a final date being paid right now reads "✓ Pagada").
+- Unchanged: `buildSlotHistoryRows` and all data (`isPaid`, `displayPaid`, `payableRows`), payments, attendance, dates, reschedule logic, account counters, labels, colors and layout.
+
+**Verification performed:** `npm test` (Node's built-in runner, no new dependency): 7/7 regression tests in `src/components/slotRowBadges.test.js` — one reschedule, multiple reschedules, intermediate dates paid or not, other final states unchanged, a final being paid now, never-rescheduled dates unchanged, and a source check of `SlotGroup` (it FAILS against the code before the fix). `vite build` clean; `oxlint` 366 = baseline, identical output. **Not verified in a browser or with real data** (the session could not open the app): check Pato Ojeda in Detalles de Pagos and in the Student Portal.
+
+---
