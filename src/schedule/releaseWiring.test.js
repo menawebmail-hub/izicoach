@@ -62,7 +62,7 @@ test("Agenda: a releasable date reads grey and opens only the renewal, in the da
 });
 
 test("Cobros: both renewal buttons go through the same release first, for that student only", () => {
-  assert.match(app, /<Finances releaseRenewal=\{releaseRenewal\} students=\{students\} classes=\{xClasses\} initialTab="payments"/);
+  assert.match(app, /<Finances releaseRenewal=\{releaseRenewal\} fusedRepair=\{fusedRepair\} students=\{students\} classes=\{xClasses\} initialTab="payments"/);
   assert.match(app, /<PaymentsTab releaseRenewal=\{releaseRenewal\} /);
   assert.equal((app.match(/<PaymentCard (key=\{s\.id\} )?releaseRenewal=\{releaseRenewal\} /g) || []).length, 2);
   assert.match(app, /<PagoModal releaseRenewal=\{releaseRenewal\} /);

@@ -1,15 +1,18 @@
 SESSION_STATE.md — IziCoach
 
-# Current task — BUG-COMBO-01 and release of a reprogrammed date (Agenda/Cobros)
+# Current task — Agenda: used, released dates, fused chains (branch `fix/combo-used-release-date`)
 
-- Branch `fix/combo-used-release-date` (from `main` `79ea17c`), local changes only: **not committed,
-  not pushed, not deployed**. No SQL, no migration, no real data touched.
-- BUG-COMBO-01 (`used` by original date) and BUG-AGENDA-04 (the original date of a class already given
-  elsewhere stays blocked; Pato Ojeda 26/10 → 02/10). Details: `docs/BUGS.md`.
-- Verified: `npm test` 63/63 (main 41); `vite build` clean; `oxlint` 364 = main (no new warning).
-  Pato regression on the real App functions: 26/10 grey, 28/10 grey, new combo 0/8, previous 8/8,
-  payments unchanged slot by slot (8, 5, 3, 0 paid), partial write + recovery, refusals.
-- Not yet checked in a browser (owner's local check). Pending decision: commit/push authorization.
+- Branch from `main` `79ea17c`. Pushed for local QA (no PR, no merge, no deploy, no SQL, no real data touched):
+  - `ca54ba0`: BUG-COMBO-01 (`used` by original date) and BUG-AGENDA-04 (release of a single-hop reprogrammed
+    original date; renewal from it in Agenda and Cobros).
+  - next commit: BUG-AGENDA-03 prevention (no reprogramming onto a date that would fuse two classes) and the
+    "Separar clases fusionadas" repair in Detalles de Pagos (preview + confirmation, class row only, audit record).
+- Real case (Pato Ojeda): classes 3 and 7 fused on 02/10 (28/09→19/10→02/10 and 12/10→26/10→19/10→02/10); the
+  coach confirmed classes on 19/10 and 02/10. The release (BUG-AGENDA-04) correctly refused it (multi-step chain).
+  Expected repair: class 3 28/09→02/10, class 7 12/10→19/10, class 5 05/10→21/10 unchanged, 26/10 freed. Not
+  executed: the coach runs it from the app after review, then registers the 19/10 attendance.
+- Verified: `npm test` 76/76; `vite build` clean; `oxlint` 364 = main. Details: `docs/BUGS.md`.
+- Not yet checked in a browser.
 
 # Previous task — account isolation (device storage), closed
 

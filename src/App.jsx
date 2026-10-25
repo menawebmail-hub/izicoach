@@ -18,6 +18,7 @@ import { classPaymentLimits, isPayableClassQuantity } from "./payments/classPaym
 import { loadChatGroups, saveChatGroups } from "./chat/chatGroupsStorage.js";
 import { resolveRescheduleChain, resolveComboDateStatus, traceRescheduleHistory } from "./schedule/rescheduleChain.js";
 import { applyReleaseToClassRow, applyReleaseToCombo, countAttendedSlots, findPendingReleaseCompletions, releaseMessage, releaseStateOf, resolveReleasableDate } from "./schedule/releaseReprogrammedDate.js";
+import { applyFusedRepairToClassRow, findFusedGroups, fusedMessage, planFusedRepair, rescheduleDestinationConflict, shortDate } from "./schedule/fusedChains.js";
 import { GROUP_SEND_UNAVAILABLE_TEXT, groupMemberCount, groupMemberNames, groupMembersLabel, isGroupChat } from "./chat/groupMembers.js";
 
 // Inject Inter font
@@ -1596,6 +1597,50 @@ const findReleaseCandidateForStudent=({classes,students,studentId,todayDate})=>{
       const cand=resolveReleaseCandidate({classes,students,seriesId:series.id,date:d,todayDate});
       if(cand.ok&&cand.studentIds.includes(studentId)) return cand;
     }
+  }
+  return null;
+};
+
+// ---- Fused reprogramming chains (src/schedule/fusedChains.js) ----
+// Repair plan plus the same slot readings check as the release: payments, displayed payments, displaced, paused and
+// cancelled states never change for any student of the series; only the moved class may change its "given" reading
+// (it now reads its own date). `evidence` counts classes with EXPLICIT attendance before/after — never assumed.
+const planFusedRepairChecked=({classes,students,seriesId,todayDate})=>{
+  const series=(classes||[]).find(c=>c.id===seriesId);
+  const plan=planFusedRepair({series,students,todayDate,knownSeriesIds:new Set((classes||[]).map(c=>c.id))});
+  if(!plan.ok) return plan;
+  const nextSeries=applyFusedRepairToClassRow(series,plan,{opId:"preview",at:null});
+  if(nextSeries===series) return {ok:false,reason:"inconsistent"};
+  const nextClasses=classes.map(c=>c.id===seriesId?nextSeries:c);
+  for(const sid of series.students||[]){
+    const st=(students||[]).find(s=>s.id===sid);
+    if(!st) continue;
+    const before=slotReadingsOf(st,classes,todayDate), after=slotReadingsOf(st,nextClasses,todayDate);
+    if(before.length!==after.length) return {ok:false,reason:"payment-shift"};
+    for(const b of before){
+      const a=after.find(r=>r.date===b.date);
+      if(!a||["isPaid","displayPaid","isDisplaced","isPaused","isCancelledClass"].some(k=>a[k]!==b[k])) return {ok:false,reason:"payment-shift"};
+      if(a.isGiven!==b.isGiven&&b.date!==plan.move.origin) return {ok:false,reason:"payment-shift"};
+    }
+  }
+  const holders=[...plan.keep.holders,...plan.move.holders];
+  const log=series.attendanceLog||[];
+  const evidence=[...new Set(holders.map(h=>h.studentId))].map(sid=>{
+    const h=holders.find(x=>x.studentId===sid);
+    const combo=((students||[]).find(s=>s.id===sid).combos||[])[h.comboIndex];
+    return {studentId:sid,
+      attendedBefore:countAttendedSlots({dates:combo.dates,dc:series.dateCancellations||{},attendanceLog:log,studentId:sid}),
+      attendedAfter:countAttendedSlots({dates:combo.dates,dc:nextSeries.dateCancellations||{},attendanceLog:log,studentId:sid}),
+      total:combo.total};
+  });
+  return {...plan,evidence};
+};
+// Cobros (Detalles de Pagos): the fused group of one student, if any — {seriesId, plan} where plan may be a refusal.
+const findFusedRepairForStudent=({classes,students,studentId,todayDate})=>{
+  const knownSeriesIds=new Set((classes||[]).map(c=>c.id));
+  for(const series of (classes||[]).filter(c=>(c.students||[]).includes(studentId))){
+    const groups=findFusedGroups({series,students,knownSeriesIds});
+    if(groups.some(g=>g.slots.some(sl=>sl.holders.some(h=>h.studentId===studentId)))) return {seriesId:series.id,plan:planFusedRepairChecked({classes,students,seriesId:series.id,todayDate})};
   }
   return null;
 };
@@ -4855,6 +4900,9 @@ function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent,
     else if(eop.reason==="no-slot") setEopNote("No hay un turno disponible después del paquete.");
   };
 
+  // Prevention (BUG-AGENDA-03): a manual date that already carries another class or reprogramming of this series.
+  const destConflict=selected==="reprog"&&newDate?rescheduleDestinationConflict({series,students,fromDate:cls.date,destination:newDate,knownSeriesIds}):null;
+
   const handleConfirm=()=>{
     // Re-checked here, the actual enforcement point — never just confirmDisabled above. A manual
     // newDate or "Mover al final del paquete" (its own independent target, unrelated to
@@ -4883,16 +4931,18 @@ function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent,
       onSave({...cls,cancelled:true,cancelType:"cancelled_reprog",rescheduledTo:null,applyToAll:false},true);
       onClose();
     } else if(selected==="reprog"&&newDate&&targetDate){
+      if(destConflict){alert(fusedMessage(destConflict));return;}
       const oldDate=cls.date;
       const updatedLog=(cls.attendanceLog||[]).map(e=>e.date===oldDate?{...e,ausente_reprog:[],rescheduled_to:targetDate}:e);
-      onSave({...cls,cancelled:true,cancelType:"cancelled_reprog",rescheduledTo:targetDate,rescheduled:true,attendanceLog:updatedLog,applyToAll:false},true);
+      const r=onSave({...cls,cancelled:true,cancelType:"cancelled_reprog",rescheduledTo:targetDate,rescheduled:true,attendanceLog:updatedLog,applyToAll:false},true);
+      if(r&&r.status==="reprog-destination-conflict"){alert(fusedMessage(r.reason));return;}
       // Combo dates are NOT changed — the original date stays as the billing slot
       // The rescheduled class appears on the new date as a normal class instance
       onClose();
     }
   };
 
-  const confirmDisabled=stage==="choose"?selected!=="cancel":(!newDate&&!endChoice&&!reprogLater);
+  const confirmDisabled=stage==="choose"?selected!=="cancel":((!newDate&&!endChoice&&!reprogLater)||!!destConflict);
   // "Volver" at level 3 goes back to the choose stage (nothing is written); everywhere else it closes.
   const handleBack=()=>{
     if(stage==="reprog"&&!isAssigningDate){
@@ -4949,6 +4999,7 @@ function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent,
                 <input type="time" value={newTime} onChange={e=>setNewTime(e.target.value)} style={{width:"100%",padding:"12px",borderRadius:10,border:"none",fontSize:13,boxSizing:"border-box",background:"#E3F2FD",color:"#0D1B4B",outline:"none"}}/>
               </div>
             </div>
+            {destConflict&&<div role="alert" style={{fontSize:12,color:"#C62828",fontWeight:600,marginBottom:10}}>{fusedMessage(destConflict)}</div>}
             {newDate&&targetLabel&&<div style={{fontSize:12,color:"#2E7D32",background:"#E8F5E9",borderRadius:10,padding:"10px 12px",marginBottom:10}}>📅 Se moverá al <b>{targetLabel}</b> a las <b>{newTime}</b></div>}
             {!newDate&&isNoCalendar&&<div style={{fontSize:12,color:"#E65100",background:"#FFF3E0",borderRadius:10,padding:"10px 12px",marginBottom:10}}>{NO_CALENDAR_REPROG_MESSAGE}</div>}
             <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
@@ -6693,7 +6744,74 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
   );
 }
 
-function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount, newDate, setNewDate, onClose, onUpdate, classes=[], addIncome, packages=[], sendNotification, isStudentActiveNow, mensualCombo=null, onRecordMensualPayment, onSaveMensualAmount, onVoidMensualPayment, expenses=[], releaseRenewal}) {
+// "Separar clases fusionadas": shown in Detalles de Pagos when two classes of a student ended on ONE date (a fused
+// reprogramming chain). Preview first (before/after of every chain, attendance evidence, freed dates); nothing is
+// written until the coach confirms, and the App re-validates the exact preview right before the single write.
+const FUSED_ATTENDANCE_TEXT={none:"sin asistencia registrada",present:"Presente (registrada)",ausente_dada:"Ausente-Dada (registrada)",ausente_reprog:"Ausente-No Dada (registrada)",unmarked:"registro sin este alumno"};
+function FusedRepairNotice({ studentId, fusedRepair }) {
+  const [open,setOpen]=useState(false);
+  const [busy,setBusy]=useState(false);
+  const [done,setDone]=useState(null);
+  if(done) return (
+    <div role="status" style={{background:"#E8F5E9",border:"1px solid #A5D6A7",borderRadius:12,padding:"10px 12px",marginBottom:10,fontSize:12,color:"#2E7D32",fontWeight:600}}>
+      Clases separadas. Si el alumno tuvo clase el {shortDate(done.sharedStep)} y todavía no está registrada, registrá la asistencia desde la Agenda.
+    </div>
+  );
+  const found=fusedRepair&&fusedRepair.find(studentId);
+  if(!found) return null;
+  const p=found.plan;
+  const box={background:"#FFF3E0",border:"1px solid #FFCC80",borderRadius:12,padding:"10px 12px",marginBottom:10,fontSize:12,color:"#E65100"};
+  if(!p.ok) return <div role="alert" style={box}><b>Hay clases unidas en una misma fecha.</b> {fusedMessage(p.reason)}</div>;
+  const mine=(slot)=>slot.holders.filter(h=>h.studentId===studentId).map(h=>h.classNumber).join(", ")||slot.holders.map(h=>h.classNumber).join(", ");
+  const others=new Set([...p.keep.holders,...p.move.holders].map(h=>h.studentId).filter(id=>id!==studentId)).size;
+  const path=(xs)=>xs.map(shortDate).join(" → ");
+  const ev=(p.evidence||[]).find(e=>e.studentId===studentId);
+  const att=(list,date)=>(list||[]).filter(a=>a.studentId===studentId).map(a=>shortDate(date)+": "+(FUSED_ATTENDANCE_TEXT[a.status]||a.status))[0];
+  const confirm=async()=>{
+    if(busy) return;
+    setBusy(true);
+    try{
+      const r=await fusedRepair.run({seriesId:found.seriesId,expectedBefore:p.before,expectedAfter:p.after});
+      if(r&&r.status==="completed"){ setOpen(false); setDone({sharedStep:p.sharedStep}); }
+      else alert(fusedMessage(r&&r.reason));
+    } finally { setBusy(false); }
+  };
+  return (
+    <div style={box}>
+      <div style={{fontWeight:700,marginBottom:6}}>⚠️ Las clases {mine(p.keep)} y {mine(p.move)} quedaron unidas en el {shortDate(p.terminal)}.</div>
+      <button onClick={()=>setOpen(true)} style={{width:"100%",padding:"10px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#E65100,#FF8F00)",color:"#fff",fontSize:13,fontWeight:800,cursor:"pointer"}}>Separar clases fusionadas</button>
+      {open&&(
+        <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.5)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 16px"}} onClick={()=>!busy&&setOpen(false)}>
+          <div style={{background:"#fff",borderRadius:20,padding:"18px 18px 20px",width:"100%",maxWidth:460,maxHeight:"85vh",overflowY:"auto",color:"#0D1B4B"}} onClick={e=>e.stopPropagation()}>
+            <div style={{fontWeight:900,fontSize:18,marginBottom:4}}>Separar clases fusionadas</div>
+            <div style={{fontSize:12,color:"#6B7BAD",marginBottom:12}}>Revisá el antes y el después. No se guarda nada hasta que confirmes.</div>
+            {[["Clase "+mine(p.keep),p.keep],["Clase "+mine(p.move),p.move]].map(([label,slot])=>(
+              <div key={slot.origin} style={{border:"1px solid #DDE3F0",borderRadius:12,padding:"10px 12px",marginBottom:8,fontSize:13}}>
+                <div style={{fontWeight:800,marginBottom:4}}>{label}</div>
+                <div><span style={{color:"#6B7BAD"}}>Antes: </span>{path(slot.pathBefore)}</div>
+                <div><span style={{color:"#2E7D32",fontWeight:700}}>Después: </span>{path(slot.pathAfter)}</div>
+              </div>
+            ))}
+            <div style={{fontSize:12,background:"#F5F7FF",borderRadius:10,padding:"8px 10px",margin:"10px 0"}}>
+              <div style={{fontWeight:700,marginBottom:2}}>Asistencia (no se modifica)</div>
+              <div>{att(p.attendance.terminal,p.terminal)}</div>
+              <div>{att(p.attendance.sharedStep,p.sharedStep)}</div>
+              {ev&&<div style={{marginTop:4}}>Clases con asistencia registrada: {ev.attendedBefore} → {ev.attendedAfter} de {ev.total}.</div>}
+              {ev&&ev.attendedAfter<ev.total&&<div style={{marginTop:2,color:"#E65100"}}>No se marca ninguna asistencia automáticamente: si tuvo clase el {shortDate(p.sharedStep)}, registrala desde la Agenda después de separar.</div>}
+            </div>
+            {p.freedDates.length>0&&<div style={{fontSize:12,marginBottom:6}}>Quedan libres: {p.freedDates.map(shortDate).join(", ")}.</div>}
+            {others>0&&<div style={{fontSize:12,marginBottom:6}}>También cambia para {others} alumno{others>1?"s":""} más de esta clase.</div>}
+            <div style={{fontSize:12,color:"#6B7BAD",marginBottom:14}}>No cambian los pagos, los montos, las fechas del combo ni la asistencia guardada. La reparación queda registrada en la clase.</div>
+            <button disabled={busy} onClick={confirm} style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:busy?"#ccc":"linear-gradient(135deg,#1565C0,#1976D2)",color:"#fff",fontSize:14,fontWeight:800,cursor:busy?"default":"pointer",marginBottom:8}}>{busy?"Guardando…":"Confirmar separación"}</button>
+            <button disabled={busy} onClick={()=>setOpen(false)} style={{width:"100%",padding:"12px",borderRadius:12,border:"1.5px solid #DDE3F0",background:"#fff",color:"#6B7BAD",fontSize:14,fontWeight:700,cursor:"pointer"}}>Cancelar</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount, newDate, setNewDate, onClose, onUpdate, classes=[], addIncome, packages=[], sendNotification, isStudentActiveNow, mensualCombo=null, onRecordMensualPayment, onSaveMensualAmount, onVoidMensualPayment, expenses=[], releaseRenewal, fusedRepair}) {
   // Re-checked in handleGoToReview/handleConfirm below — the actual enforcement points — against
   // the freshest known student state, so a payment modal opened before a concurrent inactivation
   // (another device) can never be confirmed afterwards from stale state.
@@ -7576,6 +7694,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
             return (
               <div style={{padding:"0 20px 16px",textAlign:"center"}}>
                 <div style={{fontSize:11,fontWeight:700,color:"#5C7A9F",letterSpacing:0.5,marginBottom:12}}>FECHAS DE CLASE</div>
+                <FusedRepairNotice studentId={s.id} fusedRepair={fusedRepair}/>
                 {allComplete?(
                   <div style={{padding:"20px",borderRadius:16,background:"#EDFBEC",border:"1.5px solid #66BB6A"}}>
                     <div style={{fontSize:28}}>✅</div>
@@ -7593,6 +7712,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
           return (
           <div style={{padding:"0 20px 16px"}}>
             <div style={{fontSize:11,fontWeight:700,color:"#5C7A9F",letterSpacing:0.5,marginBottom:8}}>FECHAS DE CLASE</div>
+            <FusedRepairNotice studentId={s.id} fusedRepair={fusedRepair}/>
             {comboGroups.map((group,gi)=>(
               <div key={group.key} style={{marginBottom:gi<comboGroups.length-1?16:0}}>
                 {comboGroups.length>1&&(
@@ -7731,7 +7851,7 @@ function ComboProgressBar({ realizadasCombo, totalEntitlementCombo, noPagadas })
   );
 }
 
-function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance, expenses=[], onVoidMensualPayment, onRecordMensualPayment, onSaveMensualAmount, isStudentActiveNow, releaseRenewal }) {
+function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance, expenses=[], onVoidMensualPayment, onRecordMensualPayment, onSaveMensualAmount, isStudentActiveNow, releaseRenewal, fusedRepair }) {
   // combo (getCombo) stays as the narrow "does this student have anything assigned
   // at all" pick for the Asignar-paquete/Detalles-de-Pagos toggle and PagoModal's
   // initial stepper seed — never used to decide WHICH box(es) to render below.
@@ -8029,7 +8149,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
         })()}
       </WhiteCard>
 
-      {showPago&&<PagoModal releaseRenewal={releaseRenewal} s={s} combo={combo} newClasses={newClasses} setNewClasses={setNewClasses} newAmount={newAmount} setNewAmount={setNewAmount} newDate={newDate} setNewDate={setNewDate} onClose={()=>setShowPago(false)} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} isStudentActiveNow={isStudentActiveNow} mensualCombo={displayedModernMensual} onRecordMensualPayment={onRecordMensualPayment} onSaveMensualAmount={onSaveMensualAmount} onVoidMensualPayment={onVoidMensualPayment} expenses={expenses}/>}
+      {showPago&&<PagoModal releaseRenewal={releaseRenewal} fusedRepair={fusedRepair} s={s} combo={combo} newClasses={newClasses} setNewClasses={setNewClasses} newAmount={newAmount} setNewAmount={setNewAmount} newDate={newDate} setNewDate={setNewDate} onClose={()=>setShowPago(false)} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} isStudentActiveNow={isStudentActiveNow} mensualCombo={displayedModernMensual} onRecordMensualPayment={onRecordMensualPayment} onSaveMensualAmount={onSaveMensualAmount} onVoidMensualPayment={onVoidMensualPayment} expenses={expenses}/>}
 
       {showHistory&&(()=>{
         // Historial de Pagos — read-only record. ONE list, built once: the left tabs render it and the
@@ -8356,7 +8476,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
   );
 }
 
-function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance, families=[], expenses=[], onVoidMensualPayment, onRecordMensualPayment, onSaveMensualAmount, isStudentActiveNow, releaseRenewal }) {
+function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance, families=[], expenses=[], onVoidMensualPayment, onRecordMensualPayment, onSaveMensualAmount, isStudentActiveNow, releaseRenewal, fusedRepair }) {
   const [search,setSearch]=useState("");
   const [filter,setFilter]=useState("none");
   const [collapsedFamilies,setCollapsedFamilies]=useState(new Set());
@@ -8492,13 +8612,13 @@ function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], send
             </WhiteCard>
             {!isCollapsed&&g.members.map(s=>(
               <div key={s.id} style={{marginLeft:14,paddingLeft:12,borderLeft:"2px solid #C5D0E6",marginBottom:10}}>
-                <PaymentCard releaseRenewal={releaseRenewal} student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} onRecordMensualPayment={onRecordMensualPayment} onSaveMensualAmount={onSaveMensualAmount} isStudentActiveNow={isStudentActiveNow}/>
+                <PaymentCard releaseRenewal={releaseRenewal} fusedRepair={fusedRepair} student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} onRecordMensualPayment={onRecordMensualPayment} onSaveMensualAmount={onSaveMensualAmount} isStudentActiveNow={isStudentActiveNow}/>
               </div>
             ))}
           </div>
         );
       })}
-      {ungroupedList.map(s=><PaymentCard key={s.id} releaseRenewal={releaseRenewal} student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} onRecordMensualPayment={onRecordMensualPayment} onSaveMensualAmount={onSaveMensualAmount} isStudentActiveNow={isStudentActiveNow}/>)}
+      {ungroupedList.map(s=><PaymentCard key={s.id} releaseRenewal={releaseRenewal} fusedRepair={fusedRepair} student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} onRecordMensualPayment={onRecordMensualPayment} onSaveMensualAmount={onSaveMensualAmount} isStudentActiveNow={isStudentActiveNow}/>)}
     </div>
   );
 }
@@ -8587,7 +8707,7 @@ function CobrosReportScreen({ rows, onClose }) {
   );
 }
 
-function Finances({ students, classes, initialTab="payments", onUpdate, expenses=[], setExpenses, addIncome, packages=[], sendNotification, onAttendance, families=[], onVoidMensualPayment, onRecordMensualPayment, onSaveMensualAmount, onEditLinkedMensualIncome, isStudentActiveNow, releaseRenewal }) {
+function Finances({ students, classes, initialTab="payments", onUpdate, expenses=[], setExpenses, addIncome, packages=[], sendNotification, onAttendance, families=[], onVoidMensualPayment, onRecordMensualPayment, onSaveMensualAmount, onEditLinkedMensualIncome, isStudentActiveNow, releaseRenewal, fusedRepair }) {
   const [tab,setTab]=useState(initialTab);
   const [reportRows,setReportRows]=useState(null);
   const [selMonth,setSelMonth]=useState((()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");})());
@@ -8633,7 +8753,7 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
       </div>
       {reportRows&&<CobrosReportScreen rows={reportRows} onClose={()=>setReportRows(null)}/>}
       <div style={{padding:"16px",marginTop:-8}}>
-        {tab==="payments"&&<PaymentsTab releaseRenewal={releaseRenewal} students={students} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} families={families} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} onRecordMensualPayment={onRecordMensualPayment} onSaveMensualAmount={onSaveMensualAmount} isStudentActiveNow={isStudentActiveNow}/>}
+        {tab==="payments"&&<PaymentsTab releaseRenewal={releaseRenewal} fusedRepair={fusedRepair} students={students} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} families={families} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} onRecordMensualPayment={onRecordMensualPayment} onSaveMensualAmount={onSaveMensualAmount} isStudentActiveNow={isStudentActiveNow}/>}
         {tab==="expenses"&&(
           <div>
             {/* Stats badges */}
@@ -11117,6 +11237,36 @@ export default function App() {
     return cand&&cand.ok?cand:null;
   };
   const releaseRenewal={find:findReleaseRenewalFor,run:releaseAndRenew};
+  // "Separar clases fusionadas" (Detalles de Pagos). One class write, applied only if the LATEST state still yields the
+  // exact before/after the coach confirmed in the preview; the row keeps the audit record (chainRepairs). Idempotent.
+  const repairFusedChains=async({seriesId,expectedBefore,expectedAfter})=>{
+    const key="fused|"+seriesId;
+    if(releaseInFlightRef.current.has(key)||!isClassesWriteSettled()) return {status:"blocked",reason:"write-pending"};
+    releaseInFlightRef.current.add(key);
+    try{
+      const plan=planFusedRepairChecked({classes:latestClassesRef.current,students:latestStudentsRef.current,seriesId,todayDate:todayIso()});
+      if(!plan.ok) return {status:"blocked",reason:plan.reason==="none"?"changed":plan.reason};
+      if(JSON.stringify(plan.before)!==JSON.stringify(expectedBefore)||JSON.stringify(plan.after)!==JSON.stringify(expectedAfter)) return {status:"blocked",reason:"changed"};
+      const opId=crypto.randomUUID();
+      const at=new Date().toISOString();
+      let applied=false;
+      const result=await setClasses(p=>p.map(c=>{
+        if(c.id!==seriesId) return c;
+        const n=applyFusedRepairToClassRow(c,plan,{opId,at});
+        applied=n!==c;
+        return n;
+      }));
+      if(!applied) return {status:"blocked",reason:"changed"};
+      if(!writeConfirmed(result)) return {status:"blocked",reason:"write-failed"};
+      return {status:"completed",sharedStep:plan.sharedStep};
+    } finally {
+      releaseInFlightRef.current.delete(key);
+    }
+  };
+  const fusedRepair={
+    find:(studentId)=>findFusedRepairForStudent({classes:latestClassesRef.current,students:latestStudentsRef.current,studentId,todayDate:todayIso()}),
+    run:repairFusedChains,
+  };
   // Recovery: a release whose students part is saved but whose class part is not (reload, lost connection) is
   // completed here, idempotently, only once the classes queue is settled. Never touches a date that changed.
   // The effect calls the CURRENT render's function through a ref, so it always reads the latest setters/state.
@@ -11574,6 +11724,13 @@ export default function App() {
 
       // Handle per-date cancellation/pause for recurring classes
       if((cd.cancelled===true||cd.cancelType==="paused"||cd._resuming||cd._reactivating)&&editDate){
+        // A dated reprogramming may never land on a date that already carries another class or reprogramming of this
+        // series (that fuses two classes into one — BUG-AGENDA-03). Checked against the LATEST state; nothing is written.
+        // "Mover al final del paquete" keeps its own write-time guard (guardEndOfPackageWrite) and is not re-judged here.
+        if(cd.cancelled===true&&cd.cancelType==="cancelled_reprog"&&cd.rescheduledTo&&!cd._endOfPackage){
+          const conflict=rescheduleDestinationConflict({series:latestClassesRef.current.find(c2=>c2.id===realId),students:latestStudentsRef.current,fromDate:editDate,destination:cd.rescheduledTo,knownSeriesIds:new Set(latestClassesRef.current.map(c2=>c2.id))});
+          if(conflict) return {status:"reprog-destination-conflict",reason:conflict};
+        }
         // "Mover al final del paquete": the destination the user confirmed is re-validated here against the
         // LATEST classes/students (refs, same synchronous tick as the write below). If it is no longer the
         // free target, nothing is written and no other date is picked.
@@ -11890,7 +12047,7 @@ export default function App() {
         {inviteTarget&&<InviteModal student={inviteTarget} userId={user?.id} coachName={coachProfile.name} onClose={()=>setInviteTarget(null)}/>}
         {tab==="agenda"&&<Agenda onReleaseAndRenew={releaseAndRenew} students={students} classes={xClasses} rawClasses={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onUpdateStudentsBatch={commitStudentsBatch} isClassesWriteSettled={isClassesWriteSettled} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])} onRefresh={handleRefresh}/>}
         {tab==="chat"&&<Chat key={user?.id||"no-user"} students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification} userId={user?.id} unreadChats={unreadChats} onMarkRead={(sid)=>setUnreadChats(p=>{const n={...p};delete n[String(sid)];return n;})}/>}
-        {tab==="cobros"&&<Finances releaseRenewal={releaseRenewal} students={students} classes={xClasses} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance} families={families} onVoidMensualPayment={handleVoidMensualPayment} onRecordMensualPayment={handleRecordMensualPayment} onSaveMensualAmount={handleSaveMensualAmount} isStudentActiveNow={isStudentActiveNow}/>}
+        {tab==="cobros"&&<Finances releaseRenewal={releaseRenewal} fusedRepair={fusedRepair} students={students} classes={xClasses} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance} families={families} onVoidMensualPayment={handleVoidMensualPayment} onRecordMensualPayment={handleRecordMensualPayment} onSaveMensualAmount={handleSaveMensualAmount} isStudentActiveNow={isStudentActiveNow}/>}
         {tab==="finanzas"&&<Finances students={students} classes={xClasses} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} onEditLinkedMensualIncome={handleEditLinkedMensualIncome}/>}
         {showNewClass&&<NewClassModal onClose={()=>{setShowNewClass(false);if(classes.length===0)setTab("agenda");}} onSave={handleSaveClass} existingClasses={xClasses} students={students} dateLabel="Nueva clase" onCreateStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])}/>}
         {showNewStudent&&<NewStudentModal onClose={()=>setShowNewStudent(false)} onSave={(d)=>setStudents(p=>[...p,{id:Date.now(),...d}])}/>}

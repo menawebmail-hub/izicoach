@@ -89,6 +89,8 @@ A released original date (BUG-AGENDA-04, src/schedule/releaseReprogrammedDate.js
 	•	combo.slotRelocations: [{id, from, to, classId, at}] — the slot kept its position and took its real date;
 	•	class.releasedReschedules: [{id, date, destination, entry, at}] — the dateCancellations entry that was removed.
 Write order: students, then the class, then the renewal; recovery completes a pending class part idempotently.
+A repaired fused chain (BUG-AGENDA-03, src/schedule/fusedChains.js) is recorded in class.chainRepairs: [{id, kind:"split-fused", at, slots, before, after, freedDates, attendance}]; combos are never written by it.
+A dated reprogramming must not land on a date that already carries another class or reprogramming of the series (rescheduleDestinationConflict).
 9. ARCHITECTURAL REGRESSION GUARDS
 Do not reintroduce:
 	•	stale React closure updates;

@@ -414,3 +414,28 @@ A half-done release (students saved, class not) counts nothing twice and is comp
 Pato regression on the real App functions with "today" = 25/10/2026: 26/10 grey, 28/10 grey, new combo 0/8 from 26/10, previous combo 8/8, payments unchanged for 8, 5, 3 and 0 paid, two students, partial write and recovery, and every refusal (`src/schedule/patoRelease.test.js`).
 
 ---
+
+## BUG-AGENDA-03 — Reprogramming onto a date with its own entry fuses two classes (prevention + repair)
+
+**Status:** Prevented and repairable on branch `fix/combo-used-release-date`; the full fix (plan B, slot identity by original date) is still pending  
+**Area:** `CancelReprogModal` / `handleSaveClass` (prevention), Detalles de Pagos (repair)  
+**Priority:** High
+
+### Description
+`dateCancellations` is keyed by DATE. Reprogramming a class onto a date that already has its own entry makes the chain walk continue through it, so two contractual classes end on one date. Real case (Pato Ojeda, Mon/Wed): class 3 28/09 → 19/10 → 02/10 and class 7 12/10 → 26/10 → 19/10 → 02/10 both read "given on 02/10" (8/8 shown, 7 classes recorded) and Monday 26/10 stayed blocked. The coach confirmed both 19/10 and 02/10 classes happened.
+
+### Prevention
+`rescheduleDestinationConflict` (`src/schedule/fusedChains.js`), in the reprogramming modal (message + disabled confirm) and again in `handleSaveClass` against the latest state. A dated reprogramming is refused when the destination already has an entry in this series, is another reprogramming's destination, has attendance recorded, or is an own class date of a student who holds the moved class. Free dates and grey dates after the package stay allowed; group classes are not blocked by another student's dates; "Mover al final del paquete" keeps its own guard.
+
+### Repair: "Separar clases fusionadas" (Detalles de Pagos)
+Shown when two classes of the student end on one date. Preview (before/after of both chains, attendance on both dates, freed dates), explicit confirmation, one write on the class row only:
+- the earlier original keeps the shared terminal and skips the shared step (28/09 → 02/10);
+- the later original ends on the shared step (12/10 → 19/10); its own steps from today on are freed (26/10), earlier ones stay;
+- applied only while every touched entry still equals the preview (re-planned on the latest state right before writing); idempotent;
+- `class.chainRepairs` keeps {id, kind:"split-fused", at, slots from/to, before, after, freedDates, attendance}.
+Combos, payments, amounts and attendance are never written. Attendance is per date, so it stays where it was; the 19/10 attendance is reported, never assumed (classes with explicit attendance: 7 → 7 until it is registered). Refused for three or more classes on one date, a class that was already living on the date, pauses or resume operations, or other references to the shared step.
+
+### Tests
+`src/schedule/fusedChains.test.js` (fictitious data shaped exactly like the reported case, real App functions), `src/schedule/fusedWiring.test.js`.
+
+---
