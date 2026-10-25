@@ -1,22 +1,22 @@
 SESSION_STATE.md — IziCoach
 
-# Current task — Agenda: used, released dates, fused chains (branch `fix/combo-used-release-date`)
+# Current task — Agenda: used, released dates, fused chains, add a day (branch `fix/combo-used-release-date`)
 
-- Branch from `main` `79ea17c`. Pushed for local QA (no PR, no merge, no deploy, no SQL, no real data touched):
+- Branch from `main` `79ea17c`, pushed for local QA; not merged, not deployed; no SQL, no migration.
   - `ca54ba0`: BUG-COMBO-01 (`used` by original date) and BUG-AGENDA-04 (release of a single-hop reprogrammed
     original date; renewal from it in Agenda and Cobros).
-  - next commit: BUG-AGENDA-03 prevention (no reprogramming onto a date that would fuse two classes) and the
+  - `070c582`: BUG-AGENDA-03 prevention (no reprogramming onto a date that would fuse two classes) and the
     "Separar clases fusionadas" repair in Detalles de Pagos (preview + confirmation, class row only, audit record).
-- Real case (Pato Ojeda): classes 3 and 7 fused on 02/10 (28/09→19/10→02/10 and 12/10→26/10→19/10→02/10); the
-  coach confirmed classes on 19/10 and 02/10. The release (BUG-AGENDA-04) correctly refused it (multi-step chain).
-  Expected repair: class 3 28/09→02/10, class 7 12/10→19/10, class 5 05/10→21/10 unchanged, 26/10 freed. Not
-  executed: the coach runs it from the app after review, then registers the 19/10 attendance.
-  - next commit: pause/resume checks made precise (only this class and its students, only the involved dates,
-    a planned resume only if it could take a freed date), dated messages; the 2026-10-25 local check showed
-    "No se puede separar mientras haya una pausa o reanudación" for Pato with the series-wide rule.
-  - local, not committed: "Agregar día al combo" (FEATURE-AGENDA-01 in `docs/BUGS.md`).
-- Verified: `npm test` 92/92; `vite build` clean; `oxlint` 364 = main. Details: `docs/BUGS.md`.
-- Not yet checked in a browser.
+  - `c5a0fa0`: pause/resume checks made precise (only this class and its students, only the involved dates, a
+    planned resume only if it could take a freed date), dated messages.
+  - `eb303e5`: FEATURE-AGENDA-01 "Agregar día al combo" — validated locally by the owner with a test coach account.
+- Real case (Pato Ojeda): classes 3 and 7 fused on 02/10; the owner ran "Separar clases fusionadas" from localhost
+  on 2026-10-25 (result OK: class 3 28/09→02/10, class 7 12/10→19/10, 26/10 freed). Owner's follow-up: register
+  the 19/10 attendance and renew from 26/10 in Cobros (not confirmed here).
+- Verified on `eb303e5`: `npm test` 92/92; `vite build` clean; `oxlint` 364 = main. Details: `docs/BUGS.md`.
+- Pending, not implemented: BUG-AGENDA-05 (Editar clase "Solo esta clase" changes the whole class; a weekday
+  change leaves the combo behind and drops past dates from the Agenda) — postponed by the owner.
+- Next decision: merge the branch to `main` (automatic Production deploy) — separate authorization.
 
 # Previous task — account isolation (device storage), closed
 

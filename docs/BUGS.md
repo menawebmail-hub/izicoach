@@ -442,7 +442,7 @@ Combos, payments, amounts and attendance are never written. Attendance is per da
 
 ## FEATURE-AGENDA-01 — "Agregar día al combo"
 
-**Status:** Implemented locally on branch `fix/combo-used-release-date` (not committed)  
+**Status:** Implemented on branch `fix/combo-used-release-date` (`eb303e5`, pushed; not merged, not deployed). Validated locally by the owner with a test coach account (2026-10-25)  
 **Area:** Agenda (class menu), `src/schedule/comboDayAddition.js`
 
 ### Behavior
@@ -456,5 +456,32 @@ Past dates, dates with attendance, reprogrammed or arriving dates, resume (pause
 
 ### Tests
 `src/schedule/comboDayAddition.test.js` (unpaid, partly paid, fully paid, group, refusals, partial write and recovery), `src/schedule/comboDayWiring.test.js`.
+
+---
+
+## BUG-AGENDA-05 — Editar clase: "Solo esta clase" changes the whole class; a weekday change leaves the combo behind
+
+**Status:** Pending (diagnosed 2026-10-25, not implemented; postponed by the owner)  
+**Area:** `EditClassScreen` (occurrence regeneration), Agenda scope prompt (`editScopeData`), `applyEditToClass`, `updateStudentPacks`  
+**Priority:** High
+
+### How it was found
+Owner's local test of FEATURE-AGENDA-01: on a class of that combo, Editar → changed the weekday → "📅 Solo esta clase". The new date showed a grey "Sin pagar" card.
+
+### Diagnosis
+1. **"Solo esta clase" is not a single-date edit.** `EditClassScreen` regenerates ALL the class occurrences with the new weekdays and the scope prompt saves that payload. Without `applyToAll`, `applyEditToClass` merges the whole payload into the class row (`{...c,...cd}`): new `days`, the regenerated `occurrences`, and also the card's `date` and internal card fields. There is no path that moves one date only.
+2. **The combo is not moved.** A weekday change regenerates `occurrences`, but `combo.dates` is only recalculated when the student's package is also changed. The new weekday dates are not combo dates (grey "Sin pagar"); the original future combo dates lose their Agenda card while Cobros still lists them.
+3. **Past dates disappear from the Agenda.** Regeneration starts at the class `startDate` and keeps only occurrences before it (normally none), so past dates, including ones with attendance, lose their card.
+
+Dates added with "Agregar día al combo" are kept (`class.addedDates`). Attendance, payments and combos are not deleted: the damage is what the Agenda shows and which dates are combo classes.
+
+### Impact
+Coaches who move one class with "Solo esta clase" actually move the whole class; combo classes vanish from the Agenda and the new dates read "Sin pagar"; past classes vanish from the Agenda. Workaround: Editar → back to the original weekday → "A todas las clases" (occurrences are regenerated from `startDate` again; attendance was never deleted).
+
+### Proposed corrections (not implemented)
+1. **"Solo esta clase" + one weekday swapped = reprogram that date** to the same week's new weekday through the existing reprogramming (with the fused-chain prevention); combo, payments and attendance as in "Reprogramar". An ambiguous change (several days added/removed) is refused: "Para mover solo esta clase, usá Reprogramar".
+2. **Other structural changes in "Solo esta clase"** (time, students) do not exist per date in the model: say so in the prompt or refuse them ("El horario y los alumnos se cambian para todas las clases").
+3. **"A todas las clases" + weekday change:** keep every past occurrence and every date with attendance, reprogramming or pause; move each current combo's future clean dates, in order, to the next dates with the new weekdays (in the student-pack flow, per ARCHITECTURE.md), keeping total, price and payments (same positions); never move past, attended, reprogrammed, paused, resume or added dates; same slot-readings check; all combo students or none; preview before saving.
+Tests to add: single-date weekday swap (reprograms only that date, prevention respected), ambiguous change refused, all-classes weekday change with unpaid / partly paid / fully paid combos, past attended dates kept, reprogrammed and added dates not moved, group classes.
 
 ---
