@@ -2,11 +2,25 @@ SESSION_STATE.md — IziCoach
 
 # Current task — account isolation (device storage)
 
-- Branch `fix/iso-device-storage` (from `main` `c241570`), one local commit, **not pushed**:
-  BUG-ISO-01 (Chat groups per coach) and BUG-ISO-02 (legacy local copies: writes removed,
-  `clearLegacyBusinessCaches()` implemented but not called). Details: `docs/BUGS.md`.
-- Verified: `npm test` 29/29; `vite build` clean; `oxlint` 366 = baseline. Not verified in a
-  browser yet (manual check: two test coaches on one device).
+- Branch `fix/iso-device-storage` (from `main` `c241570`), pushed for validation at `83df8a5`
+  (not merged, not deployed): BUG-ISO-01 (Chat groups per coach) and BUG-ISO-02 (legacy local
+  copies: writes removed, `clearLegacyBusinessCaches()` implemented but not called).
+  Details: `docs/BUGS.md`.
+- Owner's manual check on the Mac (2026-10-25, `localhost:5173`, branch at `83df8a5`):
+  - R1 validated: each coach's groups are stored under `izi_chat_groups:<coach uuid>` (two
+    test coaches, two different keys); they survive logout/login; coach B never sees coach A's
+    group and A sees only its own. (An earlier failed test ran `validate/cobros-01-02`, the old
+    code.)
+  - R2 partially validated: `izi_groups` is no longer written. Not yet checked: that none of
+    the six legacy business caches is written again (keys left by older builds may still exist).
+- Chat improvement on the same branch (local commit, not pushed): group chats show
+  "N integrantes · Ver" in the header; "Ver" opens the member names in selection order (a
+  deleted student reads "Alumno no disponible") with a close button; if saving the group on
+  the device fails, the coach is warned on the confirm screen and the group is not added.
+  Individual chats and the per-coach isolation are unchanged. Helper `src/chat/groupMembers.js`.
+- Verified: `npm test` 37/37; `vite build` clean; `oxlint` 364 problems, identical to the
+  branch before the change (no new warning). Members panel and save warning not yet checked
+  in a browser (owner's manual check).
 - Production RLS/grants/functions/trigger verified read-only (2026-10-25): they match the
   repository. Difference: `supabase_migrations.schema_migrations` stops at `20260915120000`
   although the effects of `20260929230000`, `20260930120000`, `20260930150000` and

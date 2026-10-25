@@ -16,6 +16,7 @@ import { AccountLockout } from "./auth/AccountLockout.jsx";
 import { buildCobrosReportXlsx, cobrosReportFileName, cobrosEstadoColor, COBROS_REPORT_COLORS, XLSX_MIME } from "./exports/cobrosReportXlsx.js";
 import { classPaymentLimits, isPayableClassQuantity } from "./payments/classPaymentLimits.js";
 import { loadChatGroups, saveChatGroups } from "./chat/chatGroupsStorage.js";
+import { groupMemberCount, groupMemberNames, groupMembersLabel } from "./chat/groupMembers.js";
 
 // Inject Inter font
 if(typeof document!=="undefined"){
@@ -6370,6 +6371,8 @@ function CreateGroupScreen({ students, onClose, onCreate }) {
   const [step,setStep]=useState(1);
   const [gName,setGName]=useState("");
   const [selM,setSelM]=useState([]);
+  // onCreate returns false when the group could not be saved on this device: stay here and say so.
+  const [saveError,setSaveError]=useState(false);
   const toggleM=(id)=>setSelM(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
   if(step===1) return (
     <div style={{flex:1,display:"flex",flexDirection:"column",background:C.bg}}>
@@ -6419,7 +6422,8 @@ function CreateGroupScreen({ students, onClose, onCreate }) {
           <div style={{fontSize:13,fontWeight:700,color:C.mutedDark,marginBottom:10}}>{"MIEMBROS ("+selM.length+")"}</div>
           {selM.map(sid=>{const st=students.find(s=>s.id===sid);return st?(<div key={sid} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid "+C.border}}><div style={{width:36,height:36,borderRadius:"50%",background:"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:C.white}}>{st.avatar}</div><div style={{fontSize:14,fontWeight:600,color:C.text}}>{st.name}</div></div>):null;})}
         </WhiteCard>
-        <button onClick={()=>{const init=gName.trim().split(" ").slice(0,2).map(w=>w[0]).join("").toUpperCase();onCreate({id:"g"+Date.now(),name:gName,avatar:init,lastMsg:"Grupo creado",time:"Ahora",isGroup:true,members:selM});onClose();}} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,"+C.green+",#66BB6A)",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:10}}>✓ Crear Grupo</button>
+        {saveError&&<div role="alert" style={{background:"#FFF3E0",borderRadius:10,padding:"10px 12px",marginBottom:10,fontSize:13,color:"#E65100",fontWeight:600}}>No se pudo guardar el grupo en este dispositivo, así que no se creó. Intentá de nuevo.</div>}
+        <button onClick={()=>{const init=gName.trim().split(" ").slice(0,2).map(w=>w[0]).join("").toUpperCase();setSaveError(false);if(onCreate({id:"g"+Date.now(),name:gName,avatar:init,lastMsg:"Grupo creado",time:"Ahora",isGroup:true,members:selM})===false){setSaveError(true);return;}onClose();}} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,"+C.green+",#66BB6A)",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:10}}>✓ Crear Grupo</button>
         <button onClick={onClose} style={{width:"100%",padding:"15px",borderRadius:14,border:"1.5px solid "+C.border,background:C.white,color:C.mutedDark,fontSize:15,cursor:"pointer",fontWeight:700}}>Cancelar</button>
       </div>
     </div>
@@ -6435,6 +6439,7 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
   const [loading,setLoading]=useState(false);
   const [lastMsgTime,setLastMsgTime]=useState({});
   const [showCreate,setShowCreate]=useState(false);
+  const [showMembers,setShowMembers]=useState(false);
   // BUG-ISO-01: groups live under this coach's own key; legacy shared groups are adopted only when
   // every member is one of this coach's students (see chatGroupsStorage). Chat is keyed by user id.
   const [groups,setGroups]=useState(()=>loadChatGroups(localStorage,userId,students.map(s=>s.id)));
@@ -6481,13 +6486,29 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
   if(view==="chat"&&active) return (
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:"calc(64px + env(safe-area-inset-bottom,0px))",display:"flex",flexDirection:"column",background:C.bg,zIndex:50}}>
       <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",padding:"calc(12px + var(--safe-top)) 16px 12px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
-        <button onClick={()=>{setView("list");setActive(null);setMsgs([]);onClearTarget&&onClearTarget();}} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:18}}>{"<"}</button>
+        <button onClick={()=>{setView("list");setActive(null);setMsgs([]);setShowMembers(false);onClearTarget&&onClearTarget();}} style={{background:C.whiteA,border:"none",borderRadius:"50%",width:32,height:32,cursor:"pointer",color:C.white,fontSize:18}}>{"<"}</button>
         <div style={{width:38,height:38,borderRadius:"50%",background:C.whiteA,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white,flexShrink:0}}>{active.avatar||"?"}</div>
         <div style={{flex:1}}>
           <div style={{fontWeight:700,fontSize:14,color:C.white}}>{active.name}</div>
-          <div style={{fontSize:11,color:C.muted}}>En línea</div>
+          {active.isGroup
+            ?<button onClick={()=>setShowMembers(v=>!v)} aria-expanded={showMembers} style={{background:"none",border:"none",padding:0,fontSize:11,color:C.muted,cursor:"pointer",textAlign:"left"}}>{groupMembersLabel(groupMemberCount(active))+" · "+(showMembers?"Ocultar":"Ver")}</button>
+            :<div style={{fontSize:11,color:C.muted}}>En línea</div>}
         </div>
       </div>
+      {active.isGroup&&showMembers&&(
+        <div style={{background:C.white,borderBottom:"1px solid "+C.border,padding:"10px 16px",maxHeight:220,overflowY:"auto",flexShrink:0}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+            <div style={{fontSize:13,fontWeight:700,color:C.mutedDark}}>{"INTEGRANTES ("+groupMemberCount(active)+")"}</div>
+            <button onClick={()=>setShowMembers(false)} aria-label="Cerrar integrantes" style={{background:C.blueL,border:"none",borderRadius:"50%",width:28,height:28,cursor:"pointer",color:C.mutedDark,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+          </div>
+          {groupMemberNames(active,students).map(m=>(
+            <div key={m.key} style={{display:"flex",alignItems:"center",gap:10,padding:"6px 0",borderBottom:"1px solid "+C.border}}>
+              <div style={{width:32,height:32,borderRadius:"50%",background:m.available?"linear-gradient(135deg,"+C.blue2+","+C.blue3+")":C.border,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:m.available?C.white:C.mutedDark,flexShrink:0}}>{m.avatar}</div>
+              <div style={{fontSize:14,fontWeight:m.available?600:400,color:m.available?C.text:C.mutedDark,fontStyle:m.available?"normal":"italic"}}>{m.name}</div>
+            </div>
+          ))}
+        </div>
+      )}
       <div style={{flex:1,overflowY:"auto",padding:"16px",display:"flex",flexDirection:"column",gap:10,paddingBottom:80}}>
         {loading&&<div style={{textAlign:"center",color:C.mutedDark,padding:20}}>Cargando...</div>}
         {msgs.map((m,i)=>(
@@ -6513,7 +6534,12 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
     </div>
   );
 
-  if(showCreate) return <CreateGroupScreen students={students} onClose={()=>setShowCreate(false)} onCreate={(g)=>{setGroups(p=>{const next=[g,...p];saveChatGroups(localStorage,userId,next);return next;});setShowCreate(false);}}/>;
+  if(showCreate) return <CreateGroupScreen students={students} onClose={()=>setShowCreate(false)} onCreate={(g)=>{
+    // Shown only once saved: the list is exactly what this coach's key holds (groups change only here).
+    const next=[g,...groups];
+    if(!saveChatGroups(localStorage,userId,next)) return false;
+    setGroups(next);setShowCreate(false);return true;
+  }}/>;
 
   // Sort students — unread first, then by most recent message
   const sortedStudents=[...students].sort((a,b)=>{
