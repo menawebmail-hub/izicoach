@@ -2,8 +2,8 @@ SESSION_STATE.md — IziCoach
 
 # Current task — account isolation (device storage)
 
-- Branch `fix/iso-device-storage` (from `main` `c241570`), pushed for validation at `83df8a5`
-  (not merged, not deployed): BUG-ISO-01 (Chat groups per coach) and BUG-ISO-02 (legacy local
+- Branch `fix/iso-device-storage` (from `main` `c241570`), pushed for validation, now at
+  `c35da97` (not merged, not deployed): BUG-ISO-01 (Chat groups per coach) and BUG-ISO-02 (legacy local
   copies: writes removed, `clearLegacyBusinessCaches()` implemented but not called).
   Details: `docs/BUGS.md`.
 - Owner's manual check on the Mac (2026-10-25, `localhost:5173`, branch at `83df8a5`):
@@ -11,16 +11,38 @@ SESSION_STATE.md — IziCoach
     test coaches, two different keys); they survive logout/login; coach B never sees coach A's
     group and A sees only its own. (An earlier failed test ran `validate/cobros-01-02`, the old
     code.)
-  - R2 partially validated: `izi_groups` is no longer written. Not yet checked: that none of
-    the six legacy business caches is written again (keys left by older builds may still exist).
-- Chat improvement on the same branch (local commit, not pushed): group chats show
+  - R2 validated: `izi_groups` is no longer written. Code check (2026-10-25, `c35da97`):
+    in the production bundle the six legacy keys (`izi_students`, `izi_classes`, `izi_courts`,
+    `izi_packages`, `izi_families`, `izi_expenses`) appear only in the preserved-keys list; no
+    write and no read uses them (the old files `src/1App.jsx`, `6.jsx`, `7.jsx`,
+    `8_funcional1.jsx`, `izicoach.jsx` still mention them but are not imported or bundled).
+    Browser check on the Mac (2026-10-25, `c35da97`, read-only console snapshot + write
+    watcher, nothing deleted): none of the six keys nor `izi_groups` existed before; after
+    browsing Alumnos/Agenda/Cobros/Finanzas/Chat with coach A, logout and the same with coach
+    B, all seven still do not exist. R2 validated for loading, browsing and logout/login; data
+    edits were not exercised (Production accounts) and are covered by the code check and
+    `localCaches.test.js`.
+- Chat improvement (`c35da97`, pushed to the branch for validation): group chats show
   "N integrantes · Ver" in the header; "Ver" opens the member names in selection order (a
   deleted student reads "Alumno no disponible") with a close button; if saving the group on
   the device fails, the coach is warned on the confirm screen and the group is not added.
   Individual chats and the per-coach isolation are unchanged. Helper `src/chat/groupMembers.js`.
-- Verified: `npm test` 37/37; `vite build` clean; `oxlint` 364 problems, identical to the
-  branch before the change (no new warning). Members panel and save warning not yet checked
-  in a browser (owner's manual check).
+  Validated by the owner on the Mac (2026-10-25, `localhost:5173`).
+- Verified on `c35da97` vs `main` `c241570`: `npm test` 37/37 (main 15/15); `vite build` clean
+  on both; `oxlint` 364 problems on both, same warnings (no new one).
+- Open risks before Production (merge to `main` = automatic Vercel deploy):
+  - Chat groups remain device-local (not in Supabase): another device or browser, or cleared
+    site data, shows no groups. Same as before.
+  - Existing `izi_groups` on a device: a group is adopted only if every member is one of the
+    coach's current students; a group with a deleted or foreign member stays hidden (kept,
+    not deleted). Adoption runs when Chat opens: if the students list is still empty then,
+    it waits for the next opening.
+  - Group messages are still not saved (BUG-CHAT-03); the members view does not change that.
+  - The six legacy caches stay on devices that have them (not read, not removed) until
+    `clearLegacyBusinessCaches()` is authorized.
+  - Server-side identity check (R4) and outbox isolation tests are not done.
+  - No SQL in this branch; do not run any migration while the migration history is out of
+    sync (see below).
 - Production RLS/grants/functions/trigger verified read-only (2026-10-25): they match the
   repository. Difference: `supabase_migrations.schema_migrations` stops at `20260915120000`
   although the effects of `20260929230000`, `20260930120000`, `20260930150000` and
