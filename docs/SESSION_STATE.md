@@ -28,7 +28,13 @@ SESSION_STATE.md — IziCoach
   the device fails, the coach is warned on the confirm screen and the group is not added.
   Individual chats and the per-coach isolation are unchanged. Helper `src/chat/groupMembers.js`.
   Validated by the owner on the Mac (2026-10-25, `localhost:5173`).
-- Verified on `c35da97` vs `main` `c241570`: `npm test` 37/37 (main 15/15); `vite build` clean
+- BUG-CHAT-03 mitigated (option D, local commit, not pushed): group chats hide the text field,
+  send and 📢 buttons and show "El envío a grupos todavía no está disponible. Podés escribirle a
+  cada alumno desde su chat individual."; no message query, Realtime subscription or
+  mark-as-read call is made with a group id. Group creation, per-coach storage and members view
+  kept; individual chats unchanged. No SQL. Future option (not implemented): broadcast to the
+  members' individual chats (details in `docs/BUGS.md`). Not yet checked in a browser.
+- Verified on the branch vs `main` `c241570`: `npm test` 41/41 (main 15/15); `vite build` clean
   on both; `oxlint` 364 problems on both, same warnings (no new one).
 - Open risks before Production (merge to `main` = automatic Vercel deploy):
   - Chat groups remain device-local (not in Supabase): another device or browser, or cleared
@@ -37,7 +43,9 @@ SESSION_STATE.md — IziCoach
     coach's current students; a group with a deleted or foreign member stays hidden (kept,
     not deleted). Adoption runs when Chat opens: if the students list is still empty then,
     it waits for the next opening.
-  - Group messages are still not saved (BUG-CHAT-03); the members view does not change that.
+  - Group messages: sending is disabled (BUG-CHAT-03, option D); a coach who used groups loses
+    nothing that worked, but cannot message a group until a broadcast is decided.
+  - Individual `send` still ignores insert errors (separate, not changed).
   - The six legacy caches stay on devices that have them (not read, not removed) until
     `clearLegacyBusinessCaches()` is authorized.
   - Server-side identity check (R4) and outbox isolation tests are not done.
@@ -51,7 +59,7 @@ SESSION_STATE.md — IziCoach
 - Next, each separately authorized: outbox isolation tests (coachData with a mocked Supabase),
   the migration history repair, a separate Supabase test project (D5), R4 (CAS with
   `p_expected_coach_id`: SQL first, then client), and calling `clearLegacyBusinessCaches()`.
-- BUG-CHAT-03 (group messages never saved) registered separately.
+- BUG-CHAT-03: mitigated by option D; real group messages (broadcast) pending a product decision.
 
 # Previous state
 

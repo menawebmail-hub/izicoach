@@ -16,7 +16,7 @@ import { AccountLockout } from "./auth/AccountLockout.jsx";
 import { buildCobrosReportXlsx, cobrosReportFileName, cobrosEstadoColor, COBROS_REPORT_COLORS, XLSX_MIME } from "./exports/cobrosReportXlsx.js";
 import { classPaymentLimits, isPayableClassQuantity } from "./payments/classPaymentLimits.js";
 import { loadChatGroups, saveChatGroups } from "./chat/chatGroupsStorage.js";
-import { groupMemberCount, groupMemberNames, groupMembersLabel } from "./chat/groupMembers.js";
+import { GROUP_SEND_UNAVAILABLE_TEXT, groupMemberCount, groupMemberNames, groupMembersLabel, isGroupChat } from "./chat/groupMembers.js";
 
 // Inject Inter font
 if(typeof document!=="undefined"){
@@ -6455,7 +6455,8 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
   },[userId]);
 
   useEffect(()=>{
-    if(!active||!userId) return;
+    // BUG-CHAT-03: a group id is not a student id; nothing is read, marked or subscribed for a group.
+    if(!active||!userId||isGroupChat(active)) return;
     setLoading(true);
     const studentId=active.id;
     // Mark as read
@@ -6475,7 +6476,7 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
   },[active,userId]);
 
   const send=async()=>{
-    if(!msg.trim()||!active||!userId) return;
+    if(!msg.trim()||!active||!userId||isGroupChat(active)) return;
     const text=msg;setMsg("");
     await supabase.from("messages").insert({coach_id:userId,student_id:active.id,text,from_coach:true,read:false,is_alert:isAlert});
     setLastMsgTime(p=>({...p,[active.id]:new Date().toISOString()}));
@@ -6490,12 +6491,12 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
         <div style={{width:38,height:38,borderRadius:"50%",background:C.whiteA,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white,flexShrink:0}}>{active.avatar||"?"}</div>
         <div style={{flex:1}}>
           <div style={{fontWeight:700,fontSize:14,color:C.white}}>{active.name}</div>
-          {active.isGroup
+          {isGroupChat(active)
             ?<button onClick={()=>setShowMembers(v=>!v)} aria-expanded={showMembers} style={{background:"none",border:"none",padding:0,fontSize:11,color:C.muted,cursor:"pointer",textAlign:"left"}}>{groupMembersLabel(groupMemberCount(active))+" · "+(showMembers?"Ocultar":"Ver")}</button>
             :<div style={{fontSize:11,color:C.muted}}>En línea</div>}
         </div>
       </div>
-      {active.isGroup&&showMembers&&(
+      {isGroupChat(active)&&showMembers&&(
         <div style={{background:C.white,borderBottom:"1px solid "+C.border,padding:"10px 16px",maxHeight:220,overflowY:"auto",flexShrink:0}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
             <div style={{fontSize:13,fontWeight:700,color:C.mutedDark}}>{"INTEGRANTES ("+groupMemberCount(active)+")"}</div>
@@ -6523,14 +6524,18 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
           </div>
         ))}
       </div>
-      <div style={{padding:"8px 16px",background:C.white,borderTop:"1px solid "+C.border,flexShrink:0,paddingBottom:"calc(8px + env(safe-area-inset-bottom,0px))"}}>
+      {isGroupChat(active)
+        ?<div style={{padding:"12px 16px",background:C.white,borderTop:"1px solid "+C.border,flexShrink:0,paddingBottom:"calc(12px + env(safe-area-inset-bottom,0px))"}}>
+          <div role="status" style={{background:C.blueL,borderRadius:10,padding:"10px 12px",fontSize:13,color:C.mutedDark,fontWeight:600,textAlign:"center"}}>{GROUP_SEND_UNAVAILABLE_TEXT}</div>
+        </div>
+        :<div style={{padding:"8px 16px",background:C.white,borderTop:"1px solid "+C.border,flexShrink:0,paddingBottom:"calc(8px + env(safe-area-inset-bottom,0px))"}}>
         {isAlert&&<div style={{background:"#FFF3E0",borderRadius:8,padding:"6px 12px",marginBottom:6,fontSize:12,color:"#E65100",fontWeight:600}}>📢 Esto se enviará como alerta al alumno</div>}
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
           <button onClick={()=>setIsAlert(v=>!v)} style={{background:isAlert?"#FF8F00":C.blueL,border:"none",borderRadius:"50%",width:36,height:36,cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>📢</button>
           <input value={msg} onChange={e=>setMsg(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} placeholder={isAlert?"Escribí la alerta...":"Escribe un mensaje..."} style={{flex:1,padding:"10px 16px",borderRadius:24,border:"1.5px solid "+(isAlert?"#FF8F00":C.border),fontSize:14,background:C.bg,color:C.text,outline:"none"}}/>
           <button onClick={send} style={{background:isAlert?"linear-gradient(135deg,#FF8F00,#FFA726)":"linear-gradient(135deg,"+C.blue2+","+C.blue3+")",border:"none",borderRadius:"50%",width:44,height:44,cursor:"pointer",color:C.white,fontSize:18,flexShrink:0}}>➤</button>
         </div>
-      </div>
+      </div>}
     </div>
   );
 

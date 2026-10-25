@@ -7,6 +7,19 @@
 
 export const UNAVAILABLE_MEMBER_NAME = "Alumno no disponible";
 
+/*
+ * BUG-CHAT-03: group messages cannot be stored (`messages.student_id` is a bigint, a group id is
+ * "g…"), so sending to a group is disabled for now. A chat target is a group when it is flagged
+ * as one or carries a member list (students never do); such a target must never be used to read,
+ * send or mark messages.
+ */
+export const GROUP_SEND_UNAVAILABLE_TEXT =
+  "El envío a grupos todavía no está disponible. Podés escribirle a cada alumno desde su chat individual.";
+
+export function isGroupChat(target) {
+  return !!target && typeof target === "object" && (target.isGroup === true || Array.isArray(target.members));
+}
+
 const memberIds = (group) => (group && Array.isArray(group.members) ? group.members : []);
 
 /** Number of members in the group, unavailable ones included. */

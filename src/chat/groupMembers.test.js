@@ -2,7 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
+  GROUP_SEND_UNAVAILABLE_TEXT,
   UNAVAILABLE_MEMBER_NAME,
+  isGroupChat,
   groupMemberCount,
   groupMemberNames,
   groupMembersLabel,
@@ -72,17 +74,84 @@ test("saveChatGroups reports a failed write, so the app can refuse to show the g
 
 test("the app wiring: group header, members panel, save failure; individual chats unchanged", () => {
   const app = readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
-  assert.match(app, /import \{ groupMemberCount, groupMemberNames, groupMembersLabel \} from "\.\/chat\/groupMembers\.js";/);
+  assert.match(app, /import \{ GROUP_SEND_UNAVAILABLE_TEXT, groupMemberCount, groupMemberNames, groupMembersLabel, isGroupChat \} from "\.\/chat\/groupMembers\.js";/);
   // Group header: "N integrantes · Ver/Ocultar"; individual chats keep "En línea".
-  assert.match(app, /active\.isGroup\s*\?/);
+  assert.match(app, /\{isGroupChat\(active\)\s*\?<button onClick=\{\(\)=>setShowMembers/);
   assert.match(app, /groupMembersLabel\(groupMemberCount\(active\)\)\+" · "\+\(showMembers\?"Ocultar":"Ver"\)/);
   assert.match(app, /<div style=\{\{fontSize:11,color:C\.muted\}\}>En línea<\/div>/);
   // The panel lists the members in order and can be closed.
-  assert.match(app, /active\.isGroup&&showMembers&&/);
+  assert.match(app, /isGroupChat\(active\)&&showMembers&&/);
   assert.match(app, /groupMemberNames\(active,students\)\.map\(/);
   assert.match(app, /onClick=\{\(\)=>setShowMembers\(false\)\}/);
   // A group is added to the list only after it was saved.
   assert.match(app, /if\(!saveChatGroups\(localStorage,userId,next\)\) return false;\s*setGroups\(next\);/);
   assert.match(app, /if\(onCreate\(\{id:"g"\+Date\.now\(\)/);
   assert.match(app, /setSaveError\(true\)/);
+});
+
+// BUG-CHAT-03 (option D): a group is never used as a student id to read, send or mark messages.
+
+test("isGroupChat: groups (flag or member list) yes; students, empty or malformed targets no", () => {
+  assert.equal(isGroupChat({ id: "g1792937609131", isGroup: true, members: [1, 2] }), true);
+  assert.equal(isGroupChat({ id: "g1", isGroup: true }), true);
+  assert.equal(isGroupChat({ id: "g1", members: [] }), true); // an adopted legacy group without the flag
+  assert.equal(isGroupChat({ id: 1785989420999, name: "Ana", avatar: "AN" }), false);
+  for (const t of [null, undefined, "g1", 5, {}]) assert.equal(isGroupChat(t), false);
+  assert.equal(
+    GROUP_SEND_UNAVAILABLE_TEXT,
+    "El envío a grupos todavía no está disponible. Podés escribirle a cada alumno desde su chat individual.",
+  );
+});
+
+function chatSource() {
+  const app = readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
+  const start = app.indexOf("function Chat({");
+  const end = app.indexOf("\nfunction ", start + 1);
+  assert.ok(start > 0 && end > start, "Chat component found");
+  return app.slice(start, end);
+}
+
+test("a group chat never reads, subscribes to or marks messages as read", () => {
+  const chat = chatSource();
+  const guard = chat.indexOf("if(!active||!userId||isGroupChat(active)) return;");
+  assert.ok(guard > 0, "the per-chat effect returns early for a group");
+  // Everything that uses the chat target's id comes after that guard, in the same effect.
+  for (const call of [
+    'supabase.rpc("mark_coach_messages_read"',
+    "onMarkRead&&onMarkRead(String(studentId))",
+    '.eq("student_id",studentId)',
+    'supabase.channel("chat_"+userId+"_"+studentId)',
+  ]) {
+    const at = chat.indexOf(call);
+    assert.ok(at > guard, call);
+    assert.equal(chat.indexOf(call, at + 1), -1, call + " appears once");
+  }
+  assert.ok(chat.indexOf("},[active,userId]);", guard) > chat.indexOf('supabase.channel("chat_"', guard));
+});
+
+test("a group chat never sends: send() refuses a group and the group view has no input, send or alert button", () => {
+  const chat = chatSource();
+  const send = chat.indexOf("const send=async()=>{");
+  const guard = chat.indexOf("if(!msg.trim()||!active||!userId||isGroupChat(active)) return;", send);
+  const insert = chat.indexOf('supabase.from("messages").insert(', send);
+  assert.ok(send > 0 && guard > send && insert > guard, "send() returns for a group before inserting");
+  assert.equal(chat.indexOf('supabase.from("messages").insert(', insert + 1), -1, "only one insert in Chat");
+  // The input bar (📢, text field, ➤) is the non-group branch; a group gets the notice instead.
+  const branch = chat.indexOf("{isGroupChat(active)\n        ?<div");
+  const notice = chat.indexOf("{GROUP_SEND_UNAVAILABLE_TEXT}", branch);
+  const otherwise = chat.indexOf(":<div", notice);
+  assert.ok(branch > 0 && notice > branch && otherwise > notice, "group notice, then the individual input bar");
+  for (const control of ["setIsAlert(v=>!v)", "<input value={msg}", "<button onClick={send}"]) {
+    const at = chat.indexOf(control);
+    assert.ok(at > otherwise, control + " only in the individual branch");
+    assert.equal(chat.indexOf(control, at + 1), -1, control + " appears once");
+  }
+});
+
+test("individual chats keep their behavior: same queries, same insert, same input bar", () => {
+  const chat = chatSource();
+  assert.match(chat, /supabase\.from\("messages"\)\.select\("\*"\)\.eq\("coach_id",userId\)\.eq\("student_id",studentId\)\.order\("created_at",\{ascending:true\}\)/);
+  assert.match(chat, /supabase\.from\("messages"\)\.insert\(\{coach_id:userId,student_id:active\.id,text,from_coach:true,read:false,is_alert:isAlert\}\);/);
+  assert.match(chat, /supabase\.rpc\("mark_coach_messages_read",\{p_student_id:studentId\}\)/);
+  assert.match(chat, /placeholder=\{isAlert\?"Escribí la alerta\.\.\.":"Escribe un mensaje\.\.\."\}/);
 });

@@ -344,17 +344,30 @@ Verified that no active route reads them (the app loads only `App.jsx`, `AuthPro
 
 ## BUG-CHAT-03 — Group chat messages are never saved
 
-**Status:** Pending (separate from the isolation work)  
-**Area:** Chat (`send` in `Chat`)  
+**Status:** Mitigated (2026-10-25, option D: group sending disabled). Real group messages: not implemented  
+**Area:** Chat (`Chat` in `App.jsx`, `src/chat/groupMembers.js`)  
 **Priority:** Medium
 
 ### Description
-Sending a message to a Chat group inserts into `messages` with `student_id` = the group id (`"g…"`, a string), but `messages.student_id` is `bigint` (confirmed in Production, read-only, 2026-10-25). Postgres rejects the row and `send` does not check the error (`App.jsx:6475`): the text disappears and the coach sees no warning.
+Opening a Chat group used the group as if it were a student: `active.id` = the group id (`"g…"`, a string), while `messages.student_id` is `bigint` (confirmed in Production, read-only, 2026-10-25). As a result:
+- sending inserted `student_id = "g…"`; Postgres rejected the row and `send` does not check the error, so the text disappeared without a warning;
+- an alert (📢) also added a local notification, so the coach believed it had been sent;
+- opening the group ran a history query and `mark_coach_messages_read` with the group id; both failed silently (empty history, error only in the console);
+- students never received anything; groups exist only on the coach's device.
 
-### Expected behavior
-Either group messages are stored and delivered to every member, or the UI does not offer sending to a group; a failed send is always shown to the coach.
+Messages are one table, `messages` (`coach_id` uuid, `student_id` bigint, `text`, `from_coach`, `read`, `is_alert`, `created_at`); every row is one coach ↔ one student conversation. RLS (`20260911142144`): the coach reads/inserts only rows with its own `coach_id` (insert also `from_coach = true`); a student only rows matching its `student_auth` pair; no UPDATE/DELETE (read flags through `mark_coach_messages_read(bigint)` / `mark_student_messages_read()`).
 
-### Notes
-Not fixed: changing it needs a product decision (what a group message is: one row per member, or a group entity) and possibly a schema change.
+### Mitigation (option D, no SQL)
+- `isGroupChat(target)` (`src/chat/groupMembers.js`): a target flagged `isGroup` or carrying `members`.
+- In a group chat the text field, send button and 📢 button are hidden and the coach sees: "El envío a grupos todavía no está disponible. Podés escribirle a cada alumno desde su chat individual."
+- For a group, no message query, no Realtime subscription for the group, no `mark_coach_messages_read` call and no unread reset; `send()` refuses a group.
+- Kept: group creation, per-coach storage (BUG-ISO-01), members view. Individual chats unchanged.
+- Tests: `src/chat/groupMembers.test.js` (a group never reads, subscribes, marks or sends; individual chat calls unchanged).
+
+### Possible future improvement (not implemented)
+Broadcast to members: one message per member in their individual chat with the coach, sent in a single insert (all rows or none), only to members who are still the coach's students. Needs no schema or RLS change (`coach_insert_own_messages` already allows it); each student sees only their own copy. Limits: no group history from Supabase (only a device-local copy, if wanted); a student cannot tell it was a group message. Needs product decisions first (broadcast vs shared conversation, alerts in groups, where replies go). A group history marker (new column) or real group tables would need a migration, blocked until the migration history is repaired and a test project (D5) exists.
+
+### Related (separate)
+The individual `send` also ignores the insert error: a failed individual message (e.g. a blocked coach) is lost without a warning. Not changed here.
 
 ---
