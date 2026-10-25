@@ -53,7 +53,7 @@ export function countAttendedSlots({ dates, dc, attendanceLog, studentId }) {
   return seen.size;
 }
 
-const fail = (reason) => ({ ok: false, reason });
+const fail = (reason, extra) => ({ ok: false, reason, ...(extra || {}) });
 
 /**
  * Whether `date` (an original date of `series`) can be released. Every check is explicit; the
@@ -75,9 +75,12 @@ export function resolveReleasableDate({ series, students, date, todayDate, known
   if (date < todayDate) return fail("past");
   const log = Array.isArray(series.attendanceLog) ? series.attendanceLog : [];
   if (log.some((e) => e && e.date === date)) return fail("attendance-on-date");
-  // Pauses anywhere in the series block it, like "Volver a fecha original".
-  if (Object.values(dc).some((e) => e && e.cancelType === "paused" && !e.compensated)) return fail("paused");
-  if (series.plannedResume && !series.plannedResume.completed) return fail("paused");
+  // Pauses count only where they touch this release: the date itself, its destination, the affected combos (below)
+  // and a pending planned resume that could later place a replacement class on the freed date.
+  const pausedAt = [date, destination].find((d) => dc[d] && dc[d].cancelType === "paused" && !dc[d].compensated);
+  if (pausedAt) return fail("paused-date", { blockDate: pausedAt });
+  const planned = series.plannedResume && !series.plannedResume.completed ? series.plannedResume : null;
+  if (planned && (!planned.resumeDate || date >= planned.resumeDate)) return fail("planned-resume", { blockDate: planned.resumeDate || null });
 
   const affected = [];
   for (const sid of series.students || []) {
@@ -96,7 +99,7 @@ export function resolveReleasableDate({ series, students, date, todayDate, known
     if (!isGivenEntry(log.find((e) => e && e.date === destination), sid)) return fail("not-attended");
     for (const op of Array.isArray(combo.resumeOperations) ? combo.resumeOperations : []) {
       const touched = [...(op.pausedDates || []), ...(op.replacementDates || [])];
-      if (touched.includes(date) || touched.includes(destination)) return fail("paused");
+      if (touched.includes(date) || touched.includes(destination)) return fail("resume-date", { blockDate: touched.includes(date) ? date : destination });
     }
     // Every other slot already sits before the released date and is settled.
     for (const d0 of combo.dates) {
@@ -105,7 +108,7 @@ export function resolveReleasableDate({ series, students, date, todayDate, known
       if (r.broken || !r.terminal) return fail("chain");
       const info = r.cancelInfo;
       if (info && info.cancelType === "cancelled_reprog") return fail("combo-open");
-      if (info && info.cancelType === "paused" && !info.compensated) return fail("paused");
+      if (info && info.cancelType === "paused" && !info.compensated) return fail("paused-date", { blockDate: r.terminal });
       if (r.terminal >= date) return fail("combo-open");
     }
     affected.push({ studentId: sid, comboIndex, comboId: combo.id });
@@ -212,5 +215,14 @@ const RELEASE_MESSAGES = {
   "write-failed": "No se pudo guardar el cambio. Revisá la conexión e intentá de nuevo; lo que ya se guardó se completa solo.",
   inconsistent: "Esta fecha cambió mientras se renovaba. Cerrá y volvé a abrir la Agenda.",
 };
-export const releaseMessage = (reason) =>
+const ddmm = (d) => (typeof d === "string" && ISO.test(d) ? d.slice(8, 10) + "/" + d.slice(5, 7) : String(d));
+const RELEASE_DATED = {
+  "paused-date": (d) => `No se puede renovar desde esta fecha: hay una pausa activa el ${d} en esta clase. Reanudala primero.`,
+  "resume-date": (d) => `No se puede renovar desde esta fecha: una reanudación del combo usa el ${d}.`,
+  "planned-resume": (d) => `No se puede renovar desde esta fecha: la clase tiene una reanudación planificada desde el ${d}, que podría ocupar esta fecha.`,
+  "renewal-date-busy": (d) => `No se puede renovar desde esta fecha: el ${d} del combo nuevo ya tiene una pausa o reprogramación registrada en esta clase.`,
+};
+/** Readable text for a refusal; `info.blockDate` (when present) names the exact date. */
+export const releaseMessage = (reason, info) =>
+  (RELEASE_DATED[reason] && info && info.blockDate ? RELEASE_DATED[reason](ddmm(info.blockDate)) : null) ||
   RELEASE_MESSAGES[reason] || "No se pudo renovar desde esta fecha. Revisá la clase e intentá de nuevo.";

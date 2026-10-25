@@ -32,6 +32,10 @@ export function attendanceStatusOf(attendanceLog, date, studentId) {
   return "unmarked";
 }
 
+/** Whether a combo belongs to the series: its own sourceClassId, or a legacy combo with no known other class. */
+const belongsToSeries = (combo, series, knownSeriesIds) =>
+  combo.sourceClassId === undefined || combo.sourceClassId === series.id || (knownSeriesIds && !knownSeriesIds.has(combo.sourceClassId));
+
 /** Contract slots of a series: one per ORIGINAL date, with every holder (student, combo, class number). */
 function seriesSlots(series, students, knownSeriesIds) {
   const dc = series.dateCancellations || {};
@@ -40,8 +44,7 @@ function seriesSlots(series, students, knownSeriesIds) {
     const st = (students || []).find((s) => s.id === sid);
     if (!st) continue;
     (st.combos || []).forEach((combo, comboIndex) => {
-      if (!isClassCombo(combo)) return;
-      if (combo.sourceClassId !== undefined && combo.sourceClassId !== series.id && (!knownSeriesIds || knownSeriesIds.has(combo.sourceClassId))) return;
+      if (!isClassCombo(combo) || !belongsToSeries(combo, series, knownSeriesIds)) return;
       combo.dates.forEach((d0, i) => {
         if (!byOrigin.has(d0)) byOrigin.set(d0, { origin: d0, ...traceRescheduleHistory(dc, d0), holders: [] });
         byOrigin.get(d0).holders.push({ studentId: sid, comboIndex, comboId: combo.id, classNumber: i + 1 });
@@ -81,19 +84,24 @@ export function planFusedRepair({ series, students, todayDate, knownSeriesIds })
   const [A, B] = slots; // A: earlier original keeps the terminal; B: later original ends on the shared step
   const dc = series.dateCancellations || {};
   if (A.path.length < 2 || B.path.length < 2) return fail("same-day", { terminal });
-  if (dc[terminal]) return fail("terminal-not-live", { terminal });
+  if (dc[terminal]) return fail("terminal-not-live", { terminal, blockDate: terminal });
   const iB = B.path.findIndex((d, i) => i > 0 && A.path.includes(d));
   const X = B.path[iB];
   const iA = A.path.indexOf(X);
   if (iB < 1 || X === terminal || iA < 1 || iA >= A.path.length - 1) return fail("same-day", { terminal });
-  // Pauses / planned resumes / resume operations around the involved dates block it.
-  if (Object.values(dc).some((e) => e && e.cancelType === "paused" && !e.compensated)) return fail("paused");
-  if (series.plannedResume && !series.plannedResume.completed) return fail("paused");
+  // Pauses and resumes count only where they can touch the repaired dates (both chains), and only in THIS class
+  // and its students' combos of this class — never another class or another student's pause.
   const involved = new Set([...A.path, ...B.path]);
-  for (const st of students || []) {
+  const pausedAt = [...involved].sort().find((d) => dc[d] && dc[d].cancelType === "paused" && !dc[d].compensated);
+  if (pausedAt) return fail("paused-date", { terminal, blockDate: pausedAt });
+  const seriesSids = new Set(series.students || []);
+  for (const st of (students || []).filter((x) => seriesSids.has(x.id))) {
     for (const combo of st.combos || []) {
+      if (!isClassCombo(combo) || !belongsToSeries(combo, series, knownSeriesIds)) continue;
       for (const op of Array.isArray(combo.resumeOperations) ? combo.resumeOperations : []) {
-        if ([...(op.pausedDates || []), ...(op.replacementDates || [])].some((d) => involved.has(d))) return fail("paused");
+        if (op && op.classId !== undefined && op.classId !== series.id) continue;
+        const hit = [...(op.pausedDates || []), ...(op.replacementDates || [])].filter((d) => involved.has(d)).sort()[0];
+        if (hit) return fail("resume-date", { terminal, blockDate: hit });
       }
     }
   }
@@ -107,6 +115,9 @@ export function planFusedRepair({ series, students, todayDate, knownSeriesIds })
   const steps = B.path.slice(1, iB);
   const freedDates = steps.filter((S) => S >= todayDate && !origins.has(S) && !log.some((e) => e && e.date === S) &&
     Object.entries(dc).filter(([, e]) => e && e.rescheduledTo === S).length === 1);
+  // A pending planned resume could later place a replacement class on a date this repair frees: block it then.
+  const planned = series.plannedResume && !series.plannedResume.completed ? series.plannedResume : null;
+  if (planned && freedDates.some((d) => !planned.resumeDate || d >= planned.resumeDate)) return fail("planned-resume", { terminal, blockDate: planned.resumeDate || null });
   const keptB = [B.origin, ...steps.filter((S) => !freedDates.includes(S))];
   const lastKept = keptB[keptB.length - 1];
 
@@ -178,6 +189,12 @@ export function rescheduleDestinationConflict({ series, students, fromDate, dest
   return null;
 }
 
+const DATED = {
+  "paused-date": (d) => `No se puede separar: hay una pausa activa el ${d} en estas clases. Reanudala primero.`,
+  "resume-date": (d) => `No se puede separar: una reanudación de esta clase usa el ${d}.`,
+  "planned-resume": (d) => `No se puede separar: la clase tiene una reanudación planificada desde el ${d}, que podría ocupar la fecha que se libera. Resolvé primero esa reanudación.`,
+  "terminal-not-live": (d) => `No se puede separar: la clase del ${d} figura pausada o cancelada.`,
+};
 const MESSAGES = {
   "destination-has-history": "Esa fecha ya tiene una reprogramación o cancelación registrada en esta clase. Elegí otra fecha para no unir dos clases.",
   "destination-taken": "Otra clase ya fue reprogramada a esa fecha. Elegí otra fecha para no unir dos clases.",
@@ -190,7 +207,9 @@ const MESSAGES = {
   paused: "No se puede separar mientras haya una pausa o reanudación en esta clase.",
   shared: "Otra reprogramación también usa esa fecha: no se puede separar automáticamente.",
 };
-export const fusedMessage = (reason) => MESSAGES[reason] || "No se pudieron separar las clases. Revisá la clase e intentá de nuevo.";
-
-/** dd/mm for the preview. */
+/** dd/mm for the preview and the messages. */
 export const shortDate = (d) => (isIsoDate(d) ? d.slice(8, 10) + "/" + d.slice(5, 7) : String(d));
+/** Readable text for a refusal; `info.blockDate` (when present) names the exact date. */
+export const fusedMessage = (reason, info) =>
+  (DATED[reason] && info && info.blockDate ? DATED[reason](shortDate(info.blockDate)) : null) ||
+  MESSAGES[reason] || "No se pudieron separar las clases. Revisá la clase e intentá de nuevo.";

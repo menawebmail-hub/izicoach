@@ -11,7 +11,10 @@ SESSION_STATE.md — IziCoach
   coach confirmed classes on 19/10 and 02/10. The release (BUG-AGENDA-04) correctly refused it (multi-step chain).
   Expected repair: class 3 28/09→02/10, class 7 12/10→19/10, class 5 05/10→21/10 unchanged, 26/10 freed. Not
   executed: the coach runs it from the app after review, then registers the 19/10 attendance.
-- Verified: `npm test` 76/76; `vite build` clean; `oxlint` 364 = main. Details: `docs/BUGS.md`.
+  - next commit: pause/resume checks made precise (only this class and its students, only the involved dates,
+    a planned resume only if it could take a freed date), dated messages; the 2026-10-25 local check showed
+    "No se puede separar mientras haya una pausa o reanudación" for Pato with the series-wide rule.
+- Verified: `npm test` 80/80; `vite build` clean; `oxlint` 364 = main. Details: `docs/BUGS.md`.
 - Not yet checked in a browser.
 
 # Previous task — account isolation (device storage), closed

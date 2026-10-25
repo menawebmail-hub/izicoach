@@ -137,8 +137,10 @@ test("refusals: three classes on one date, a class already living on the date, p
   assert.equal(plan(three).reason, "complex");
   const sameDay = fixture({ dc: { "2026-10-12": R("2026-10-07") } }); // moved onto class 6's own date
   assert.equal(plan(sameDay).reason, "same-day");
-  const paused = fixture({ dc: { ...DC, "2026-11-02": { cancelType: "paused", rescheduledTo: null } } });
-  assert.equal(plan(paused).reason, "paused");
+  // A pause on the shared terminal itself is a real conflict (the class there is not a live one).
+  const pausedTerminal = fixture({ dc: { ...DC, "2026-10-02": { cancelType: "paused", rescheduledTo: null } } });
+  const pt = plan(pausedTerminal);
+  assert.ok(pt.ok === false, JSON.stringify(pt));
   assert.equal(plan(fixture({ dc: { "2026-10-05": R("2026-10-21") } })).reason, "none");
 });
 
@@ -167,4 +169,48 @@ test("prevention in a group class: another student's own date does not block; th
   const conflict = (fromDate, destination) => F.rescheduleDestinationConflict({ series: f.classes[0], students: f.students, fromDate, destination });
   assert.equal(conflict("2026-10-26", "2026-10-30"), null); // only the other student has a class that day
   assert.equal(conflict("2026-10-26", "2026-10-14"), "destination-scheduled"); // the moved student's own class 8
+});
+
+// Pauses and resumes count only where they touch the repaired dates, and only in THIS class and its students.
+const OTHER_CLASS = { id: 900, title: "Otra clase", days: ["Vie"], students: [9], occurrences: ["2026-10-02", "2026-10-09"], cancelledDates: [], rescheduledDates: [], dateCancellations: {}, attendanceLog: [] };
+const planWith = (f) => A.planFusedRepairChecked({ ...f, seriesId: SID, todayDate: TODAY });
+const withResume = (f, studentIdx, op) => { f.students[studentIdx].combos[0] = { ...f.students[studentIdx].combos[0], resumeOperations: [op] }; return f; };
+
+test("pauses: an unrelated active pause or a historical (compensated) one no longer blocks the separation", () => {
+  const unrelated = fixture({ dc: { ...DC, "2026-11-09": { cancelType: "paused", rescheduledTo: null } } });
+  assert.equal(planWith(unrelated).ok, true, JSON.stringify(planWith(unrelated)));
+  const historical = fixture({ dc: { ...DC, "2026-09-14": { cancelType: "paused", rescheduledTo: null, compensated: true } } });
+  assert.equal(planWith(historical).ok, true);
+  // The result is still exactly the expected repair.
+  const p = planWith(unrelated);
+  assert.deepEqual([p.keep.pathAfter, p.move.pathAfter, p.freedDates], [["2026-09-28", "2026-10-02"], ["2026-10-12", "2026-10-19"], ["2026-10-26"]]);
+});
+
+test("resumes: another student's resume in another class is ignored; one of this class on an involved date blocks, with its date", () => {
+  const otherStudent = { id: 9, name: "Otro Ficticio", combos: [{ id: 1, total: 4, packType: "combo", sourceClassId: 900, dates: ["2026-10-02", "2026-10-09", "2026-10-19"], paid: false, paidCount: 0, used: 0, amount: 1, payments: [],
+    resumeOperations: [{ id: "op-x", classId: 900, resumeDate: "2026-10-16", pausedDates: ["2026-10-09"], replacementDates: ["2026-10-19"] }] }] };
+  const f = fixture();
+  const all = { classes: [...f.classes, OTHER_CLASS], students: [...f.students, otherStudent] };
+  assert.equal(A.planFusedRepairChecked({ ...all, seriesId: SID, todayDate: TODAY }).ok, true);
+  const mine = withResume(fixture(), 0, { id: "op-1", classId: SID, resumeDate: "2026-10-01", pausedDates: ["2026-09-30"], replacementDates: ["2026-10-02"] });
+  const r = planWith(mine);
+  assert.deepEqual([r.ok, r.reason, r.blockDate], [false, "resume-date", "2026-10-02"]);
+  assert.match(F.fusedMessage(r.reason, r), /02\/10/);
+  // A resume of this class on dates that are not involved does not block.
+  const far = withResume(fixture(), 0, { id: "op-2", classId: SID, resumeDate: "2026-09-25", pausedDates: ["2026-09-23"], replacementDates: ["2026-09-25"] });
+  assert.equal(planWith(far).ok, true);
+});
+
+test("planned resume: blocks only if it could take the freed 26/10, and says from which date", () => {
+  const early = fixture();
+  early.classes[0].plannedResume = { id: "pr", classId: SID, resumeDate: "2026-10-20", completed: false };
+  const r = planWith(early);
+  assert.deepEqual([r.ok, r.reason, r.blockDate], [false, "planned-resume", "2026-10-20"]);
+  assert.match(F.fusedMessage(r.reason, r), /20\/10/);
+  const late = fixture();
+  late.classes[0].plannedResume = { id: "pr", classId: SID, resumeDate: "2026-11-30", completed: false };
+  assert.equal(planWith(late).ok, true);
+  const done = fixture();
+  done.classes[0].plannedResume = { id: "pr", classId: SID, resumeDate: "2026-10-20", completed: true };
+  assert.equal(planWith(done).ok, true);
 });

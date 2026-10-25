@@ -181,7 +181,8 @@ test("every unsafe shape is refused, nothing is planned", () => {
   // Multi-step chain.
   assert.equal(cand(fixture({ extraDc: { [D02]: { cancelType: "cancelled_reprog", rescheduledTo: "2026-10-03" } } })), "chain");
   // Active pause in the series.
-  assert.equal(cand(fixture({ extraDc: { "2026-11-02": { cancelType: "paused", rescheduledTo: null } } })), "paused");
+  // An active pause on a date the renewed combo would use is a real conflict (02/11 is its 3rd date).
+  assert.equal(cand(fixture({ extraDc: { "2026-11-02": { cancelType: "paused", rescheduledTo: null } } })), "renewal-date-busy");
   // Attendance already recorded on the 26th.
   const logged = fixture(); logged.classes[0].attendanceLog = [...logged.classes[0].attendanceLog, { date: D26, present: [1], ausente_dada: [], ausente_reprog: [] }];
   assert.equal(cand(logged), "attendance-on-date");
@@ -198,4 +199,22 @@ test("every unsafe shape is refused, nothing is planned", () => {
   // A normal reprogramming to a future date is not a release.
   const forward = fixture(); forward.classes[0].dateCancellations = { [D26]: { cancelType: "cancelled_reprog", rescheduledTo: "2026-11-06" } };
   assert.equal(cand(forward), "not-attended");
+});
+
+test("precise pause rules for the release: unrelated pauses pass; a planned resume that could take the 26th blocks, with its date", () => {
+  const cand = (f) => A.resolveReleaseCandidate({ ...f, seriesId: SID, date: D26, todayDate: TODAY });
+  // Far-away active pause and a historical compensated one: allowed.
+  assert.equal(cand(fixture({ extraDc: { "2027-01-11": { cancelType: "paused", rescheduledTo: null } } })).ok, true);
+  assert.equal(cand(fixture({ extraDc: { "2026-09-28": { cancelType: "paused", rescheduledTo: null, compensated: true } } })).ok, true);
+  // Planned resume from 20/10: it could place a replacement on the freed 26th.
+  const early = fixture(); early.classes[0].plannedResume = { id: "p", classId: SID, resumeDate: "2026-10-20", completed: false };
+  const r = cand(early);
+  assert.deepEqual([r.ok, r.reason, r.blockDate], [false, "planned-resume", "2026-10-20"]);
+  assert.match(R.releaseMessage(r.reason, r), /20\/10/);
+  const late = fixture(); late.classes[0].plannedResume = { id: "p", classId: SID, resumeDate: "2026-12-31", completed: false };
+  assert.equal(cand(late).ok, true);
+  // The renewal date conflict names the date.
+  const busy = cand(fixture({ extraDc: { "2026-11-02": { cancelType: "paused", rescheduledTo: null } } }));
+  assert.equal(busy.blockDate, "2026-11-02");
+  assert.match(R.releaseMessage(busy.reason, busy), /02\/11/);
 });

@@ -1558,6 +1558,9 @@ const buildRenewalAfterRelease=({classes,students,studentId,seriesId,date,todayD
   const renewal=buildRenewalDates({combo:rel,dcCandidates:getComboDcCandidates(mine,rel),dowSet:classDowSetFrom(series.days),fallbackDate:todayDate});
   if(!renewal.ok) return renewal;
   if(renewal.dates[0]!==date) return {ok:false,reason:"start-mismatch"};
+  // A date of the new combo that already carries a pause or reprogramming of this class would be read as that entry.
+  const busy=renewal.dates.find(d=>(series.dateCancellations||{})[d]);
+  if(busy) return {ok:false,reason:"renewal-date-busy",blockDate:busy};
   return {ok:true,combo:{id:combos.length+1,total:rel.total,packType:rel.packType||"combo",sourceClassId:seriesId,used:0,paid:false,paidCount:0,date,amount:rel.amount,dates:renewal.dates,payments:[]}};
 };
 // Whether "Renovar Combo desde esta fecha" may start on (series, date) through a release — the single reading
@@ -1653,7 +1656,7 @@ const renewThroughRelease=(releaseRenewal,studentId,onDone)=>{
   if(!cand) return false;
   releaseRenewal.run({seriesId:cand.seriesId,date:cand.date,onlyStudentIds:[studentId]}).then(r=>{
     if(r&&r.status==="completed"){ if(onDone) onDone(); }
-    else alert(releaseMessage(r&&r.reason));
+    else alert(releaseMessage(r&&r.reason,r));
   });
   return true;
 };
@@ -5962,7 +5965,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
           try{
             const r=await onReleaseAndRenew({seriesId:cand.seriesId,date:cand.date});
             if(r&&r.status==="completed") setHighlightCls(null);
-            else alert(releaseMessage(r&&r.reason));
+            else alert(releaseMessage(r&&r.reason,r));
           } finally { setReleaseBusy(false); }
         }} style={{width:"100%",padding:"13px",borderRadius:14,border:"none",background:releaseBusy?"#ccc":"linear-gradient(135deg,#1565C0,#1976D2)",color:"#fff",fontSize:14,cursor:releaseBusy?"default":"pointer",fontWeight:800,marginBottom:10}}>
           {releaseBusy?"Guardando…":"🔄 Renovar Combo desde esta fecha"}
@@ -6761,7 +6764,7 @@ function FusedRepairNotice({ studentId, fusedRepair }) {
   if(!found) return null;
   const p=found.plan;
   const box={background:"#FFF3E0",border:"1px solid #FFCC80",borderRadius:12,padding:"10px 12px",marginBottom:10,fontSize:12,color:"#E65100"};
-  if(!p.ok) return <div role="alert" style={box}><b>Hay clases unidas en una misma fecha.</b> {fusedMessage(p.reason)}</div>;
+  if(!p.ok) return <div role="alert" style={box}><b>Hay clases unidas en una misma fecha.</b> {fusedMessage(p.reason,p)}</div>;
   const mine=(slot)=>slot.holders.filter(h=>h.studentId===studentId).map(h=>h.classNumber).join(", ")||slot.holders.map(h=>h.classNumber).join(", ");
   const others=new Set([...p.keep.holders,...p.move.holders].map(h=>h.studentId).filter(id=>id!==studentId)).size;
   const path=(xs)=>xs.map(shortDate).join(" → ");
@@ -6773,7 +6776,7 @@ function FusedRepairNotice({ studentId, fusedRepair }) {
     try{
       const r=await fusedRepair.run({seriesId:found.seriesId,expectedBefore:p.before,expectedAfter:p.after});
       if(r&&r.status==="completed"){ setOpen(false); setDone({sharedStep:p.sharedStep}); }
-      else alert(fusedMessage(r&&r.reason));
+      else alert(fusedMessage(r&&r.reason,r));
     } finally { setBusy(false); }
   };
   return (
@@ -11189,7 +11192,7 @@ export default function App() {
     try{
       const today=todayIso();
       const cand=resolveReleaseCandidate({classes:latestClassesRef.current,students:latestStudentsRef.current,seriesId,date,todayDate:today});
-      if(!cand.ok) return {status:"blocked",reason:cand.reason};
+      if(!cand.ok) return {status:"blocked",reason:cand.reason,blockDate:cand.blockDate};
       // The release is a series fact (all affected students); the renewal can be limited to one student (Cobros).
       const studentIds=onlyStudentIds?cand.studentIds.filter(id=>onlyStudentIds.includes(id)):cand.studentIds;
       if(cand.kind==="releasable"){
@@ -11198,11 +11201,11 @@ export default function App() {
         let refused=null;
         const {promise}=commitStudentsBatch(latest=>{
           const plan=planRelease({classes:latestClassesRef.current,students:latest,seriesId,date,todayDate:today,opId,at});
-          if(!plan.ok){refused=plan.reason;return null;}
+          if(!plan.ok){refused=plan;return null;}
           return {next:plan.nextStudents};
         });
         const studentsResult=await promise;
-        if(refused) return {status:"blocked",reason:refused};
+        if(refused) return {status:"blocked",reason:refused.reason,blockDate:refused.blockDate};
         if(!writeConfirmed(studentsResult)) return {status:"blocked",reason:"write-failed",key:"students"};
       }
       // Class part (also the recovery of a half-done release).
@@ -11217,14 +11220,14 @@ export default function App() {
         let next=latest,changed=false;
         for(const sid of studentIds){
           const r=buildRenewalAfterRelease({classes:latestClassesRef.current,students:next,studentId:sid,seriesId,date,todayDate:today});
-          if(!r.ok){if(r.reason!=="already-renewed") renewRefused=r.reason;continue;}
+          if(!r.ok){if(r.reason!=="already-renewed") renewRefused=r;continue;}
           next=next.map(st=>st.id===sid?{...st,combos:[...(st.combos||[]),r.combo]}:st);
           changed=true;
         }
         return changed?{next}:null;
       });
       const renewResult=await renewPromise;
-      if(renewRefused) return {status:"blocked",reason:renewRefused};
+      if(renewRefused) return {status:"blocked",reason:renewRefused.reason,blockDate:renewRefused.blockDate};
       if(renewResult.status!=="noop"&&!writeConfirmed(renewResult)) return {status:"blocked",reason:"write-failed",key:"students"};
       return {status:"completed",studentIds};
     } finally {
@@ -11245,7 +11248,7 @@ export default function App() {
     releaseInFlightRef.current.add(key);
     try{
       const plan=planFusedRepairChecked({classes:latestClassesRef.current,students:latestStudentsRef.current,seriesId,todayDate:todayIso()});
-      if(!plan.ok) return {status:"blocked",reason:plan.reason==="none"?"changed":plan.reason};
+      if(!plan.ok) return {status:"blocked",reason:plan.reason==="none"?"changed":plan.reason,blockDate:plan.blockDate};
       if(JSON.stringify(plan.before)!==JSON.stringify(expectedBefore)||JSON.stringify(plan.after)!==JSON.stringify(expectedAfter)) return {status:"blocked",reason:"changed"};
       const opId=crypto.randomUUID();
       const at=new Date().toISOString();
