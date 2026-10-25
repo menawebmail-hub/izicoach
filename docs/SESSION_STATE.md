@@ -1,6 +1,23 @@
 SESSION_STATE.md — IziCoach
 
-# Current state — no task in progress
+# Current task — account isolation (device storage)
+
+- Branch `fix/iso-device-storage` (from `main` `c241570`), one local commit, **not pushed**:
+  BUG-ISO-01 (Chat groups per coach) and BUG-ISO-02 (legacy local copies: writes removed,
+  `clearLegacyBusinessCaches()` implemented but not called). Details: `docs/BUGS.md`.
+- Verified: `npm test` 29/29; `vite build` clean; `oxlint` 366 = baseline. Not verified in a
+  browser yet (manual check: two test coaches on one device).
+- Production RLS/grants/functions/trigger verified read-only (2026-10-25): they match the
+  repository. Difference: `supabase_migrations.schema_migrations` stops at `20260915120000`
+  although the effects of `20260929230000`, `20260930120000`, `20260930150000` and
+  `20261001120000` are present (applied manually). Reconcile the history (migration repair)
+  before any new migration — separate step, owner's authorization.
+- Next, each separately authorized: outbox isolation tests (coachData with a mocked Supabase),
+  the migration history repair, a separate Supabase test project (D5), R4 (CAS with
+  `p_expected_coach_id`: SQL first, then client), and calling `clearLegacyBusinessCaches()`.
+- BUG-CHAT-03 (group messages never saved) registered separately.
+
+# Previous state
 
 ## 1. Last closed task — Cobros bugs (2026-10-24)
 

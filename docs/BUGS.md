@@ -283,3 +283,78 @@ Relevant code:
 **Verification performed:** `npm test` (Node's built-in runner, no new dependency): 7/7 regression tests in `src/components/slotRowBadges.test.js` — one reschedule, multiple reschedules, intermediate dates paid or not, other final states unchanged, a final being paid now, never-rescheduled dates unchanged, and a source check of `SlotGroup` (it FAILS against the code before the fix). `vite build` clean; `oxlint` 366 = baseline, identical output. **Not verified in a browser or with real data** (the session could not open the app): check Pato Ojeda in Detalles de Pagos and in the Student Portal.
 
 ---
+
+## BUG-ISO-01 — Chat groups shared between coaches on the same device
+
+**Status:** Fixed (local branch `fix/iso-device-storage`; pending review and publication)  
+**Area:** Chat (`Chat`, `CreateGroupScreen`) / device storage  
+**Priority:** Medium
+
+### Description
+Chat groups lived only in one shared localStorage key, `izi_groups` (not per coach, not in `coach_data`). It was removed only on an explicit logout or signup — not on login and not when a session expired.
+
+### Expected behavior
+A coach never sees another coach's groups. Groups are kept per coach on the device (they exist nowhere else) and survive logout. No group is attributed to a coach by assumption.
+
+### Current behavior (before the fix)
+If coach A's session expired (or A closed the browser without logging out) and coach B logged in on the same browser, B's Chat listed A's groups (names, member ids). Every logout also deleted all groups.
+
+### Notes
+Found in the account-isolation audit (2026-10-25). Production RLS/grants verified read-only the same day and match the repository; this was device storage only. Student ids are `Date.now()` values, so an id shared by two coaches is practically impossible.
+
+Relevant code:
+- `App.jsx:6440` (`Chat` groups state), `App.jsx:6516` (group creation), `App.jsx:11679` (`<Chat key=…>`)
+- `src/chat/chatGroupsStorage.js`, `src/data/localCaches.js`, `src/data/coachData.js:97` (`clearLocalStateExceptOutbox`)
+
+### Fix
+- `src/chat/chatGroupsStorage.js` (new, pure, storage injected): groups under `izi_chat_groups:<coachId>`. Legacy `izi_groups` groups are adopted only when the member list is non-empty, every member is a valid id and every id is one of the coach's students; anything else (no members, an unknown/foreign member, a malformed group, a corrupt key) stays in the legacy key, neither shown nor deleted. Adopted groups are written to the coach's key before leaving the legacy key (a failed write loses nothing); the legacy key is removed only when empty.
+- `Chat` loads/saves through it; `<Chat key={user?.id||"no-user"}>` starts a fresh Chat state for every identity (login, expired session, account switch).
+- Session cleanup (`clearLocalStateExceptOutbox` → `clearLocalStateExceptPreserved`) keeps `izi_outbox:*`, `izi_chat_groups:*` and the legacy `izi_groups`. **Behavior change:** groups are no longer deleted on logout.
+
+**Verification performed:** `npm test` 29/29 (`src/chat/chatGroupsStorage.test.js`: per-coach keys, adoption, every ambiguous case left untouched, a mixed legacy key split between two coaches, idempotence, corrupt data, failed write; `src/data/localCaches.test.js`: cleanup rules and a source check of the app wiring, which FAILS against the previous code). `vite build` clean; `oxlint` 366 = baseline. **Not verified in a browser** (manual check: two test coaches on one device).
+
+---
+
+## BUG-ISO-02 — Obsolete local copies of a coach's business data
+
+**Status:** Partially fixed (local branch `fix/iso-device-storage`): writes removed; existing copies kept pending authorization  
+**Area:** Device storage (`App` setters)  
+**Priority:** Low–Medium
+
+### Description
+Every change wrote full copies of the coach's data to non-namespaced localStorage keys — `izi_students`, `izi_classes`, `izi_courts`, `izi_packages`, `izi_families`, `izi_expenses` — that no active code reads (the data lives in `coach_data` and the per-coach outbox).
+
+### Expected behavior
+No unnecessary personal data at rest on shared devices; nothing unsynced is ever lost.
+
+### Current behavior (before the fix)
+The copies of the last coach stayed on the device until an explicit logout (then the cleanup deleted them), surviving expired sessions and the next coach's login.
+
+### Notes
+Verified that no active route reads them (the app loads only `App.jsx`, `AuthProvider`, `AdminApp`; the only generic localStorage readers are the outbox and the cleanup). A device whose last session ran an app version from before the outbox (mid-September 2026) might hold old unsynced changes in them; the current app ignores them.
+
+### Fix
+- The 11 writes (8 places) and the unused `lsSet` helper are removed from `App.jsx`.
+- `clearLegacyBusinessCaches(storage)` in `src/data/localCaches.js` removes exactly those six keys (never by prefix, never an outbox entry or a Chat group). **Not called by the app** (owner decision 2026-10-25): existing copies are not deleted.
+- **Behavior change:** the session cleanup now preserves those six keys too, so a logout no longer deletes them (before, it did). Removing them needs the owner's authorization to call `clearLegacyBusinessCaches()`.
+
+**Verification performed:** `npm test` 29/29 (`src/data/localCaches.test.js`: exactly six keys removed, pending outbox entries untouched, groups and other keys kept, never imported/called by the app). `vite build` clean; `oxlint` 366 = baseline.
+
+---
+
+## BUG-CHAT-03 — Group chat messages are never saved
+
+**Status:** Pending (separate from the isolation work)  
+**Area:** Chat (`send` in `Chat`)  
+**Priority:** Medium
+
+### Description
+Sending a message to a Chat group inserts into `messages` with `student_id` = the group id (`"g…"`, a string), but `messages.student_id` is `bigint` (confirmed in Production, read-only, 2026-10-25). Postgres rejects the row and `send` does not check the error (`App.jsx:6475`): the text disappears and the coach sees no warning.
+
+### Expected behavior
+Either group messages are stored and delivered to every member, or the UI does not offer sending to a group; a failed send is always shown to the coach.
+
+### Notes
+Not fixed: changing it needs a product decision (what a group message is: one row per member, or a group entity) and possibly a schema change.
+
+---

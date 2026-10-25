@@ -15,6 +15,7 @@ import { useAuth } from "./auth/useAuth.js";
 import { AccountLockout } from "./auth/AccountLockout.jsx";
 import { buildCobrosReportXlsx, cobrosReportFileName, cobrosEstadoColor, COBROS_REPORT_COLORS, XLSX_MIME } from "./exports/cobrosReportXlsx.js";
 import { classPaymentLimits, isPayableClassQuantity } from "./payments/classPaymentLimits.js";
+import { loadChatGroups, saveChatGroups } from "./chat/chatGroupsStorage.js";
 
 // Inject Inter font
 if(typeof document!=="undefined"){
@@ -6434,7 +6435,9 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
   const [loading,setLoading]=useState(false);
   const [lastMsgTime,setLastMsgTime]=useState({});
   const [showCreate,setShowCreate]=useState(false);
-  const [groups,setGroups]=useState(()=>{try{return JSON.parse(localStorage.getItem("izi_groups")||"[]");}catch{return[];}});
+  // BUG-ISO-01: groups live under this coach's own key; legacy shared groups are adopted only when
+  // every member is one of this coach's students (see chatGroupsStorage). Chat is keyed by user id.
+  const [groups,setGroups]=useState(()=>loadChatGroups(localStorage,userId,students.map(s=>s.id)));
 
   useEffect(()=>{
     if(!userId) return;
@@ -6510,7 +6513,7 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
     </div>
   );
 
-  if(showCreate) return <CreateGroupScreen students={students} onClose={()=>setShowCreate(false)} onCreate={(g)=>{setGroups(p=>{const next=[g,...p];localStorage.setItem("izi_groups",JSON.stringify(next));return next;});setShowCreate(false);}}/>;
+  if(showCreate) return <CreateGroupScreen students={students} onClose={()=>setShowCreate(false)} onCreate={(g)=>{setGroups(p=>{const next=[g,...p];saveChatGroups(localStorage,userId,next);return next;});setShowCreate(false);}}/>;
 
   // Sort students — unread first, then by most recent message
   const sortedStudents=[...students].sort((a,b)=>{
@@ -9768,7 +9771,6 @@ function StudentRegisterScreen({ coachName, onComplete }) {
 
 export default function App() {
   const ls=(key,def)=>{try{const v=localStorage.getItem(key);return v?JSON.parse(v):def;}catch{return def;}};
-  const lsSet=(key,val)=>{try{localStorage.setItem(key,JSON.stringify(val));}catch{}};
   // Identity (user/mode/onboarded/etc.) lives in AuthProvider (Fase D) — App only
   // consumes it. Local names kept identical to the pre-Fase-D local state so the
   // rest of this file (reads and writes alike) didn't need to change.
@@ -9995,7 +9997,7 @@ export default function App() {
   // Raw (non-persisting) setters, grouped for reconcileCoachData/conflict
   // resolution in coachData.js — they only ever apply data already confirmed
   // safe (remote reconcile, "keep mine"/"discard" conflict resolution),
-  // never go through lsSet/enqueueCoachDataWrite themselves. `setStudentsRaw`
+  // never go through enqueueCoachDataWrite themselves. `setStudentsRaw`
   // here is `applyStudentsLocally`, not the bare useState setter — see its
   // own comment above; coachData.js only ever looks this up by the key name
   // "setStudentsRaw", so the key stays the same and nothing there changes.
@@ -10019,7 +10021,6 @@ export default function App() {
     const prev=latestStudentsRef.current;
     const next=applyGuard(typeof v==="function"?v(prev):v);
     applyStudentsLocally(next);
-    lsSet("izi_students",next);
     const writePromise=activeIdentityRef.current===user?.id?enqueueCoachDataWrite(user?.id,"students",next):Promise.resolve({status:"skipped-no-identity"});
     return writePromise;
   };
@@ -10029,14 +10030,13 @@ export default function App() {
     const prev=latestClassesRef.current;
     const next=typeof v==="function"?v(prev):v;
     applyClassesLocally(next);
-    lsSet("izi_classes",next);
     const writePromise=activeIdentityRef.current===user?.id?enqueueCoachDataWrite(user?.id,"classes",next):Promise.resolve({status:"skipped-no-identity"});
     return writePromise;
   };
-  const setCourts=(v)=>{if(typeof v==="function"){setCourtsRaw(prev=>{const next=v(prev);lsSet("izi_courts",next);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"courts",next);return next;});}else{setCourtsRaw(v);lsSet("izi_courts",v);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"courts",v);}};
-  const setPackages=(v)=>{if(typeof v==="function"){setPackagesRaw(prev=>{const next=v(prev);lsSet("izi_packages",next);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"packages",next);return next;});}else{setPackagesRaw(v);lsSet("izi_packages",v);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"packages",v);}};
+  const setCourts=(v)=>{if(typeof v==="function"){setCourtsRaw(prev=>{const next=v(prev);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"courts",next);return next;});}else{setCourtsRaw(v);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"courts",v);}};
+  const setPackages=(v)=>{if(typeof v==="function"){setPackagesRaw(prev=>{const next=v(prev);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"packages",next);return next;});}else{setPackagesRaw(v);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"packages",v);}};
   // IMPORTANT: keep functional updates. Do not replace prev with closure state.
-  const setFamilies=(v)=>{if(typeof v==="function"){setFamiliesRaw(prev=>{const next=v(prev);lsSet("izi_families",next);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"families",next);return next;});}else{setFamiliesRaw(v);lsSet("izi_families",v);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"families",v);}};
+  const setFamilies=(v)=>{if(typeof v==="function"){setFamiliesRaw(prev=>{const next=v(prev);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"families",next);return next;});}else{setFamiliesRaw(v);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"families",v);}};
   // E3: explicit, awaited write — replaces the old setCoachProfile, which
   // upserted to `coaches` as a fire-and-forget side effect of a generic
   // state setter (error only logged, never surfaced; local state and "saved"
@@ -10049,7 +10049,7 @@ export default function App() {
     setCoachProfileRaw(profile);
     return {ok:true};
   };
-  const setExpenses=(v)=>{if(typeof v==="function"){setExpensesRaw(prev=>{const next=v(prev);lsSet("izi_expenses",next);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"expenses",next);return next;});}else{setExpensesRaw(v);lsSet("izi_expenses",v);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"expenses",v);}};
+  const setExpenses=(v)=>{if(typeof v==="function"){setExpensesRaw(prev=>{const next=v(prev);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"expenses",next);return next;});}else{setExpensesRaw(v);if(activeIdentityRef.current===user?.id)enqueueCoachDataWrite(user?.id,"expenses",v);}};
 
   // Coach profile (name/phone/email/sport/photo/currency) — a separate
   // table/RPC from the six outbox-backed keys, out of this Fase 2 rollout's
@@ -10415,9 +10415,11 @@ export default function App() {
       // of identity change (a coach logging out mid-send, or switching to
       // another coach in the same browser) so a later reconcile — this
       // coach logging back in, or another tab/coach — can recover it. Only
-      // the legacy, inactive local caches this cleanup was meant for
-      // (izi_mode, izi_onboarded, the old non-namespaced izi_students/
-      // izi_classes/etc.) should go; the outbox must not.
+      // session keys (izi_mode, izi_onboarded, …) should go; the outbox must
+      // not. BUG-ISO-01/02: per-coach Chat groups, not-yet-adopted legacy
+      // groups and the six legacy business caches are preserved as well
+      // (src/data/localCaches.js) — those caches are removed only by an
+      // explicit, authorized clearLegacyBusinessCaches() call.
       clearLocalStateExceptOutbox();
       resetBusinessState();
     }
@@ -10487,7 +10489,6 @@ export default function App() {
     const {next:rawNext,...meta}=outcome;
     const next=applyGuard(rawNext);
     applyStudentsLocally(next);
-    lsSet("izi_students",next);
     const promise=activeIdentityRef.current===user?.id?enqueueCoachDataWrite(user?.id,"students",next):Promise.resolve({status:"skipped-no-identity"});
     return {promise,...meta};
   };
@@ -10708,7 +10709,7 @@ export default function App() {
     const studentNames=(cls.students||[]).map(sid=>students.find(s=>s.id===sid)?.name).filter(Boolean);
     const newExpenses=expenses.filter(e=>!(e.category==="Cobros clases"&&studentNames.includes(e.note)&&allDatesInSeries.has(e.date)));
     // E2a: routed through the wrapped setters instead of hand-rolling
-    // setXRaw+lsSet+syncToSupabase for each — same net effect (React batches
+    // setXRaw+local cache+syncToSupabase for each — same net effect (React batches
     // these into one render regardless), but now goes through applyGuard
     // (setStudents) and picks up the E1 activeIdentityRef guard that this
     // path didn't have before.
@@ -11675,7 +11676,7 @@ export default function App() {
         {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onAddStudentDirect={(s)=>setStudents(p=>[...p,s])} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={xClasses} onInvite={()=>setShowInvite(true)} userId={user?.id} onInviteStudent={(s)=>setInviteTarget(s)} onRefresh={handleRefresh} families={families} setFamilies={setFamilies} getLatestClasses={()=>latestClassesRef.current} getLatestStudents={()=>latestStudentsRef.current}/>}
         {inviteTarget&&<InviteModal student={inviteTarget} userId={user?.id} coachName={coachProfile.name} onClose={()=>setInviteTarget(null)}/>}
         {tab==="agenda"&&<Agenda students={students} classes={xClasses} rawClasses={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onUpdateStudentsBatch={commitStudentsBatch} isClassesWriteSettled={isClassesWriteSettled} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])} onRefresh={handleRefresh}/>}
-        {tab==="chat"&&<Chat students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification} userId={user?.id} unreadChats={unreadChats} onMarkRead={(sid)=>setUnreadChats(p=>{const n={...p};delete n[String(sid)];return n;})}/>}
+        {tab==="chat"&&<Chat key={user?.id||"no-user"} students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification} userId={user?.id} unreadChats={unreadChats} onMarkRead={(sid)=>setUnreadChats(p=>{const n={...p};delete n[String(sid)];return n;})}/>}
         {tab==="cobros"&&<Finances students={students} classes={xClasses} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance} families={families} onVoidMensualPayment={handleVoidMensualPayment} onRecordMensualPayment={handleRecordMensualPayment} onSaveMensualAmount={handleSaveMensualAmount} isStudentActiveNow={isStudentActiveNow}/>}
         {tab==="finanzas"&&<Finances students={students} classes={xClasses} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} onEditLinkedMensualIncome={handleEditLinkedMensualIncome}/>}
         {showNewClass&&<NewClassModal onClose={()=>{setShowNewClass(false);if(classes.length===0)setTab("agenda");}} onSave={handleSaveClass} existingClasses={xClasses} students={students} dateLabel="Nueva clase" onCreateStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])}/>}

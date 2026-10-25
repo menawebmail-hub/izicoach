@@ -1,4 +1,5 @@
 import { supabase } from "../services/supabaseClient.js";
+import { OUTBOX_PREFIX, clearLocalStateExceptPreserved } from "./localCaches.js";
 
 // ============================================================================
 // coach_data sync — Phase 2 (frontend): atomic compare-and-set + durable
@@ -16,7 +17,6 @@ import { supabase } from "../services/supabaseClient.js";
 
 export const DATA_KEYS = ["students", "classes", "expenses", "courts", "packages", "families"];
 
-const OUTBOX_PREFIX = "izi_outbox";
 const CLIENT_INSTANCE_STORAGE_KEY = "izi_client_instance_id";
 const FLUSH_TIMEOUT_MS = 4000;
 const DEBOUNCE_MS = 500;
@@ -91,12 +91,12 @@ function outboxKey(coachId, dataKey, clientInstanceId, slot) {
 // browser. Single source of truth for "clear my local izi_ state but leave
 // every izi_outbox:* slot alone" — every call site that used to clear
 // localStorage wholesale must route through this instead.
+// BUG-ISO-01/02: the per-coach Chat groups, the not-yet-adopted legacy groups and the six legacy
+// business caches are preserved too (rules in ./localCaches.js) — none of them is removed here.
 // ----------------------------------------------------------------------------
 export function clearLocalStateExceptOutbox() {
   try {
-    Object.keys(localStorage)
-      .filter((k) => k.startsWith("izi_") && !k.startsWith(`${OUTBOX_PREFIX}:`))
-      .forEach((k) => localStorage.removeItem(k));
+    clearLocalStateExceptPreserved(localStorage);
   } catch (thrown) {
     console.error("clearLocalStateExceptOutbox: localStorage cleanup failed (non-fatal):", thrown);
   }
