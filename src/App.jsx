@@ -16,6 +16,8 @@ import { AccountLockout } from "./auth/AccountLockout.jsx";
 import { buildCobrosReportXlsx, cobrosReportFileName, cobrosEstadoColor, COBROS_REPORT_COLORS, XLSX_MIME } from "./exports/cobrosReportXlsx.js";
 import { classPaymentLimits, isPayableClassQuantity } from "./payments/classPaymentLimits.js";
 import { loadChatGroups, saveChatGroups } from "./chat/chatGroupsStorage.js";
+import { resolveRescheduleChain, resolveComboDateStatus, traceRescheduleHistory } from "./schedule/rescheduleChain.js";
+import { applyReleaseToClassRow, applyReleaseToCombo, countAttendedSlots, findPendingReleaseCompletions, releaseMessage, releaseStateOf, resolveReleasableDate } from "./schedule/releaseReprogrammedDate.js";
 import { GROUP_SEND_UNAVAILABLE_TEXT, groupMemberCount, groupMemberNames, groupMembersLabel, isGroupChat } from "./chat/groupMembers.js";
 
 // Inject Inter font
@@ -760,67 +762,7 @@ const _wDFull=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sába
 const _mNShort=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 const fmtDate=(ds)=>{const d=new Date(ds+"T12:00:00");return _wDFull[d.getDay()]+" "+d.getDate()+" "+_mNShort[d.getMonth()];};
 
-// Follows a chain of dateCancellations rescheduledTo pointers (a class
-// reprogrammed more than once, e.g. X→Y→Z) to its terminal date. Shared by
-// expandClasses (display: what date is this occurrence actually happening on)
-// and the pause interceptor in handleSaveClass (which future dates count as
-// this student's remaining contracted sessions) — both must agree on the walk,
-// or Agenda and the pause could disagree about where a rescheduled class
-// actually lands. `visited` bounds the walk naturally — it can grow at most
-// Object.keys(dateCancellations).length+1 times before either running out of
-// chain (clean terminal) or hitting a repeat (cycle) — no arbitrary max needed.
-// Returns {date:terminal,cancelInfo,broken:false} on a clean walk (cancelInfo
-// is whatever dateCancellations entry, if any, exists AT the terminal — e.g. a
-// further pending "sin fecha" reprogram, or null for a genuinely live date),
-// or {cancelInfo,broken:true} if the chain cycles (X→Y→X or self-reference).
-const resolveRescheduleChain=(dateCancellations,startDate)=>{
-  const dc=dateCancellations||{};
-  let current=startDate;
-  const visited=new Set([startDate]);
-  while(dc[current]&&dc[current].cancelType==="cancelled_reprog"&&dc[current].rescheduledTo){
-    const next=dc[current].rescheduledTo;
-    if(visited.has(next)) return {cancelInfo:dc[current],broken:true};
-    visited.add(next);
-    current=next;
-  }
-  return {date:current,cancelInfo:dc[current]||null,broken:false};
-};
-
-// Resolves ONE contracted date to its full status via resolveRescheduleChain:
-// the effective terminal of its reschedule chain (if any), whatever
-// dateCancellations entry (if any) sits AT that terminal, and whether the
-// chain was unresolvable (cycle). Unlike resolveEffectiveComboDates below
-// (which discards any terminal that isn't a clean live date — built for the
-// pause interceptor's c.occurrences matching), this exposes the terminal's
-// own cancelInfo untouched: a caller like ResumeModal needs to tell "this
-// contracted session's terminal is now paused" apart from "it's a live
-// upcoming class" apart from "still pending reprogramming", which a filter
-// that already discards non-clean terminals can't do.
-const resolveComboDateStatus=(dateCancellations,originalDate)=>{
-  const {date,cancelInfo,broken}=resolveRescheduleChain(dateCancellations,originalDate);
-  if(broken) return {original:originalDate,terminal:null,cancelInfo:null,broken:true};
-  return {original:originalDate,terminal:date,cancelInfo,broken:false};
-};
-
-// Read-only trace of a contracted date's full reschedule history, for Cobros:
-// [originalDate, ...every destination in order]. Same walk and cycle guard as
-// resolveRescheduleChain (deliberately not changed — Agenda depends on it); a
-// cyclic/self-referential chain stops before revisiting a date and reports
-// broken, still returning the reachable path.
-const traceRescheduleHistory=(dateCancellations,startDate)=>{
-  const dc=dateCancellations||{};
-  const path=[startDate];
-  const visited=new Set([startDate]);
-  let current=startDate;
-  while(dc[current]&&dc[current].cancelType==="cancelled_reprog"&&dc[current].rescheduledTo){
-    const next=dc[current].rescheduledTo;
-    if(visited.has(next)) return {path,broken:true};
-    visited.add(next);
-    path.push(next);
-    current=next;
-  }
-  return {path,broken:false};
-};
+// resolveRescheduleChain / resolveComboDateStatus / traceRescheduleHistory: src/schedule/rescheduleChain.js
 
 // Single interpretation of one ORIGINAL contracted date (combo.dates entry) for
 // Cobros, resolved to the terminal of its reschedule chain. The row's economic
@@ -1556,6 +1498,119 @@ const expandClasses=(classes)=>{
     }
   }
   return result;
+};
+
+// ---- Release of a reprogrammed, already-given ORIGINAL date (src/schedule/releaseReprogrammedDate.js) ----
+// Readings of one student's contractual slots, from the same rows Cobros, the Portal and Agenda use.
+const slotReadingsOf=(student,rawClasses,todayDate)=>{
+  if(!student) return [];
+  const mine=expandClasses((rawClasses||[]).filter(c=>(c.students||[]).includes(student.id)));
+  return buildPersonSlotRows(student,mine,todayDate).map(r=>({date:r.date,isPaid:r.isPaid,displayPaid:r.displayPaid,isDisplaced:r.isDisplaced,isGiven:r.isGiven,isPaused:r.isPaused,isCancelledClass:r.isCancelledClass}));
+};
+// True when every slot reads exactly as before: same paid/displayed/given/paused/cancelled state, the released slot
+// on its destination. Checked for the final state AND for the half-written one (students saved, class not yet).
+const sameSlotReadings=(before,after,date,destination)=>{
+  if(before.length!==after.length) return false;
+  const key=r=>JSON.stringify([r.isPaid,r.displayPaid,r.isDisplaced,r.isGiven,r.isPaused,r.isCancelledClass]);
+  const expected=new Map(before.map(r=>[r.date===date?destination:r.date,key(r)]));
+  return after.every(r=>expected.get(r.date)===key(r));
+};
+// Full plan of a release, never written here. ok -> {release, nextStudents, nextClasses, record}.
+const planRelease=({classes,students,seriesId,date,todayDate,opId,at})=>{
+  const series=(classes||[]).find(c=>c.id===seriesId);
+  const release=resolveReleasableDate({series,students,date,todayDate,knownSeriesIds:new Set((classes||[]).map(c=>c.id))});
+  if(!release.ok) return release;
+  const record={opId,date,destination:release.destination,entry:release.entry,at};
+  const nextSeries=applyReleaseToClassRow(series,record);
+  const nextClasses=classes.map(c=>c.id===seriesId?nextSeries:c);
+  const log=series.attendanceLog||[];
+  const nextStudents=students.map(st=>{
+    const a=release.affected.find(x=>x.studentId===st.id);
+    if(!a) return st;
+    return {...st,combos:(st.combos||[]).map((c,i)=>{
+      if(i!==a.comboIndex) return c;
+      const usedAfter=countAttendedSlots({dates:c.dates.map(d=>d===date?release.destination:d),dc:nextSeries.dateCancellations||{},attendanceLog:log,studentId:st.id});
+      return applyReleaseToCombo(c,{opId,date,destination:release.destination,classId:seriesId,at,usedAfter});
+    })};
+  });
+  for(const a of release.affected){
+    const before=slotReadingsOf(students.find(s=>s.id===a.studentId),classes,todayDate);
+    const st2=nextStudents.find(s=>s.id===a.studentId);
+    if(!sameSlotReadings(before,slotReadingsOf(st2,nextClasses,todayDate),date,release.destination)) return {ok:false,reason:"payment-shift"};
+    if(!sameSlotReadings(before,slotReadingsOf(st2,classes,todayDate),date,release.destination)) return {ok:false,reason:"payment-shift"};
+  }
+  return {ok:true,release,nextStudents,nextClasses,record};
+};
+// The combo renewed from the released date, for ONE student: the same buildRenewalDates rule as Cobros (next class
+// days after the previous combo's effective end, on the series' own days), which after the release starts exactly
+// on the released date. Never a second renewal: a combo already holding the date, or any later combo of the series.
+const buildRenewalAfterRelease=({classes,students,studentId,seriesId,date,todayDate})=>{
+  const series=(classes||[]).find(c=>c.id===seriesId);
+  const st=(students||[]).find(s=>s.id===studentId);
+  if(!series||!st) return {ok:false,reason:"not-applicable"};
+  const combos=st.combos||[];
+  const rel=[...combos].reverse().find(c=>(c.slotRelocations||[]).some(r=>r&&r.classId===seriesId&&r.from===date));
+  if(!rel) return {ok:false,reason:"not-applicable"};
+  const ofSeries=c=>c!==rel&&Array.isArray(c.dates)&&c.packType!=="mensual"&&(c.sourceClassId===seriesId||c.sourceClassId===undefined);
+  if(combos.some(c=>Array.isArray(c.dates)&&c.dates.includes(date))||combos.some(c=>ofSeries(c)&&c.dates.some(d=>d>=date))) return {ok:false,reason:"already-renewed"};
+  const mine=expandClasses(classes.filter(c=>(c.students||[]).includes(studentId)));
+  const renewal=buildRenewalDates({combo:rel,dcCandidates:getComboDcCandidates(mine,rel),dowSet:classDowSetFrom(series.days),fallbackDate:todayDate});
+  if(!renewal.ok) return renewal;
+  if(renewal.dates[0]!==date) return {ok:false,reason:"start-mismatch"};
+  return {ok:true,combo:{id:combos.length+1,total:rel.total,packType:rel.packType||"combo",sourceClassId:seriesId,used:0,paid:false,paidCount:0,date,amount:rel.amount,dates:renewal.dates,payments:[]}};
+};
+// Whether "Renovar Combo desde esta fecha" may start on (series, date) through a release — the single reading
+// Agenda (grey card) and Cobros (renewal buttons) share. kind "releasable": nothing written yet; "class-pending":
+// the students part is saved and the class part still has to be applied.
+const resolveReleaseCandidate=({classes,students,seriesId,date,todayDate})=>{
+  const series=(classes||[]).find(c=>c.id===seriesId);
+  if(!series) return {ok:false,reason:"not-applicable"};
+  const state=releaseStateOf({series,students,date});
+  if(state.state==="class-pending"){
+    const sids=(students||[]).filter(st=>(st.combos||[]).some(c=>(c.slotRelocations||[]).some(r=>r&&r.classId===seriesId&&r.from===date))).map(st=>st.id);
+    return {ok:true,kind:"class-pending",seriesId,date,destination:state.record.destination,studentIds:sids};
+  }
+  if(state.state) return {ok:false,reason:state.state};
+  const plan=planRelease({classes,students,seriesId,date,todayDate,opId:"preview",at:null});
+  if(!plan.ok) return plan;
+  const sids=plan.release.affected.map(a=>a.studentId);
+  for(const sid of sids){
+    const r=buildRenewalAfterRelease({classes:plan.nextClasses,students:plan.nextStudents,studentId:sid,seriesId,date,todayDate});
+    if(!r.ok) return r;
+  }
+  return {ok:true,kind:"releasable",seriesId,date,destination:plan.release.destination,studentIds:sids};
+};
+// Cobros: the release candidate of a student's LAST class combo, if any (one of its dates, or a pending class part).
+const findReleaseCandidateForStudent=({classes,students,studentId,todayDate})=>{
+  const st=(students||[]).find(s=>s.id===studentId);
+  const last=st&&(st.combos||[]).filter(c=>Array.isArray(c.dates)&&c.packType!=="mensual"&&c.packType!=="individual"&&(c.total||0)>0).slice(-1)[0];
+  if(!last) return null;
+  for(const r of (last.slotRelocations||[])){
+    const cand=r&&resolveReleaseCandidate({classes,students,seriesId:r.classId,date:r.from,todayDate});
+    if(cand&&cand.ok&&cand.studentIds.includes(studentId)) return cand;
+  }
+  for(const series of (classes||[]).filter(c=>(c.students||[]).includes(studentId))){
+    const dc=series.dateCancellations||{};
+    for(const d of last.dates){
+      if(!dc[d]||dc[d].cancelType!=="cancelled_reprog"||!dc[d].rescheduledTo) continue;
+      const cand=resolveReleaseCandidate({classes,students,seriesId:series.id,date:d,todayDate});
+      if(cand.ok&&cand.studentIds.includes(studentId)) return cand;
+    }
+  }
+  return null;
+};
+
+// Cobros renewal buttons: when the student's last combo ends on a releasable reprogrammed date, the renewal goes
+// through the App release orchestrator (same rule as Agenda) instead of starting after the original date.
+// Returns true when it took over the click.
+const renewThroughRelease=(releaseRenewal,studentId,onDone)=>{
+  const cand=releaseRenewal&&releaseRenewal.find(studentId);
+  if(!cand) return false;
+  releaseRenewal.run({seriesId:cand.seriesId,date:cand.date,onlyStudentIds:[studentId]}).then(r=>{
+    if(r&&r.status==="completed"){ if(onDone) onDone(); }
+    else alert(releaseMessage(r&&r.reason));
+  });
+  return true;
 };
 
 function getCombo(s) {
@@ -5503,7 +5558,7 @@ function AttModal({ att, students, onAttendance, onClose }) {
   );
 }
 
-function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAddStudent, courts=[], packages=[], onUpdateStudent, onUpdateStudentsBatch, isClassesWriteSettled, onDeleteClass, pendingReprog, onClearPendingReprog, onAddPackage, onRefresh }) {
+function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAddStudent, courts=[], packages=[], onUpdateStudent, onUpdateStudentsBatch, isClassesWriteSettled, onDeleteClass, pendingReprog, onClearPendingReprog, onAddPackage, onRefresh, onReleaseAndRenew }) {
   const [selDay,setSelDay]=useState(TODAY_DATE);
   const [viewYear,setViewYear]=useState(new Date().getFullYear());
   const [viewMonth,setViewMonth]=useState(new Date().getMonth());
@@ -5835,6 +5890,37 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
     if(!revertInfoOf(c,resolveAgendaMenu(c,resolveAgendaCardStatus(c,students,classes,TODAY_DATE),WEEK_AGO))) return null;
     return <RevertReprogModal key={c._virtualId||c.id} cls={c} series={(rawClasses||classes).find(c2=>c2.id===(c._seriesId||c.id))} students={students} isSettled={isClassesWriteSettled} onSave={onSaveClass} onClose={()=>setHighlightCls(null)}/>;
   };
+  // A reprogrammed ORIGINAL date whose class was already given elsewhere (BUG-COMBO-01 follow-up, Pato 26/10 -> 02/10):
+  // shown grey "Sin pagar" and offered "Renovar Combo desde esta fecha" — the same candidate Cobros reads. Nothing is
+  // written until the coach confirms; the App orchestrator re-validates everything against the latest state.
+  const [releaseBusy,setReleaseBusy]=useState(false);
+  const releaseCandidateOf=(c)=>{
+    if(!onReleaseAndRenew||!c||!c.cancelled||c.cancelType!=="cancelled_reprog"||!c.rescheduledTo) return null;
+    const cand=resolveReleaseCandidate({classes:rawClasses||classes,students,seriesId:c._seriesId||c.id,date:c.date,todayDate:todayIso()});
+    return cand.ok?cand:null;
+  };
+  const renderReleaseModal=(c,cand)=>(
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.45)",zIndex:99,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 16px"}} onClick={()=>setHighlightCls(null)}>
+      <div style={{background:C.white,borderRadius:24,padding:"20px 20px 24px",width:"100%",boxShadow:"0 20px 60px rgba(0,0,0,0.25)"}} onClick={e=>e.stopPropagation()}>
+        <div style={{fontWeight:900,fontSize:20,color:C.text}}>{c.title}</div>
+        <div style={{fontSize:13,color:C.mutedDark,marginTop:2,marginBottom:12}}>{fmtDate(c.date)} · {c.time+(c.timeEnd?" – "+c.timeEnd:"")}</div>
+        <div style={{fontSize:13,color:C.text,background:C.bg,borderRadius:12,padding:"10px 12px",marginBottom:14}}>La clase original de este día ya se dio el {fmtDate(cand.destination)}. Esta fecha queda libre para el combo nuevo. El historial, la asistencia y los pagos del combo anterior no cambian.</div>
+        <button disabled={releaseBusy} onClick={async()=>{
+          if(releaseBusy) return;
+          setReleaseBusy(true);
+          try{
+            const r=await onReleaseAndRenew({seriesId:cand.seriesId,date:cand.date});
+            if(r&&r.status==="completed") setHighlightCls(null);
+            else alert(releaseMessage(r&&r.reason));
+          } finally { setReleaseBusy(false); }
+        }} style={{width:"100%",padding:"13px",borderRadius:14,border:"none",background:releaseBusy?"#ccc":"linear-gradient(135deg,#1565C0,#1976D2)",color:"#fff",fontSize:14,cursor:releaseBusy?"default":"pointer",fontWeight:800,marginBottom:10}}>
+          {releaseBusy?"Guardando…":"🔄 Renovar Combo desde esta fecha"}
+        </button>
+        <button onClick={()=>setHighlightCls(null)} style={{width:"100%",padding:"12px",borderRadius:14,border:"1.5px solid "+C.border,background:C.white,color:C.mutedDark,fontSize:14,cursor:"pointer",fontWeight:700}}>Cerrar</button>
+      </div>
+    </div>
+  );
+
 
   const ClassCard=({c})=>{
     const log=(c.attendanceLog||[]).find(e=>e.date===c.date);
@@ -5975,27 +6061,32 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                 <div style={{fontSize:12,marginTop:4}}>Tocá + para agregar</div>
               </div>
             ):dayC.map(c=>{
-              const isCancelled=c.cancelled&&c.cancelType==="cancelled";
+              // A releasable original date reads as a neutral grey card (cv), never as "Reprogramada".
+              const relCand=releaseCandidateOf(c);
+              const cv=relCand?{...c,cancelled:false,cancelType:null,rescheduledTo:null,paused:false}:c;
+              const isGreyCard=!!relCand||isNextComboPending(c,students);
+              const isCancelled=cv.cancelled&&cv.cancelType==="cancelled";
               const agSt=resolveAgendaCardStatus(c,students,classes,TODAY_DATE);
               const agMenu=resolveAgendaMenu(c,agSt,WEEK_AGO);
               const rvInfo=revertInfoOf(c,agMenu);
-              const canOpenMenu=!agMenu.readOnly||!!rvInfo;
+              const canOpenMenu=!agMenu.readOnly||!!rvInfo||!!relCand;
               const reprogTo=c.rescheduledTo||agSt.reprogSettledTo;
-              const isReprogWithDate=c.cancelled&&c.cancelType==="cancelled_reprog"&&reprogTo;
-              const isReprogNoDate=c.cancelled&&c.cancelType==="cancelled_reprog"&&!reprogTo;
-              const isPaused=c.paused||c.cancelType==="paused";
-              const cardBg=isPaused?"#FFF3E0":isCancelled?"#FFF0F0":isReprogWithDate?"#E8F5E9":isReprogNoDate?"#E3F2FD":isNextComboPending(c,students)?"#F5F5F5":C.white;
+              const isReprogWithDate=cv.cancelled&&cv.cancelType==="cancelled_reprog"&&reprogTo;
+              const isReprogNoDate=cv.cancelled&&cv.cancelType==="cancelled_reprog"&&!reprogTo;
+              const isPaused=cv.paused||cv.cancelType==="paused";
+              const cardBg=isPaused?"#FFF3E0":isCancelled?"#FFF0F0":isReprogWithDate?"#E8F5E9":isReprogNoDate?"#E3F2FD":isGreyCard?"#F5F5F5":C.white;
               return (
-              <div key={c._virtualId||c.id} onClick={canOpenMenu?()=>setHighlightCls((c._virtualId||c.id)===highlightCls?null:(c._virtualId||c.id)):undefined} style={{background:cardBg,borderRadius:16,padding:"12px 14px",marginBottom:10,boxShadow:highlightCls===(c._virtualId||c.id)?"0 4px 16px rgba(44,94,247,0.18)":"0 2px 10px rgba(44,94,247,0.07)",border:"1.5px solid "+(highlightCls===(c._virtualId||c.id)?C.blue2:isPaused?"#FFB74D":isCancelled?"#FFCDD2":isReprogWithDate?"#A5D6A7":isReprogNoDate?"#90CAF9":isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:canOpenMenu?"pointer":"default",opacity:isNextComboPending(c,students)?0.75:1,transition:"box-shadow 0.15s,border 0.15s"}}>
+              <div key={c._virtualId||c.id} onClick={canOpenMenu?()=>setHighlightCls((c._virtualId||c.id)===highlightCls?null:(c._virtualId||c.id)):undefined} style={{background:cardBg,borderRadius:16,padding:"12px 14px",marginBottom:10,boxShadow:highlightCls===(c._virtualId||c.id)?"0 4px 16px rgba(44,94,247,0.18)":"0 2px 10px rgba(44,94,247,0.07)",border:"1.5px solid "+(highlightCls===(c._virtualId||c.id)?C.blue2:isPaused?"#FFB74D":isCancelled?"#FFCDD2":isReprogWithDate?"#A5D6A7":isReprogNoDate?"#90CAF9":isGreyCard?"#BDBDBD":C.border),cursor:canOpenMenu?"pointer":"default",opacity:isGreyCard?0.75:1,transition:"box-shadow 0.15s,border 0.15s"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:4}}>
-                      <div style={{fontWeight:800,fontSize:15,color:isPaused?"#E65100":isCancelled?"#C62828":isReprogNoDate?"#1565C0":isReprogWithDate?"#2E7D32":isNextComboPending(c,students)?"#9E9E9E":C.text}}>{c.title}{isPaused?" (Pausada)":isCancelled?" (Cancelada)":isReprogWithDate?" (Reprogramada)":isReprogNoDate?" (A Reprogramar)":""}</div>
+                      <div style={{fontWeight:800,fontSize:15,color:isPaused?"#E65100":isCancelled?"#C62828":isReprogNoDate?"#1565C0":isReprogWithDate?"#2E7D32":isGreyCard?"#9E9E9E":C.text}}>{c.title}{isPaused?" (Pausada)":isCancelled?" (Cancelada)":isReprogWithDate?" (Reprogramada)":isReprogNoDate?" (A Reprogramar)":""}</div>
                       {agendaPaymentChip(agSt.payment,10)}
-                      {isNextComboPending(c,students)&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#EEEEEE",color:"#757575",fontWeight:700}}>Sin pagar</span>}
+                      {isGreyCard&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#EEEEEE",color:"#757575",fontWeight:700}}>Sin pagar</span>}
                       {(()=>{const log=(c.attendanceLog||[]).find(e=>e.date===c.date);if(!log)return null;const {ausenteDada,aReprogramar}=resolveClassAttendanceBadgeCounts(students,c._seriesId||c.id,c.date,log);if(!ausenteDada&&!aReprogramar)return null;return(<>{ausenteDada>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ Ausente-Dada</span>}{aReprogramar>0&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:10,background:"#FFF8E1",color:"#F57F17",fontWeight:700}}>↩ A Reprogramar</span>}</>);})()}
                     </div>
                     {isReprogWithDate&&reprogTo&&<div style={{fontSize:11,color:"#2E7D32",marginBottom:4}}>📅 Reprogramada al {fmtDate(reprogTo)}</div>}
+                    {relCand&&<div style={{fontSize:11,color:"#757575",marginBottom:4}}>Clase dada el {fmtDate(relCand.destination)} · podés renovar desde esta fecha</div>}
                     <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                       {(c.days||[]).map(d=><span key={d} style={{fontSize:11,padding:"2px 7px",borderRadius:20,background:C.blueL,color:C.blue2,fontWeight:600}}>{d}</span>)}
                       <span style={{fontSize:12,color:C.mutedDark}}>{c.time+(c.timeEnd?" - "+c.timeEnd:"")} · {c.court}</span>
@@ -6024,6 +6115,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
           {highlightCls&&(()=>{
             const c=classes.find(x=>(x._virtualId||x.id)===highlightCls);
             if(!c) return null;
+            {const rc=releaseCandidateOf(c);if(rc) return renderReleaseModal(c,rc);}
             if(resolveAgendaMenu(c,resolveAgendaCardStatus(c,students,classes,TODAY_DATE),WEEK_AGO).readOnly) return renderRevertModal(c);
             return (
               <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.45)",zIndex:99,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 16px"}} onClick={()=>setHighlightCls(null)}>
@@ -6220,19 +6312,23 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                     const agSt=resolveAgendaCardStatus(c,students,classes,TODAY_DATE);
                     const agMenu=resolveAgendaMenu(c,agSt,WEEK_AGO);
                     const rvInfo=revertInfoOf(c,agMenu);
-                    const canOpenMenu=!agMenu.readOnly||!!rvInfo;
+                    const cvRel=releaseCandidateOf(c);
+                    const cv=cvRel?{...c,cancelled:false,cancelType:null,rescheduledTo:null,paused:false}:c;
+                    const cvGrey=!!cvRel||isNextComboPending(c,students);
+                    const canOpenMenu=!agMenu.readOnly||!!rvInfo||!!cvRel;
                     const reprogTo=c.rescheduledTo||agSt.reprogSettledTo;
                     return (
                       <div key={c._virtualId||c.id} onClick={canOpenMenu?()=>setHighlightCls((c._virtualId||c.id)===highlightCls?null:(c._virtualId||c.id)):undefined}
-                        style={{position:"absolute",top:topPx,left:colL,width:colW,height:heightPx,background:c.paused||c.cancelType==="paused"?"#FFF3E0":c.cancelled&&c.cancelType==="cancelled"?"#FFF0F0":c.cancelled&&c.cancelType==="cancelled_reprog"&&reprogTo?"#E8F5E9":c.cancelled&&c.cancelType==="cancelled_reprog"?"#E3F2FD":isNextComboPending(c,students)?"#F5F5F5":C.white,borderRadius:12,padding:"6px 10px",border:"1.5px solid "+(highlightCls===(c._virtualId||c.id)?C.blue2:isNextComboPending(c,students)?"#BDBDBD":C.border),cursor:canOpenMenu?"pointer":"default",boxShadow:"0 2px 8px rgba(44,94,247,0.10)",overflow:"hidden",borderLeft:"4px solid "+(c.paused||c.cancelType==="paused"?"#E65100":c.cancelled&&c.cancelType==="cancelled"?"#C62828":c.cancelled&&c.cancelType==="cancelled_reprog"&&reprogTo?"#2E7D32":c.cancelled&&c.cancelType==="cancelled_reprog"?"#1565C0":isNextComboPending(c,students)?"#BDBDBD":C.blue2),zIndex:2,opacity:isNextComboPending(c,students)?0.7:1}}>
+                        style={{position:"absolute",top:topPx,left:colL,width:colW,height:heightPx,background:cv.paused||cv.cancelType==="paused"?"#FFF3E0":cv.cancelled&&cv.cancelType==="cancelled"?"#FFF0F0":cv.cancelled&&cv.cancelType==="cancelled_reprog"&&reprogTo?"#E8F5E9":cv.cancelled&&cv.cancelType==="cancelled_reprog"?"#E3F2FD":cvGrey?"#F5F5F5":C.white,borderRadius:12,padding:"6px 10px",border:"1.5px solid "+(highlightCls===(c._virtualId||c.id)?C.blue2:cvGrey?"#BDBDBD":C.border),cursor:canOpenMenu?"pointer":"default",boxShadow:"0 2px 8px rgba(44,94,247,0.10)",overflow:"hidden",borderLeft:"4px solid "+(cv.paused||cv.cancelType==="paused"?"#E65100":cv.cancelled&&cv.cancelType==="cancelled"?"#C62828":cv.cancelled&&cv.cancelType==="cancelled_reprog"&&reprogTo?"#2E7D32":cv.cancelled&&cv.cancelType==="cancelled_reprog"?"#1565C0":cvGrey?"#BDBDBD":C.blue2),zIndex:2,opacity:cvGrey?0.7:1}}>
                         <div style={{display:"flex",alignItems:"center",gap:4,overflow:"hidden"}}>
-                          <div style={{fontSize:13,fontWeight:800,color:c.paused||c.cancelType==="paused"?"#E65100":c.cancelled&&c.cancelType==="cancelled"?"#C62828":c.cancelled&&c.cancelType==="cancelled_reprog"&&reprogTo?"#2E7D32":c.cancelled&&c.cancelType==="cancelled_reprog"?"#1565C0":isNextComboPending(c,students)?"#9E9E9E":C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",flex:1}}>{c.title}{c.paused||c.cancelType==="paused"?" (Pausada)":c.cancelled&&c.cancelType==="cancelled"?" (Cancelada)":c.cancelled&&c.cancelType==="cancelled_reprog"&&reprogTo?" (Reprogramada)":c.cancelled&&c.cancelType==="cancelled_reprog"?" (A Reprogramar)":""}</div>
+                          <div style={{fontSize:13,fontWeight:800,color:cv.paused||cv.cancelType==="paused"?"#E65100":cv.cancelled&&cv.cancelType==="cancelled"?"#C62828":cv.cancelled&&cv.cancelType==="cancelled_reprog"&&reprogTo?"#2E7D32":cv.cancelled&&cv.cancelType==="cancelled_reprog"?"#1565C0":cvGrey?"#9E9E9E":C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",flex:1}}>{c.title}{cv.paused||cv.cancelType==="paused"?" (Pausada)":cv.cancelled&&cv.cancelType==="cancelled"?" (Cancelada)":cv.cancelled&&cv.cancelType==="cancelled_reprog"&&reprogTo?" (Reprogramada)":cv.cancelled&&cv.cancelType==="cancelled_reprog"?" (A Reprogramar)":""}</div>
                           {agendaPaymentChip(agSt.payment,9)}
-                          {isNextComboPending(c,students)&&<span style={{fontSize:9,padding:"2px 5px",borderRadius:8,background:"#EEEEEE",color:"#757575",fontWeight:700,flexShrink:0}}>Sin pagar</span>}
+                          {cvGrey&&<span style={{fontSize:9,padding:"2px 5px",borderRadius:8,background:"#EEEEEE",color:"#757575",fontWeight:700,flexShrink:0}}>Sin pagar</span>}
                           {rvInfo&&<span style={{fontSize:9,padding:"2px 6px",borderRadius:8,background:highlightCls===(c._virtualId||c.id)?C.blue2:"#F0F2FF",color:highlightCls===(c._virtualId||c.id)?"#fff":C.blue2,fontWeight:700,flexShrink:0}}>{highlightCls===(c._virtualId||c.id)?"Cerrar":"Opciones"}</span>}
                         </div>
                         <div style={{fontSize:11,color:C.mutedDark,marginTop:1}}>{c.time+(c.timeEnd?" – "+c.timeEnd:"")} · {c.court}</div>
-                        {c.cancelled&&c.cancelType==="cancelled_reprog"&&reprogTo&&<div style={{fontSize:10,color:"#2E7D32",marginTop:1}}>📅 Reprogramada al {fmtDate(reprogTo)}</div>}
+                        {cv.cancelled&&cv.cancelType==="cancelled_reprog"&&reprogTo&&<div style={{fontSize:10,color:"#2E7D32",marginTop:1}}>📅 Reprogramada al {fmtDate(reprogTo)}</div>}
+                        {cvRel&&<div style={{fontSize:10,color:"#757575",marginTop:1}}>Clase dada el {fmtDate(cvRel.destination)}</div>}
                         {(()=>{const log=(c.attendanceLog||[]).find(e=>e.date===c.date);if(!log)return null;const {ausenteDada,aReprogramar}=resolveClassAttendanceBadgeCounts(students,c._seriesId||c.id,c.date,log);if(!ausenteDada&&!aReprogramar)return null;return(<div style={{display:"flex",gap:4,marginTop:4,flexWrap:"wrap"}}>{ausenteDada>0&&<span style={{fontSize:11,padding:"3px 8px",borderRadius:10,background:"#FFF3E0",color:"#E65100",fontWeight:700}}>✗ Ausente-Dada</span>}{aReprogramar>0&&<span style={{fontSize:11,padding:"3px 8px",borderRadius:10,background:"#FFF8E1",color:"#F57F17",fontWeight:700}}>↩ A Reprogramar</span>}</div>);})()}
                         {heightPx>52&&<div style={{display:"flex",gap:3,marginTop:4,flexWrap:"wrap"}}>
                           {(c.students||[]).map(sid=>{const st=students.find(s=>s.id===sid);if(!st)return null;const attSt=getAttendanceChipStatus(c,sid);const attStyle=attSt&&ATT_CHIP_STYLE[attSt];return (
@@ -6250,6 +6346,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
               {highlightCls&&(()=>{
                 const c=classes.find(x=>(x._virtualId||x.id)===highlightCls);
                 if(!c) return null;
+                {const rc=releaseCandidateOf(c);if(rc) return renderReleaseModal(c,rc);}
                 if(resolveAgendaMenu(c,resolveAgendaCardStatus(c,students,classes,TODAY_DATE),WEEK_AGO).readOnly) return renderRevertModal(c);
                 return (
                   <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.45)",zIndex:99,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 16px"}} onClick={()=>setHighlightCls(null)}>
@@ -6596,7 +6693,7 @@ function Chat({ students, initialTarget, onClearTarget, sendNotification, userId
   );
 }
 
-function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount, newDate, setNewDate, onClose, onUpdate, classes=[], addIncome, packages=[], sendNotification, isStudentActiveNow, mensualCombo=null, onRecordMensualPayment, onSaveMensualAmount, onVoidMensualPayment, expenses=[]}) {
+function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount, newDate, setNewDate, onClose, onUpdate, classes=[], addIncome, packages=[], sendNotification, isStudentActiveNow, mensualCombo=null, onRecordMensualPayment, onSaveMensualAmount, onVoidMensualPayment, expenses=[], releaseRenewal}) {
   // Re-checked in handleGoToReview/handleConfirm below — the actual enforcement points — against
   // the freshest known student state, so a payment modal opened before a concurrent inactivation
   // (another device) can never be confirmed afterwards from stale state.
@@ -6981,12 +7078,13 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         const fullyPaid=newPaidCount>=c.total;
         // Count given dates excluding paused — attendance-derived, independent of
         // which dates were just paid.
+        // BUG-COMBO-01: a reprogrammed slot is judged on its destination (getSlotFulfillmentDate), never on its
+        // original date; a pending reprogramming has no destination yet and never counts.
         const givenCount=(c.dates||[]).filter(d=>{
-          if(d>TODAY_DATE) return false;
           const clsD=myClsForCombo.find(cl=>cl.date===d);
           if(clsD&&(clsD.paused||clsD.cancelType==="paused")) return false;
-          if(clsD&&clsD.cancelled&&clsD.cancelType==="cancelled_reprog"&&!clsD.rescheduledTo) return false;
-          return true;
+          const fulfillment=getSlotFulfillmentDate(d,clsD&&clsD.cancelled,clsD&&clsD.cancelType,clsD&&clsD.rescheduledTo);
+          return !!fulfillment&&fulfillment<=TODAY_DATE;
         }).length;
         const paymentDates=rows.map(r=>r.date);
         const newPayment={id:Date.now(),qty:canPay,amount:Math.round((parseInt(localAmount)||0)*(canPay/qty)),method:payMethod,date:localPayDate||TODAY,dates:paymentDates};
@@ -7048,6 +7146,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         <div style={{fontSize:14,color:"#5C7A9F",marginBottom:isComplete?20:0}}>{s.name}</div>
         {isComplete&&(
           <button onClick={()=>{
+            if(renewThroughRelease(releaseRenewal,s.id,onClose)) return;
             const clsDays=myClasses.length>0?myClasses[0].days:[];
             // classDowSetFrom, not a raw DAY_MAP lookup — an unrecognized day name here would
             // otherwise produce a non-empty Set{undefined} that buildRenewalDates' own
@@ -7632,7 +7731,7 @@ function ComboProgressBar({ realizadasCombo, totalEntitlementCombo, noPagadas })
   );
 }
 
-function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance, expenses=[], onVoidMensualPayment, onRecordMensualPayment, onSaveMensualAmount, isStudentActiveNow }) {
+function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance, expenses=[], onVoidMensualPayment, onRecordMensualPayment, onSaveMensualAmount, isStudentActiveNow, releaseRenewal }) {
   // combo (getCombo) stays as the narrow "does this student have anything assigned
   // at all" pick for the Asignar-paquete/Detalles-de-Pagos toggle and PagoModal's
   // initial stepper seed — never used to decide WHICH box(es) to render below.
@@ -7884,6 +7983,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             return daysLeft>=0&&daysLeft<=5;
           })();
           const handleRenew=()=>{
+            if(lastComboS&&renewThroughRelease(releaseRenewal,s.id)) return;
             if(lastComboS){
               // Generate next dates after the last combo's EFFECTIVE end (reschedule chains included)
               const clsDays=myClassesH.length>0?myClassesH[0].days:[];
@@ -7929,7 +8029,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
         })()}
       </WhiteCard>
 
-      {showPago&&<PagoModal s={s} combo={combo} newClasses={newClasses} setNewClasses={setNewClasses} newAmount={newAmount} setNewAmount={setNewAmount} newDate={newDate} setNewDate={setNewDate} onClose={()=>setShowPago(false)} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} isStudentActiveNow={isStudentActiveNow} mensualCombo={displayedModernMensual} onRecordMensualPayment={onRecordMensualPayment} onSaveMensualAmount={onSaveMensualAmount} onVoidMensualPayment={onVoidMensualPayment} expenses={expenses}/>}
+      {showPago&&<PagoModal releaseRenewal={releaseRenewal} s={s} combo={combo} newClasses={newClasses} setNewClasses={setNewClasses} newAmount={newAmount} setNewAmount={setNewAmount} newDate={newDate} setNewDate={setNewDate} onClose={()=>setShowPago(false)} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} isStudentActiveNow={isStudentActiveNow} mensualCombo={displayedModernMensual} onRecordMensualPayment={onRecordMensualPayment} onSaveMensualAmount={onSaveMensualAmount} onVoidMensualPayment={onVoidMensualPayment} expenses={expenses}/>}
 
       {showHistory&&(()=>{
         // Historial de Pagos — read-only record. ONE list, built once: the left tabs render it and the
@@ -8256,7 +8356,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
   );
 }
 
-function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance, families=[], expenses=[], onVoidMensualPayment, onRecordMensualPayment, onSaveMensualAmount, isStudentActiveNow }) {
+function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], sendNotification, onAttendance, families=[], expenses=[], onVoidMensualPayment, onRecordMensualPayment, onSaveMensualAmount, isStudentActiveNow, releaseRenewal }) {
   const [search,setSearch]=useState("");
   const [filter,setFilter]=useState("none");
   const [collapsedFamilies,setCollapsedFamilies]=useState(new Set());
@@ -8392,13 +8492,13 @@ function PaymentsTab({ students, onUpdate, classes, addIncome, packages=[], send
             </WhiteCard>
             {!isCollapsed&&g.members.map(s=>(
               <div key={s.id} style={{marginLeft:14,paddingLeft:12,borderLeft:"2px solid #C5D0E6",marginBottom:10}}>
-                <PaymentCard student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} onRecordMensualPayment={onRecordMensualPayment} onSaveMensualAmount={onSaveMensualAmount} isStudentActiveNow={isStudentActiveNow}/>
+                <PaymentCard releaseRenewal={releaseRenewal} student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} onRecordMensualPayment={onRecordMensualPayment} onSaveMensualAmount={onSaveMensualAmount} isStudentActiveNow={isStudentActiveNow}/>
               </div>
             ))}
           </div>
         );
       })}
-      {ungroupedList.map(s=><PaymentCard key={s.id} student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} onRecordMensualPayment={onRecordMensualPayment} onSaveMensualAmount={onSaveMensualAmount} isStudentActiveNow={isStudentActiveNow}/>)}
+      {ungroupedList.map(s=><PaymentCard key={s.id} releaseRenewal={releaseRenewal} student={s} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} onRecordMensualPayment={onRecordMensualPayment} onSaveMensualAmount={onSaveMensualAmount} isStudentActiveNow={isStudentActiveNow}/>)}
     </div>
   );
 }
@@ -8487,7 +8587,7 @@ function CobrosReportScreen({ rows, onClose }) {
   );
 }
 
-function Finances({ students, classes, initialTab="payments", onUpdate, expenses=[], setExpenses, addIncome, packages=[], sendNotification, onAttendance, families=[], onVoidMensualPayment, onRecordMensualPayment, onSaveMensualAmount, onEditLinkedMensualIncome, isStudentActiveNow }) {
+function Finances({ students, classes, initialTab="payments", onUpdate, expenses=[], setExpenses, addIncome, packages=[], sendNotification, onAttendance, families=[], onVoidMensualPayment, onRecordMensualPayment, onSaveMensualAmount, onEditLinkedMensualIncome, isStudentActiveNow, releaseRenewal }) {
   const [tab,setTab]=useState(initialTab);
   const [reportRows,setReportRows]=useState(null);
   const [selMonth,setSelMonth]=useState((()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");})());
@@ -8533,7 +8633,7 @@ function Finances({ students, classes, initialTab="payments", onUpdate, expenses
       </div>
       {reportRows&&<CobrosReportScreen rows={reportRows} onClose={()=>setReportRows(null)}/>}
       <div style={{padding:"16px",marginTop:-8}}>
-        {tab==="payments"&&<PaymentsTab students={students} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} families={families} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} onRecordMensualPayment={onRecordMensualPayment} onSaveMensualAmount={onSaveMensualAmount} isStudentActiveNow={isStudentActiveNow}/>}
+        {tab==="payments"&&<PaymentsTab releaseRenewal={releaseRenewal} students={students} onUpdate={onUpdate} classes={classes} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={onAttendance} families={families} expenses={expenses} onVoidMensualPayment={onVoidMensualPayment} onRecordMensualPayment={onRecordMensualPayment} onSaveMensualAmount={onSaveMensualAmount} isStudentActiveNow={isStudentActiveNow}/>}
         {tab==="expenses"&&(
           <div>
             {/* Stats badges */}
@@ -10940,17 +11040,99 @@ export default function App() {
       const target=combos[lastIdx];
       // Recompute 'used' idempotently from the merged attendance log (present+ausente_dada = given),
       // instead of incrementing blindly — re-saving or changing status for the same date no longer drifts.
+      // BUG-COMBO-01: each slot is read where it really happened (the terminal of its reschedule chain in
+      // THIS series), so a class reprogrammed and given elsewhere counts; explicit attendance only.
       const targetDates=target.dates||(target.date?[target.date]:[]);
-      const newUsed=targetDates.filter(d=>{
-        const entry=mergedLog.find(e=>e.date===d);
-        return entry&&((entry.present||[]).includes(s.id)||(entry.ausente_dada||[]).includes(s.id));
-      }).length;
+      const seriesDc=(target.sourceClassId===realId||target.sourceClassId===undefined)?(classes.find(c=>c.id===realId)?.dateCancellations||{}):{};
+      const newUsed=countAttendedSlots({dates:targetDates,dc:seriesDc,attendanceLog:mergedLog,studentId:s.id});
       combos[lastIdx]={...target,used:newUsed};
       return {...s,combos};
     }));
     // For ausente_reprog: mark their combo date as needing reschedule
     // (coach will reschedule from Agenda)
   };
+
+  // ---- Release a reprogrammed, already-given ORIGINAL date and renew from it (Agenda and Cobros share it) ----
+  // Durable order, each step confirmed before the next: (1) students — the slot keeps its position in combo.dates
+  // and takes its real date, plus slotRelocations; from then on that combo never reads the old entry, so nothing
+  // counts twice; (2) the class — the entry leaves dateCancellations only while it still says exactly that
+  // reprogramming, the destination joins occurrences, releasedReschedules keeps the entry; (3) the renewal from
+  // the released date. Every step is re-validated against the LATEST state (refs). A partial result is finished by
+  // the next attempt or by the recovery effect below; nothing is ever guessed or picked instead.
+  const releaseInFlightRef=useRef(new Set());
+  const writeConfirmed=(o)=>!!o&&(o.status==="confirmed"||o.status==="already_applied");
+  const releaseAndRenew=async({seriesId,date,onlyStudentIds})=>{
+    const key=seriesId+"|"+date;
+    if(releaseInFlightRef.current.has(key)) return {status:"blocked",reason:"write-pending"};
+    if(!isClassesWriteSettled()) return {status:"blocked",reason:"write-pending"};
+    releaseInFlightRef.current.add(key);
+    try{
+      const today=todayIso();
+      const cand=resolveReleaseCandidate({classes:latestClassesRef.current,students:latestStudentsRef.current,seriesId,date,todayDate:today});
+      if(!cand.ok) return {status:"blocked",reason:cand.reason};
+      // The release is a series fact (all affected students); the renewal can be limited to one student (Cobros).
+      const studentIds=onlyStudentIds?cand.studentIds.filter(id=>onlyStudentIds.includes(id)):cand.studentIds;
+      if(cand.kind==="releasable"){
+        const opId=crypto.randomUUID();
+        const at=new Date().toISOString();
+        let refused=null;
+        const {promise}=commitStudentsBatch(latest=>{
+          const plan=planRelease({classes:latestClassesRef.current,students:latest,seriesId,date,todayDate:today,opId,at});
+          if(!plan.ok){refused=plan.reason;return null;}
+          return {next:plan.nextStudents};
+        });
+        const studentsResult=await promise;
+        if(refused) return {status:"blocked",reason:refused};
+        if(!writeConfirmed(studentsResult)) return {status:"blocked",reason:"write-failed",key:"students"};
+      }
+      // Class part (also the recovery of a half-done release).
+      const state=releaseStateOf({series:latestClassesRef.current.find(c=>c.id===seriesId),students:latestStudentsRef.current,date});
+      if(state.state==="class-pending"){
+        const classesResult=await setClasses(p=>p.map(c=>c.id===seriesId?applyReleaseToClassRow(c,state.record):c));
+        if(!writeConfirmed(classesResult)) return {status:"blocked",reason:"write-failed",key:"classes"};
+      } else if(state.state!=="released") return {status:"blocked",reason:"inconsistent"};
+      // Renewal, from the latest committed state.
+      let renewRefused=null;
+      const {promise:renewPromise}=commitStudentsBatch(latest=>{
+        let next=latest,changed=false;
+        for(const sid of studentIds){
+          const r=buildRenewalAfterRelease({classes:latestClassesRef.current,students:next,studentId:sid,seriesId,date,todayDate:today});
+          if(!r.ok){if(r.reason!=="already-renewed") renewRefused=r.reason;continue;}
+          next=next.map(st=>st.id===sid?{...st,combos:[...(st.combos||[]),r.combo]}:st);
+          changed=true;
+        }
+        return changed?{next}:null;
+      });
+      const renewResult=await renewPromise;
+      if(renewRefused) return {status:"blocked",reason:renewRefused};
+      if(renewResult.status!=="noop"&&!writeConfirmed(renewResult)) return {status:"blocked",reason:"write-failed",key:"students"};
+      return {status:"completed",studentIds};
+    } finally {
+      releaseInFlightRef.current.delete(key);
+    }
+  };
+  // Cobros: the release candidate of one student, read from the LATEST state (null when none).
+  const findReleaseRenewalFor=(studentId)=>{
+    const cand=findReleaseCandidateForStudent({classes:latestClassesRef.current,students:latestStudentsRef.current,studentId,todayDate:todayIso()});
+    return cand&&cand.ok?cand:null;
+  };
+  const releaseRenewal={find:findReleaseRenewalFor,run:releaseAndRenew};
+  // Recovery: a release whose students part is saved but whose class part is not (reload, lost connection) is
+  // completed here, idempotently, only once the classes queue is settled. Never touches a date that changed.
+  // The effect calls the CURRENT render's function through a ref, so it always reads the latest setters/state.
+  const completePendingReleasesRef=useRef(()=>{});
+  completePendingReleasesRef.current=()=>{
+    if(!user?.id||!dataReadyForCurrentIdentity) return;
+    if(!isClassesWriteSettled()) return;
+    for(const pending of findPendingReleaseCompletions(latestClassesRef.current,latestStudentsRef.current)){
+      const key=pending.seriesId+"|"+pending.date;
+      if(releaseInFlightRef.current.has(key)) continue;
+      releaseInFlightRef.current.add(key);
+      Promise.resolve(setClasses(p=>p.map(c=>c.id===pending.seriesId?applyReleaseToClassRow(c,pending):c)))
+        .finally(()=>releaseInFlightRef.current.delete(key));
+    }
+  };
+  useEffect(()=>{ completePendingReleasesRef.current(); },[classes,students,user?.id,dataReadyForCurrentIdentity]);
 
   const [pendingReprog,setPendingReprog]=useState(null);
   const handleRefresh=async()=>{if(user?.id)await reconcileCoachData(user.id,rawSetters,()=>activeIdentityRef.current===user.id);};
@@ -11706,9 +11888,9 @@ export default function App() {
         {tab==="dashboard"&&!isFirstTime&&<Dashboard students={students} classes={xClasses} onNavigate={handleNavigate} onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)} expenses={expenses} coachProfile={coachProfile} onRefresh={handleRefresh}/>}
         {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onAddStudentDirect={(s)=>setStudents(p=>[...p,s])} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={xClasses} onInvite={()=>setShowInvite(true)} userId={user?.id} onInviteStudent={(s)=>setInviteTarget(s)} onRefresh={handleRefresh} families={families} setFamilies={setFamilies} getLatestClasses={()=>latestClassesRef.current} getLatestStudents={()=>latestStudentsRef.current}/>}
         {inviteTarget&&<InviteModal student={inviteTarget} userId={user?.id} coachName={coachProfile.name} onClose={()=>setInviteTarget(null)}/>}
-        {tab==="agenda"&&<Agenda students={students} classes={xClasses} rawClasses={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onUpdateStudentsBatch={commitStudentsBatch} isClassesWriteSettled={isClassesWriteSettled} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])} onRefresh={handleRefresh}/>}
+        {tab==="agenda"&&<Agenda onReleaseAndRenew={releaseAndRenew} students={students} classes={xClasses} rawClasses={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onUpdateStudentsBatch={commitStudentsBatch} isClassesWriteSettled={isClassesWriteSettled} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])} onRefresh={handleRefresh}/>}
         {tab==="chat"&&<Chat key={user?.id||"no-user"} students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification} userId={user?.id} unreadChats={unreadChats} onMarkRead={(sid)=>setUnreadChats(p=>{const n={...p};delete n[String(sid)];return n;})}/>}
-        {tab==="cobros"&&<Finances students={students} classes={xClasses} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance} families={families} onVoidMensualPayment={handleVoidMensualPayment} onRecordMensualPayment={handleRecordMensualPayment} onSaveMensualAmount={handleSaveMensualAmount} isStudentActiveNow={isStudentActiveNow}/>}
+        {tab==="cobros"&&<Finances releaseRenewal={releaseRenewal} students={students} classes={xClasses} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance} families={families} onVoidMensualPayment={handleVoidMensualPayment} onRecordMensualPayment={handleRecordMensualPayment} onSaveMensualAmount={handleSaveMensualAmount} isStudentActiveNow={isStudentActiveNow}/>}
         {tab==="finanzas"&&<Finances students={students} classes={xClasses} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} onEditLinkedMensualIncome={handleEditLinkedMensualIncome}/>}
         {showNewClass&&<NewClassModal onClose={()=>{setShowNewClass(false);if(classes.length===0)setTab("agenda");}} onSave={handleSaveClass} existingClasses={xClasses} students={students} dateLabel="Nueva clase" onCreateStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])}/>}
         {showNewStudent&&<NewStudentModal onClose={()=>setShowNewStudent(false)} onSave={(d)=>setStudents(p=>[...p,{id:Date.now(),...d}])}/>}

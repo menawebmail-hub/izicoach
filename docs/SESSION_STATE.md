@@ -1,6 +1,17 @@
 SESSION_STATE.md — IziCoach
 
-# Current task — account isolation (device storage)
+# Current task — BUG-COMBO-01 and release of a reprogrammed date (Agenda/Cobros)
+
+- Branch `fix/combo-used-release-date` (from `main` `79ea17c`), local changes only: **not committed,
+  not pushed, not deployed**. No SQL, no migration, no real data touched.
+- BUG-COMBO-01 (`used` by original date) and BUG-AGENDA-04 (the original date of a class already given
+  elsewhere stays blocked; Pato Ojeda 26/10 → 02/10). Details: `docs/BUGS.md`.
+- Verified: `npm test` 63/63 (main 41); `vite build` clean; `oxlint` 364 = main (no new warning).
+  Pato regression on the real App functions: 26/10 grey, 28/10 grey, new combo 0/8, previous 8/8,
+  payments unchanged slot by slot (8, 5, 3, 0 paid), partial write + recovery, refusals.
+- Not yet checked in a browser (owner's local check). Pending decision: commit/push authorization.
+
+# Previous task — account isolation (device storage), closed
 
 - Branch `fix/iso-device-storage` (from `main` `c241570`): BUG-ISO-01 (Chat groups per coach)
   and BUG-ISO-02 (legacy local copies: writes removed, `clearLegacyBusinessCaches()`
@@ -35,8 +46,8 @@ SESSION_STATE.md — IziCoach
   members' individual chats (details in `docs/BUGS.md`). Validated by the owner on the Mac
   (2026-10-25, `localhost:5173`): group chat shows the notice with no input, send or 📢 button;
   members view works; individual chats unchanged.
-- Closure authorized (2026-10-25): fast-forward of `main` to this branch and Vercel's automatic
-  Production deployment; no SQL, migration or data cleanup; R4 and the outbox untouched.
+- Closed 2026-10-25: `main` fast-forwarded to `79ea17c` and deployed by Vercel (Production success);
+  no SQL, migration or data cleanup; R4 and the outbox untouched.
 - Verified on the branch vs `main` `c241570`: `npm test` 41/41 (main 15/15); `vite build` clean
   on both; `oxlint` 364 problems on both, same warnings (no new one).
 - Open risks before Production (merge to `main` = automatic Vercel deploy):

@@ -82,6 +82,13 @@ UI
 Prefer deriving display information from the existing data model rather than creating UI-specific duplicate state.
 Example:
 Student.familyId → Family membership
+8b. RESCHEDULE HISTORY AND RELEASED DATES
+Reschedule chains are walked by src/schedule/rescheduleChain.js only (one walk for Agenda, Cobros, pauses and resumes).
+combo.dates is positional: Cobros assigns payments by position (resolveSlotPayments). Never re-sort combo.dates to move a slot.
+A released original date (BUG-AGENDA-04, src/schedule/releaseReprogrammedDate.js) is recorded on both sides:
+	•	combo.slotRelocations: [{id, from, to, classId, at}] — the slot kept its position and took its real date;
+	•	class.releasedReschedules: [{id, date, destination, entry, at}] — the dateCancellations entry that was removed.
+Write order: students, then the class, then the renewal; recovery completes a pending class part idempotently.
 9. ARCHITECTURAL REGRESSION GUARDS
 Do not reintroduce:
 	•	stale React closure updates;

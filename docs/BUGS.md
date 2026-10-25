@@ -371,3 +371,46 @@ Broadcast to members: one message per member in their individual chat with the c
 The individual `send` also ignores the insert error: a failed individual message (e.g. a blocked coach) is lost without a warning. Not changed here.
 
 ---
+
+## BUG-COMBO-01 — `combo.used` counts a reprogrammed class by its original date
+
+**Status:** Fixed on branch `fix/combo-used-release-date` (local, not committed)  
+**Area:** `handleAttendance` (used recount), `PagoModal` (given count at payment)  
+**Priority:** High
+
+### Description
+A class reprogrammed and given on another date (Pato Ojeda: 26/10 → 02/10) never counted in `used`: the attendance recount looked up attendance ON `combo.dates` (the original 26/10), and the payment count skipped any original date after today. `used` stayed 7/8 while Cobros (Realizadas, terminal-aware) read 8/8, which hid "¡Pago registrado! → Renovar Combo" and kept Editar clase treating the combo as active.
+
+### Fix
+- `countAttendedSlots` (`src/schedule/releaseReprogrammedDate.js`): each slot is read on the terminal of its reschedule chain in that series, by explicit attendance only (present / ausente-dada); each terminal counts once; paused or "A Reprogramar" terminals never count. Dates without a chain count exactly as before.
+- `PagoModal`: a slot counts once its fulfillment date (`getSlotFulfillmentDate`, the destination for a reprogrammed slot) is today or earlier.
+- The chain walk (`resolveRescheduleChain`, `resolveComboDateStatus`, `traceRescheduleHistory`) moved verbatim to `src/schedule/rescheduleChain.js`.
+
+### Tests
+`src/schedule/releaseReprogrammedDate.test.js`, `src/schedule/patoRelease.test.js`, `src/schedule/releaseWiring.test.js`.
+
+---
+
+## BUG-AGENDA-04 — The original date of a class already given elsewhere stays blocked
+
+**Status:** Fixed on branch `fix/combo-used-release-date` (local, not committed)  
+**Area:** Agenda (grey cards, "Renovar Combo desde esta fecha"), Cobros (both renewal buttons)  
+**Priority:** High
+
+### Description
+`dateCancellations` is keyed by DATE, so `dateCancellations["2026-10-26"] = {cancelled_reprog → 2026-10-02}` is both the history of the class moved to 02/10 and the state of Monday 26/10. The 26th stayed a green "Reprogramada" card (not grey, no renewal), Cobros renewed from 28/10, and a combo starting on the 26th would have read that entry as its own (the 02/10 class counted twice, the new combo born 1/8). Same root as BUG-AGENDA-03 (date used as key); fixed narrowly, without plan B.
+
+### Rule
+An original date is released when all of this holds: one direct reprogramming to a live destination; nothing else arrived at either date; the date is today or later and has no attendance; every affected student has EXPLICIT attendance (present / ausente-dada) on the destination — the passing of time is never proof; every other slot of the affected combo is settled and before the date; no pause, planned resume or resume operation involved; the destination is not already a date of the combo; exactly one combo per student holds the date; no later combo of the series exists; and no slot changes its paid / displayed / given state (checked with `buildPersonSlotRows`, for the final and for the half-written state).
+
+### What the release writes
+1. **Students first:** the slot keeps its POSITION in `combo.dates` (payments are assigned by position, so re-sorting would move them) and takes its real date; `slotRelocations: [{id, from, to, classId, at}]`; `used` = max(used, explicit attendance count). Total, payments, paidCount, amount: untouched.
+2. **Then the class:** `dateCancellations[date]` is removed only while it still says exactly that reprogramming; the destination joins `occurrences` (its card and attendance stay); `releasedReschedules: [{id, date, destination, entry, at}]` keeps the removed entry.
+3. **Then the renewal** from the released date (`buildRenewalDates`, the same rule as Cobros, on the series' days; refused if it would not start on the date), with `sourceClassId`.
+
+A half-done release (students saved, class not) counts nothing twice and is completed by the next attempt or by the recovery effect in App, idempotently, only when the classes queue is settled; a date that changed meanwhile is never touched.
+
+### Tests
+Pato regression on the real App functions with "today" = 25/10/2026: 26/10 grey, 28/10 grey, new combo 0/8 from 26/10, previous combo 8/8, payments unchanged for 8, 5, 3 and 0 paid, two students, partial write and recovery, and every refusal (`src/schedule/patoRelease.test.js`).
+
+---
