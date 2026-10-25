@@ -2,10 +2,9 @@ SESSION_STATE.md — IziCoach
 
 # Current task — account isolation (device storage)
 
-- Branch `fix/iso-device-storage` (from `main` `c241570`), pushed for validation, now at
-  `c35da97` (not merged, not deployed): BUG-ISO-01 (Chat groups per coach) and BUG-ISO-02 (legacy local
-  copies: writes removed, `clearLegacyBusinessCaches()` implemented but not called).
-  Details: `docs/BUGS.md`.
+- Branch `fix/iso-device-storage` (from `main` `c241570`): BUG-ISO-01 (Chat groups per coach)
+  and BUG-ISO-02 (legacy local copies: writes removed, `clearLegacyBusinessCaches()`
+  implemented but not called). Details: `docs/BUGS.md`.
 - Owner's manual check on the Mac (2026-10-25, `localhost:5173`, branch at `83df8a5`):
   - R1 validated: each coach's groups are stored under `izi_chat_groups:<coach uuid>` (two
     test coaches, two different keys); they survive logout/login; coach B never sees coach A's
@@ -28,12 +27,16 @@ SESSION_STATE.md — IziCoach
   the device fails, the coach is warned on the confirm screen and the group is not added.
   Individual chats and the per-coach isolation are unchanged. Helper `src/chat/groupMembers.js`.
   Validated by the owner on the Mac (2026-10-25, `localhost:5173`).
-- BUG-CHAT-03 mitigated (option D, local commit, not pushed): group chats hide the text field,
+- BUG-CHAT-03 mitigated (option D, `a0ffa53`): group chats hide the text field,
   send and 📢 buttons and show "El envío a grupos todavía no está disponible. Podés escribirle a
   cada alumno desde su chat individual."; no message query, Realtime subscription or
   mark-as-read call is made with a group id. Group creation, per-coach storage and members view
   kept; individual chats unchanged. No SQL. Future option (not implemented): broadcast to the
-  members' individual chats (details in `docs/BUGS.md`). Not yet checked in a browser.
+  members' individual chats (details in `docs/BUGS.md`). Validated by the owner on the Mac
+  (2026-10-25, `localhost:5173`): group chat shows the notice with no input, send or 📢 button;
+  members view works; individual chats unchanged.
+- Closure authorized (2026-10-25): fast-forward of `main` to this branch and Vercel's automatic
+  Production deployment; no SQL, migration or data cleanup; R4 and the outbox untouched.
 - Verified on the branch vs `main` `c241570`: `npm test` 41/41 (main 15/15); `vite build` clean
   on both; `oxlint` 364 problems on both, same warnings (no new one).
 - Open risks before Production (merge to `main` = automatic Vercel deploy):
