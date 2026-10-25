@@ -19,6 +19,7 @@ import { loadChatGroups, saveChatGroups } from "./chat/chatGroupsStorage.js";
 import { resolveRescheduleChain, resolveComboDateStatus, traceRescheduleHistory } from "./schedule/rescheduleChain.js";
 import { applyReleaseToClassRow, applyReleaseToCombo, countAttendedSlots, findPendingReleaseCompletions, releaseMessage, releaseStateOf, resolveReleasableDate } from "./schedule/releaseReprogrammedDate.js";
 import { applyFusedRepairToClassRow, findFusedGroups, fusedMessage, planFusedRepair, rescheduleDestinationConflict, shortDate } from "./schedule/fusedChains.js";
+import { additionMessage, applyAdditionToClassRow, applyAdditionToStudents, findPendingAdditionCompletions, hasCurrentComboForDayAddition, resolveComboDayAddition } from "./schedule/comboDayAddition.js";
 import { GROUP_SEND_UNAVAILABLE_TEXT, groupMemberCount, groupMemberNames, groupMembersLabel, isGroupChat } from "./chat/groupMembers.js";
 
 // Inject Inter font
@@ -1646,6 +1647,31 @@ const findFusedRepairForStudent=({classes,students,studentId,todayDate})=>{
     if(groups.some(g=>g.slots.some(sl=>sl.holders.some(h=>h.studentId===studentId)))) return {seriesId:series.id,plan:planFusedRepairChecked({classes,students,seriesId:series.id,todayDate})};
   }
   return null;
+};
+
+// ---- "Agregar día al combo" (src/schedule/comboDayAddition.js) ----
+// Full plan, never written here, with the same slot readings check as the release: for every affected student each
+// remaining class keeps exactly its paid/displayed/given/paused/cancelled reading and the new date takes the reading
+// of the date it replaces — checked for the final state and for the half-written one (students saved, class not).
+// `signature` lets the write re-validate that the latest state still yields the exact preview.
+const planComboDayAddition=({classes,students,seriesId,date,todayDate})=>{
+  const series=(classes||[]).find(c=>c.id===seriesId);
+  const add=resolveComboDayAddition({series,students,date,todayDate,knownSeriesIds:new Set((classes||[]).map(c=>c.id))});
+  if(!add.ok) return add;
+  const nextStudents=applyAdditionToStudents(students,add,{opId:"preview",at:null});
+  const nextSeries=applyAdditionToClassRow(series,{opId:"preview",date,studentIds:add.affected.map(a=>a.studentId),at:null});
+  const nextClasses=classes.map(c=>c.id===seriesId?nextSeries:c);
+  for(const a of add.affected){
+    const before=slotReadingsOf(students.find(s=>s.id===a.studentId),classes,todayDate);
+    const st2=nextStudents.find(s=>s.id===a.studentId);
+    for(const cls of [nextClasses,classes]){
+      if(!sameSlotReadings(before,slotReadingsOf(st2,cls,todayDate),a.removed,date)){
+        const lastPaid=before.filter(r=>r.isPaid).map(r=>r.date).sort().slice(-1)[0]||null;
+        return {ok:false,reason:"payment-shift",studentId:a.studentId,blockDate:lastPaid};
+      }
+    }
+  }
+  return {...add,signature:JSON.stringify({date,addOccurrence:add.addOccurrence,affected:add.affected.map(x=>[x.studentId,x.comboId,x.removed])})};
 };
 
 // Cobros renewal buttons: when the student's last combo ends on a releasable reprogrammed date, the renewal goes
@@ -4592,7 +4618,9 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
             }
             // Preserve existing occurrences that have attendance/cancellation data
             const preserved=(cls.occurrences||[]).filter(d=>d<sd);
-            newOccurrences=[...new Set([...preserved,...result])].sort();
+            // "Agregar día al combo": dates added to combos are not weekly days; never drop them (class.addedDates).
+            const addedKeep=(cls.addedDates||[]).map(a=>a&&a.date).filter(d=>typeof d==="string");
+            newOccurrences=[...new Set([...preserved,...result,...addedKeep])].sort();
           }
           // Only send studentPacks for students the professor explicitly changed
           const filteredPacks={};
@@ -4849,6 +4877,51 @@ const reprogSecondaryBtnStyle=(active,disabled)=>({width:"100%",minHeight:44,pad
 // Three levels: (1) the "Reprogramar / Cancelar" button of the Agenda menu, (2) this window's "choose" stage
 // ("Cancelar clase" | "Reprogramar"), (3) the "Reprogramar clase" panel. A class already A Reprogramar
 // opens straight at level 3 as "Asignar fecha".
+// "Agregar día al combo" (Agenda): pick a date, see the preview (date added, date removed per student, total and
+// price unchanged), confirm. Nothing is written before the confirmation; the App re-validates the exact preview
+// (signature) against the latest state right before writing.
+function AddComboDayModal({ series, classes, students, onConfirm, onClose }) {
+  const [date,setDate]=useState("");
+  const [busy,setBusy]=useState(false);
+  const plan=date?planComboDayAddition({classes,students,seriesId:series.id,date,todayDate:todayIso()}):null;
+  const nameOf=(sid)=>(students.find(s=>s.id===sid)||{}).name||"Alumno";
+  const confirm=async()=>{
+    if(busy||!plan||!plan.ok) return;
+    setBusy(true);
+    try{
+      const r=await onConfirm({seriesId:series.id,date,expected:plan.signature});
+      if(r&&r.status==="completed") onClose();
+      else alert(additionMessage(r&&r.reason,r));
+    } finally { setBusy(false); }
+  };
+  return (
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.5)",zIndex:999,display:"flex",alignItems:"flex-end"}} onClick={()=>!busy&&onClose()}>
+      <div style={{background:"#F5F7FF",borderRadius:"24px 24px 0 0",padding:"24px 20px",paddingBottom:"calc(32px + env(safe-area-inset-bottom, 24px))",width:"100%",maxHeight:"90vh",overflowY:"auto",boxSizing:"border-box"}} onClick={e=>e.stopPropagation()}>
+        <div style={{fontWeight:900,fontSize:19,color:"#0D1B4B",marginBottom:4}}>Agregar día al combo</div>
+        <div style={{fontSize:13,color:"#6B7BAD",marginBottom:16}}>{series.title} · {series.time}</div>
+        <label style={{fontSize:12,color:"#1565C0",fontWeight:700,display:"block",marginBottom:6}}>Nueva fecha</label>
+        <input type="date" value={date} min={todayIso()} onChange={e=>setDate(e.target.value)} style={{width:"100%",padding:"12px",borderRadius:10,border:"none",fontSize:13,boxSizing:"border-box",background:"#E3F2FD",color:"#0D1B4B",marginBottom:12}}/>
+        {plan&&!plan.ok&&<div role="alert" style={{fontSize:12,color:"#C62828",fontWeight:600,marginBottom:12}}>{additionMessage(plan.reason,plan)}</div>}
+        {plan&&plan.ok&&(
+          <div style={{background:"#fff",borderRadius:14,padding:"12px 14px",marginBottom:12,border:"1px solid #90CAF9",fontSize:13,color:"#0D1B4B"}}>
+            {plan.affected.map(a=>(
+              <div key={a.studentId} style={{marginBottom:plan.affected.length>1?10:0}}>
+                {plan.affected.length>1&&<div style={{fontWeight:800,marginBottom:2}}>{nameOf(a.studentId)}</div>}
+                <div><span style={{color:"#2E7D32",fontWeight:700}}>Se agrega: </span>{fmtDate(plan.date)}</div>
+                <div><span style={{color:"#C62828",fontWeight:700}}>Se quita: </span>{fmtDate(a.removed)} <span style={{color:"#6B7BAD"}}>(última fecha futura del combo)</span></div>
+                <div><span style={{color:"#6B7BAD"}}>Total: </span>{a.total} clases, sin cambios</div>
+              </div>
+            ))}
+            <div style={{fontSize:12,color:"#6B7BAD",marginTop:8}}>El precio, los pagos y la asistencia no cambian.{plan.affected.length>1?" Se aplica a todos los alumnos de combo de la clase.":""}</div>
+          </div>
+        )}
+        <button disabled={busy||!plan||!plan.ok} onClick={confirm} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:(busy||!plan||!plan.ok)?"#ccc":"linear-gradient(135deg,#1565C0,#1976D2)",color:"#fff",fontSize:14,fontWeight:800,cursor:(busy||!plan||!plan.ok)?"default":"pointer",marginBottom:10}}>{busy?"Guardando…":"➕ Confirmar y agregar día"}</button>
+        <button disabled={busy} onClick={onClose} style={{width:"100%",padding:"13px",borderRadius:14,border:"1.5px solid #DDE3F0",background:"#fff",color:"#6B7BAD",fontSize:14,fontWeight:700,cursor:"pointer"}}>Cancelar</button>
+      </div>
+    </div>
+  );
+}
+
 function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent, series, knownSeriesIds }) {
   const isAssigningDate0=cls.cancelled&&cls.cancelType==="cancelled_reprog"&&!cls.rescheduledTo;
   const [stage,setStage]=useState(isAssigningDate0?"reprog":"choose"); // "choose" | "reprog"
@@ -5612,7 +5685,7 @@ function AttModal({ att, students, onAttendance, onClose }) {
   );
 }
 
-function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAddStudent, courts=[], packages=[], onUpdateStudent, onUpdateStudentsBatch, isClassesWriteSettled, onDeleteClass, pendingReprog, onClearPendingReprog, onAddPackage, onRefresh, onReleaseAndRenew }) {
+function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAddStudent, courts=[], packages=[], onUpdateStudent, onUpdateStudentsBatch, isClassesWriteSettled, onDeleteClass, pendingReprog, onClearPendingReprog, onAddPackage, onRefresh, onReleaseAndRenew, onAddComboDay }) {
   const [selDay,setSelDay]=useState(TODAY_DATE);
   const [viewYear,setViewYear]=useState(new Date().getFullYear());
   const [viewMonth,setViewMonth]=useState(new Date().getMonth());
@@ -5948,6 +6021,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
   // shown grey "Sin pagar" and offered "Renovar Combo desde esta fecha" — the same candidate Cobros reads. Nothing is
   // written until the coach confirms; the App orchestrator re-validates everything against the latest state.
   const [releaseBusy,setReleaseBusy]=useState(false);
+  const [addDayFor,setAddDayFor]=useState(null); // series id of the open "Agregar día al combo"
   const releaseCandidateOf=(c)=>{
     if(!onReleaseAndRenew||!c||!c.cancelled||c.cancelType!=="cancelled_reprog"||!c.rescheduledTo) return null;
     const cand=resolveReleaseCandidate({classes:rawClasses||classes,students,seriesId:c._seriesId||c.id,date:c.date,todayDate:todayIso()});
@@ -6208,6 +6282,12 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                       </button>
                     ))}
                   </div>
+                  {/* Agregar día al combo: classes with a current combo */}
+                  {onAddComboDay&&hasCurrentComboForDayAddition({series:(rawClasses||classes).find(cl=>cl.id===(c._seriesId||c.id)),students,todayDate:todayIso(),knownSeriesIds:new Set((rawClasses||classes).map(cl=>cl.id))})&&(
+                    <button onClick={()=>{setAddDayFor(c._seriesId||c.id);setHighlightCls(null);}} style={{width:"100%",marginTop:8,padding:"13px",borderRadius:14,border:"1.5px solid #1565C0",background:"#fff",color:"#1565C0",fontSize:14,cursor:"pointer",fontWeight:800}}>
+                      ➕ Agregar día al combo
+                    </button>
+                  )}
                   {/* Renovar Combo button for gray classes */}
                   {(()=>{
                     // Use selDay (the currently selected date) to check if this is a gray class
@@ -6511,6 +6591,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
         // above, which replace the old in-memory-only pendingResume roundtrip.
         onSaveClass({...pauseCls,cancelled:false,cancelType:"paused",paused:true,applyToAll:false,_plannedResumeDate:rDate||null},true);
       }}/>}
+      {addDayFor&&(rawClasses||classes).find(cl=>cl.id===addDayFor)&&<AddComboDayModal series={(rawClasses||classes).find(cl=>cl.id===addDayFor)} classes={rawClasses||classes} students={students} onConfirm={onAddComboDay} onClose={()=>setAddDayFor(null)}/>}
       {showCancel&&<CancelReprogModal cls={showCancel} series={(rawClasses||classes).find(c2=>c2.id===(showCancel._seriesId||showCancel.id))} knownSeriesIds={new Set((rawClasses||classes).map(c2=>c2.id))} onClose={()=>setShowCancel(null)} onSave={(u)=>{const r=onSaveClass(u,true);if(u._endOfPackage&&r&&r.status==="end-of-package-unavailable") return r;setShowCancel(null);return r;}} students={students} onUpdateStudent={onUpdateStudent}/>}
       {showNew&&<NewClassModal onClose={()=>{setShowNew(false);setGridNewTime(null);setWeekOffset(0);}} onSave={onSaveClass} existingClasses={classes} students={students} dateLabel={viewMode==="month"?selLabel:weekLabel()} onCreateStudent={onAddStudent} prefill={gridNewTime||(viewMode==="month"?{date:selDay}:null)} courts={courts} packages={packages} onAddPackage={(pkg)=>{if(typeof onAddPackage==="function")onAddPackage(pkg);}}/>}
       {att&&<AttModal att={att} students={students} onAttendance={onAttendance} onClose={()=>setAtt(null)}/>}
@@ -11270,6 +11351,36 @@ export default function App() {
     find:(studentId)=>findFusedRepairForStudent({classes:latestClassesRef.current,students:latestStudentsRef.current,studentId,todayDate:todayIso()}),
     run:repairFusedChains,
   };
+  // "Agregar día al combo" (Agenda). Durable order: (1) ONE students write for every affected student (re-planned on
+  // the latest state inside the producer; refused unless it still yields the exact confirmed preview), (2) the class:
+  // the date joins occurrences and class.addedDates keeps the record. A missing class part is finished by the next
+  // attempt or by the recovery effect below; nothing is ever applied to only part of the students.
+  const addComboDay=async({seriesId,date,expected})=>{
+    const key="add|"+seriesId+"|"+date;
+    if(releaseInFlightRef.current.has(key)||!isClassesWriteSettled()) return {status:"blocked",reason:"write-pending"};
+    releaseInFlightRef.current.add(key);
+    try{
+      const today=todayIso();
+      const opId=crypto.randomUUID();
+      const at=new Date().toISOString();
+      let refused=null,studentIds=[];
+      const {promise}=commitStudentsBatch(latest=>{
+        const plan=planComboDayAddition({classes:latestClassesRef.current,students:latest,seriesId,date,todayDate:today});
+        if(!plan.ok){refused=plan;return null;}
+        if(plan.signature!==expected){refused={reason:"changed"};return null;}
+        studentIds=plan.affected.map(a=>a.studentId);
+        return {next:applyAdditionToStudents(latest,plan,{opId,at})};
+      });
+      const studentsResult=await promise;
+      if(refused) return {status:"blocked",reason:refused.reason,blockDate:refused.blockDate};
+      if(!writeConfirmed(studentsResult)) return {status:"blocked",reason:"write-failed",key:"students"};
+      const classesResult=await setClasses(p=>p.map(c=>c.id===seriesId?applyAdditionToClassRow(c,{opId,date,studentIds,at}):c));
+      if(!writeConfirmed(classesResult)) return {status:"blocked",reason:"write-failed",key:"classes"};
+      return {status:"completed",studentIds};
+    } finally {
+      releaseInFlightRef.current.delete(key);
+    }
+  };
   // Recovery: a release whose students part is saved but whose class part is not (reload, lost connection) is
   // completed here, idempotently, only once the classes queue is settled. Never touches a date that changed.
   // The effect calls the CURRENT render's function through a ref, so it always reads the latest setters/state.
@@ -11282,6 +11393,13 @@ export default function App() {
       if(releaseInFlightRef.current.has(key)) continue;
       releaseInFlightRef.current.add(key);
       Promise.resolve(setClasses(p=>p.map(c=>c.id===pending.seriesId?applyReleaseToClassRow(c,pending):c)))
+        .finally(()=>releaseInFlightRef.current.delete(key));
+    }
+    for(const pending of findPendingAdditionCompletions(latestClassesRef.current,latestStudentsRef.current)){
+      const key="add|"+pending.seriesId+"|"+pending.date;
+      if(releaseInFlightRef.current.has(key)) continue;
+      releaseInFlightRef.current.add(key);
+      Promise.resolve(setClasses(p=>p.map(c=>c.id===pending.seriesId?applyAdditionToClassRow(c,pending):c)))
         .finally(()=>releaseInFlightRef.current.delete(key));
     }
   };
@@ -12048,7 +12166,7 @@ export default function App() {
         {tab==="dashboard"&&!isFirstTime&&<Dashboard students={students} classes={xClasses} onNavigate={handleNavigate} onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)} expenses={expenses} coachProfile={coachProfile} onRefresh={handleRefresh}/>}
         {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onAddStudentDirect={(s)=>setStudents(p=>[...p,s])} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={xClasses} onInvite={()=>setShowInvite(true)} userId={user?.id} onInviteStudent={(s)=>setInviteTarget(s)} onRefresh={handleRefresh} families={families} setFamilies={setFamilies} getLatestClasses={()=>latestClassesRef.current} getLatestStudents={()=>latestStudentsRef.current}/>}
         {inviteTarget&&<InviteModal student={inviteTarget} userId={user?.id} coachName={coachProfile.name} onClose={()=>setInviteTarget(null)}/>}
-        {tab==="agenda"&&<Agenda onReleaseAndRenew={releaseAndRenew} students={students} classes={xClasses} rawClasses={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onUpdateStudentsBatch={commitStudentsBatch} isClassesWriteSettled={isClassesWriteSettled} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])} onRefresh={handleRefresh}/>}
+        {tab==="agenda"&&<Agenda onReleaseAndRenew={releaseAndRenew} onAddComboDay={addComboDay} students={students} classes={xClasses} rawClasses={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onUpdateStudentsBatch={commitStudentsBatch} isClassesWriteSettled={isClassesWriteSettled} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])} onRefresh={handleRefresh}/>}
         {tab==="chat"&&<Chat key={user?.id||"no-user"} students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification} userId={user?.id} unreadChats={unreadChats} onMarkRead={(sid)=>setUnreadChats(p=>{const n={...p};delete n[String(sid)];return n;})}/>}
         {tab==="cobros"&&<Finances releaseRenewal={releaseRenewal} fusedRepair={fusedRepair} students={students} classes={xClasses} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance} families={families} onVoidMensualPayment={handleVoidMensualPayment} onRecordMensualPayment={handleRecordMensualPayment} onSaveMensualAmount={handleSaveMensualAmount} isStudentActiveNow={isStudentActiveNow}/>}
         {tab==="finanzas"&&<Finances students={students} classes={xClasses} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} onEditLinkedMensualIncome={handleEditLinkedMensualIncome}/>}

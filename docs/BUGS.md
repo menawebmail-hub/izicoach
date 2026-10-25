@@ -439,3 +439,22 @@ Combos, payments, amounts and attendance are never written. Attendance is per da
 `src/schedule/fusedChains.test.js` (fictitious data shaped exactly like the reported case, real App functions), `src/schedule/fusedWiring.test.js`.
 
 ---
+
+## FEATURE-AGENDA-01 — "Agregar día al combo"
+
+**Status:** Implemented locally on branch `fix/combo-used-release-date` (not committed)  
+**Area:** Agenda (class menu), `src/schedule/comboDayAddition.js`
+
+### Behavior
+From the class menu, "➕ Agregar día al combo" (classes with a current combo). The coach picks a date and sees the preview: date added, date removed per student (the last eligible future date of the combo), total and price unchanged. Confirming writes one students write for every combo student of the class, then the class (the date joins `occurrences`, `addedDates` keeps the record); `combo.dateAdditions` keeps {date, removed, classId}. Nothing is applied to only part of the students; the write re-validates the exact preview; a missing class part is completed by the recovery effect.
+
+### Refused
+Past dates; dates already in the combo, with an entry or an arriving reprogramming, or with attendance; no eligible date to remove after the new one; an active pause in the combo, a pending planned resume or a resume date; mensual or individual students in the class; more than one current combo for a student; and any change in which classes read paid (partly paid combos: the new date must come after the last paid class).
+
+### Never removed
+Past dates, dates with attendance, reprogrammed or arriving dates, resume (paused/replacement) dates.
+
+### Tests
+`src/schedule/comboDayAddition.test.js` (unpaid, partly paid, fully paid, group, refusals, partial write and recovery), `src/schedule/comboDayWiring.test.js`.
+
+---

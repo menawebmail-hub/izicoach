@@ -91,6 +91,7 @@ A released original date (BUG-AGENDA-04, src/schedule/releaseReprogrammedDate.js
 Write order: students, then the class, then the renewal; recovery completes a pending class part idempotently.
 A repaired fused chain (BUG-AGENDA-03, src/schedule/fusedChains.js) is recorded in class.chainRepairs: [{id, kind:"split-fused", at, slots, before, after, freedDates, attendance}]; combos are never written by it.
 A dated reprogramming must not land on a date that already carries another class or reprogramming of the series (rescheduleDestinationConflict).
+"Agregar día al combo" (src/schedule/comboDayAddition.js) keeps combo.dates sorted and records combo.dateAdditions: [{id, date, removed, classId, at}] and class.addedDates: [{id, date, studentIds, at}]; EditClassScreen keeps class.addedDates when it regenerates occurrences. Write order: students, then the class.
 9. ARCHITECTURAL REGRESSION GUARDS
 Do not reintroduce:
 	•	stale React closure updates;

@@ -14,7 +14,8 @@ SESSION_STATE.md — IziCoach
   - next commit: pause/resume checks made precise (only this class and its students, only the involved dates,
     a planned resume only if it could take a freed date), dated messages; the 2026-10-25 local check showed
     "No se puede separar mientras haya una pausa o reanudación" for Pato with the series-wide rule.
-- Verified: `npm test` 80/80; `vite build` clean; `oxlint` 364 = main. Details: `docs/BUGS.md`.
+  - local, not committed: "Agregar día al combo" (FEATURE-AGENDA-01 in `docs/BUGS.md`).
+- Verified: `npm test` 92/92; `vite build` clean; `oxlint` 364 = main. Details: `docs/BUGS.md`.
 - Not yet checked in a browser.
 
 # Previous task — account isolation (device storage), closed
