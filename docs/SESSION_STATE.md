@@ -1,6 +1,22 @@
 SESSION_STATE.md — IziCoach
 
-# Current task — BUG-AGENDA-05 stage 2.0: attendance read in each slot's own class (branch `fix/agenda-edit-scope`)
+# Current task — BUG-AGENDA-05 stage 2.1: advance absence notices (branch `fix/agenda-edit-scope`)
+
+- Implemented locally, NOT committed (2026-11-21), on top of `98b7778`: "Avisar ausencia" (card menus + modal),
+  `class.attendanceNotices` (class row only, history kept), reading priority attendance → notice → nothing, Dada notice
+  consumes only after the class, No dada never; Asistencia prefilled and correctable, no definitive attendance for a
+  future date; Inicio shows a No dada notice only after the class. Details: `docs/BUGS.md` stage 2.1.
+- Verified: `npm test` 164/164; snapshot unchanged; build clean; oxlint 364; new jsdom Agenda test (3) passes.
+- Final validation done (2026-11-21): coach-facing Inicio message; no double counting of `used` (recount, stored
+  value, later attendance, payment, mixed notices); 176/176, build clean, oxlint 364, jsdom 9 stage-2.1 UI tests pass.
+  READY FOR COMMIT (not committed, not pushed).
+- Review fixes (local, NOT committed): Inicio never reprograms the whole class for an individual absence (message
+  instead; whole-class absences unchanged); `used` unified with the notice rule (recount + export / package checks /
+  mora / payment count read due Dada notices; No dada never). 171/171, build clean, oxlint 364, jsdom Inicio test (2).
+- NOT publishable: the student portal must be updated (SQL RPC whitelist + client) and validated first.
+- Next: owner review → commit authorization; portal update (with the migration history repair) before any merge.
+
+# Previous step — BUG-AGENDA-05 stage 2.0: attendance read in each slot's own class (branch `fix/agenda-edit-scope`)
 
 - Committed as `f879be2` and pushed to `origin/fix/agenda-edit-scope` (2026-11-21); not merged, not deployed. On top of `7402d18`: `src/schedule/attendanceRead.js` (single
   reading: explicit attendance of that class and date -> [2.1 notice] -> nothing), fixed `resolveSlotGiven`, reader,

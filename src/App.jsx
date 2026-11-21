@@ -21,9 +21,10 @@ import { applyReleaseToClassRow, applyReleaseToCombo, countAttendedSlots, findPe
 import { applyFusedRepairToClassRow, findFusedGroups, fusedMessage, planFusedRepair, rescheduleDestinationConflict, shortDate } from "./schedule/fusedChains.js";
 import { additionMessage, applyAdditionToClassRow, applyAdditionToStudents, findPendingAdditionCompletions, hasCurrentComboForDayAddition, resolveComboDayAddition } from "./schedule/comboDayAddition.js";
 import { cleanCombosAfterClassRemoval, comboDatesLeftWithoutCard, editableFromCard, editRefusalMessage, keepDatesWithHistory, regenerateOccurrences, seriesFieldsFromEdit, singleDateEditChanges, singleDateEditMessage, studentRemovalBlock, studentRemovalMessage, weekdayChangeMessage } from "./schedule/classEditScope.js";
-import { createSlotReader, getSlotFulfillmentDate, interpretContractDate, isClassDone } from "./schedule/slotStatus.js";
+import { createSlotReader, dueDadaNoticeCount, effectiveComboUsed, getSlotFulfillmentDate, givenByReading, interpretContractDate, isClassDone } from "./schedule/slotStatus.js";
 import { comboIndexWithMoveInto, countUsedForCombo, hasSlotMoves } from "./schedule/slotMoves.js";
-import { readAttendance, slotCardOn, slotClassId } from "./schedule/attendanceRead.js";
+import { noticeOf, readAttendance, slotCardOn, slotClassId } from "./schedule/attendanceRead.js";
+import { applyNoticesToClassRow, cardNoticeRefusal, individualRecoveryMessage, isWholeClassAbsence, noticeMessage, noticeRecordOf, noticeWriteRefusal, pendingNoticeStudentIds } from "./schedule/absenceNotices.js";
 import { GROUP_SEND_UNAVAILABLE_TEXT, groupMemberCount, groupMemberNames, groupMembersLabel, isGroupChat } from "./chat/groupMembers.js";
 
 // Inject Inter font
@@ -659,6 +660,12 @@ const getAttendanceChipStatus=(c,sid)=>{
     if((log.present||[]).includes(sid)) return "presente";
     if((log.ausente_dada||[]).includes(sid)) return "ausente_dada";
     if((log.ausente_reprog||[]).includes(sid)) return "ausente_reprog";
+  }
+  // Stage 2.1: an advance absence notice of THIS card (class and real date) shows its status, also before the class;
+  // the day's attendance listing the student always wins (above).
+  const notice=noticeOf(c,c.date,sid);
+  if(notice) return notice.status;
+  if(log){
     // An explicit absence always wins (checked above); a student who isn't in ANY of the three
     // arrays for a day that already has a log — e.g. added to the class after attendance was
     // taken — is unmarked, not absent: defaults to presente, same as AttModal's own initializer
@@ -817,8 +824,14 @@ const buildSlotHistoryRows=(slot,displayPaid,isGiven,myClasses,studentId,timeEnd
     else if(slot.studentMoves) status=isGiven?"done":"scheduled";
     else if(depth===0) status=isGiven?"done":"scheduled";
     else {
-      const att=classId!==undefined&&classId!==null?readAttendance({classes:myClasses,classId,date,studentId}).entry:myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===date);
-      const done=att?((att.present||[]).includes(studentId)||(att.ausente_dada||[]).includes(studentId)):isClassDone(date,timeEnd);
+      let done;
+      if(classId!==undefined&&classId!==null){
+        const given=givenByReading(readAttendance({classes:myClasses,classId,date,studentId}),date,timeEnd);
+        done=given!==null?given:isClassDone(date,timeEnd);
+      } else {
+        const att=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===date);
+        done=att?((att.present||[]).includes(studentId)||(att.ausente_dada||[]).includes(studentId)):isClassDone(date,timeEnd);
+      }
       status=done?"done":"scheduled";
     }
     return {date,depth,status,isPaid:!!displayPaid,isTerminal};
@@ -1744,7 +1757,15 @@ function isComboClosed(c, myClasses, studentId) {
     // owes no makeup — the slot is resolved.
     if(cl?.cancelled&&cl?.cancelType==="cancelled") return true;
     const slotCls=slotClassId(myClasses,c,d);
-    const attEntry=slotCls!==undefined?readAttendance({classes:myClasses,classId:slotCls,date:fulfillmentDate,studentId}).entry:myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===fulfillmentDate);
+    if(slotCls!==undefined){
+      // Stage 2.1: explicit attendance of its own class first, then an advance notice (Ausente – Dada resolves once
+      // the class has happened; Ausente – No dada owes a makeup), then the time-based fallback — as before.
+      const r=readAttendance({classes:myClasses,classId:slotCls,date:fulfillmentDate,studentId});
+      if(r.state==="present"||(r.source==="attendance"&&r.state==="ausente_dada")) return true;
+      if(r.state==="ausente_reprog") return false;
+      return isClassDone(fulfillmentDate,"23:59");
+    }
+    const attEntry=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===fulfillmentDate);
     const wasPresent=attEntry?(attEntry.present||[]).includes(studentId):false;
     const wasAusenteDada=attEntry?(attEntry.ausente_dada||[]).includes(studentId):false;
     const wasAusenteReprog=attEntry?(attEntry.ausente_reprog||[]).includes(studentId):false;
@@ -1862,7 +1883,8 @@ const buildMensualLegacyExportRow=(student,combo,classesList)=>{
 // date/método is invented) or a single Pendiente row for the full amount.
 const buildComboExportRows=(student,combo,classesList)=>{
   const claseName=resolveComboClassName(combo,classesList);
-  const counters=getComboExportCounters(combo);
+  // Stage 2.1: `used` read with due Ausente – Dada notices (= combo.used without them).
+  const counters=getComboExportCounters({...combo,used:effectiveComboUsed({combo,studentId:student.id,classes:classesList})});
   const tipo=combo.packType==="individual"?"Individual":"Combo";
   const baseRow={Alumno:student.name,Clase:claseName,Tipo:tipo,"Mes correspondiente":"","Día de cobro":"","Total de clases":counters.total,"No pagadas":counters.noPagadas,Restantes:counters.restantes};
   const payments=combo.payments||[];
@@ -3529,6 +3551,13 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
       const nonMensualIds=(log?.ausente_reprog||[]).filter(sid=>!isMensualForClass(sid,c));
       return {cls:c,reason:"reprog",students:nonMensualIds.map(id=>students.find(s=>s.id===id)).filter(Boolean)};
     }).filter(x=>x.students.length>0),
+    // Stage 2.1: an advance notice Ausente – No dada shows here only once that class has happened (never before), unless
+    // the day's attendance already decides the student (then the entry above does); paused, cancelled or reprogrammed
+    // dates and mensual students excluded.
+    ...classes.filter(c=>!c.cancelled&&!(c.paused||c.cancelType==="paused")&&isClassDone(c.date,c.timeEnd||"23:59")).map(c=>{
+      const ids=pendingNoticeStudentIds(c).filter(sid=>!isMensualForClass(sid,c));
+      return {cls:c,reason:"reprog",students:ids.map(id=>students.find(s=>s.id===id)).filter(Boolean)};
+    }).filter(x=>x.students.length>0),
   ];
   // Paused packages alert
   // The count is the ACTIVE pauses of the student's contractual slots (the same figure Cobros
@@ -3681,17 +3710,23 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
               <div style={{fontSize:13,fontWeight:800,color:C.text}}>⛔↩ Clases a reprogramar</div>
               <button onClick={()=>onNavigate("agenda")} style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:C.blue2,fontWeight:700}}>Ver agenda →</button>
             </div>
-            {reprogAlerts.slice(0,4).map(({cls,reason,students:sts},i)=>(
-              <div key={i} onClick={()=>onNavigate("agenda",{reprog:cls})} style={{background:reason==="a_reprogramar"?"#E3F2FD":"#E8EAF6",border:"1.5px solid "+(reason==="a_reprogramar"?"#90CAF9":"#9FA8DA"),borderRadius:12,padding:"10px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
+            {reprogAlerts.slice(0,4).map(({cls,reason,students:sts},i)=>{
+              // Stage 2.1 review: an INDIVIDUAL absence (someone else took that class) stays visible but never opens the
+              // class-level Reprogramar flow (it would move everyone's class); only a whole-class absence or a class "A
+              // reprogramar" does, as before.
+              const individual=reason==="reprog"&&!isWholeClassAbsence(cls,students.map(x=>x.id));
+              return (
+              <div key={i} onClick={()=>{if(individual){alert(individualRecoveryMessage(sts.map(x=>x.name.split(" ")[0])));return;}onNavigate("agenda",{reprog:cls});}} style={{background:reason==="a_reprogramar"?"#E3F2FD":"#E8EAF6",border:"1.5px solid "+(reason==="a_reprogramar"?"#90CAF9":"#9FA8DA"),borderRadius:12,padding:"10px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
                 <div style={{width:36,height:36,borderRadius:12,background:reason==="a_reprogramar"?"linear-gradient(135deg,#1565C0,#42A5F5)":"linear-gradient(135deg,#3949AB,#5C6BC0)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,color:"#fff",flexShrink:0}}>{reason==="a_reprogramar"?"🕐":"↩"}</div>
                 <div style={{flex:1}}>
                   <div style={{fontSize:13,fontWeight:700,color:C.text}}>{cls.title}</div>
                   <div style={{fontSize:11,color:reason==="a_reprogramar"?"#1565C0":"#3949AB",fontWeight:600}}>
-                    {reason==="a_reprogramar"?"A reprogramar":"A reprogramar (asistencia)"} · {sts.map(s=>s.name.split(" ")[0]).join(", ")} · {fmtDate(cls.date)}
+                    {reason==="a_reprogramar"?"A reprogramar":individual?"Recuperación individual pendiente":"A reprogramar (asistencia)"} · {sts.map(s=>s.name.split(" ")[0]).join(", ")} · {fmtDate(cls.date)}
                   </div>
                 </div>
               </div>
-            ))}
+              );
+            })}
             {reprogAlerts.length>4&&<div style={{fontSize:12,color:C.mutedDark,textAlign:"center",marginBottom:4}}>+{reprogAlerts.length-4} más</div>}
           </div>
         )}
@@ -5509,21 +5544,28 @@ function AttModal({ att, students, onAttendance, onClose }) {
     const existingLog=(att.attendanceLog||[]).find(e=>e.date===att.date);
     att.students.forEach(sid=>{
       const isMensual=attendanceCycleFor(students,classRealId,att.date,sid).length===2;
+      // Stage 2.1: a student with an advance notice (and no attendance of their own yet) starts from that notice,
+      // so the coach confirms it or corrects it (e.g. Presente if they came after all).
+      const notice=noticeOf(att,att.date,sid);
+      const fromNotice=notice?(notice.status==="ausente_reprog"&&isMensual?"ausente_dada":notice.status):null;
       if(existingLog){
         if((existingLog.ausente_dada||[]).includes(sid)) init[sid]="ausente_dada";
         // A mensual student's historical ausente_reprog (from before this change, or from a legacy
         // combo shape) reads back simply as Ausente — no mass migration; re-saving normalizes it below.
         else if((existingLog.ausente_reprog||[]).includes(sid)) init[sid]=isMensual?"ausente_dada":"ausente_reprog";
         else if((existingLog.present||[]).includes(sid)) init[sid]="presente";
-        else init[sid]="presente";
+        else init[sid]=fromNotice||"presente";
       } else {
-        init[sid]="presente";
+        init[sid]=fromNotice||"presente";
       }
     });
     return init;
   });
 
+  // Stage 2.1: definitive attendance is never saved for a future date (only advance notices).
+  const isFutureDate=att.date>todayIso();
   const handleSave=()=>{
+    if(isFutureDate) return;
     const presentStudents=att.students.filter(sid=>attStatus[sid]==="presente");
     const ausente_dada=att.students.filter(sid=>attStatus[sid]==="ausente_dada");
     // A mensual student's attStatus is only ever "presente"/"ausente_dada" (attendanceCycleFor never
@@ -5584,6 +5626,7 @@ function AttModal({ att, students, onAttendance, onClose }) {
                   }
                   <div style={{flex:1}}>
                     <div style={{fontWeight:700,fontSize:14,color:C.text}}>{st.name}</div>
+                    {(()=>{const n=noticeOf(att,att.date,sid);if(!n)return null;const mensualSt=attendanceCycleFor(students,classRealId,att.date,sid).length===2;return <div style={{fontSize:11,color:C.mutedDark,marginTop:2}}>📣 Avisó: {n.status==="ausente_reprog"?"Ausente — No Dada":mensualSt?"Ausente":"Ausente — Dada"}</div>;})()}
                   </div>
                   <button onClick={()=>cycleStatus(sid)} style={{padding:"8px 16px",borderRadius:20,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:curLabel.bg,color:curLabel.color,minWidth:160,textAlign:"center"}}>
                     {curLabel.label}
@@ -5593,17 +5636,82 @@ function AttModal({ att, students, onAttendance, onClose }) {
             );
           })}
         </div>
+        {isFutureDate&&<div role="alert" style={{margin:"0 16px 8px",fontSize:12,color:"#E65100",background:"#FFF3E0",borderRadius:10,padding:"10px 12px"}}>La asistencia se registra el día de la clase. Para una ausencia anticipada usá «Avisar ausencia».</div>}
         {/* Footer */}
         <div style={{padding:"12px 16px",paddingBottom:"calc(28px + env(safe-area-inset-bottom, 34px))",borderTop:"1px solid "+C.border,display:"flex",gap:10}}>
           <button onClick={onClose} style={{flex:1,padding:"12px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:14,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
-          <button onClick={handleSave} style={{flex:2,padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:14,fontWeight:800}}>Guardar asistencia</button>
+          <button onClick={handleSave} disabled={isFutureDate} style={{flex:2,padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:isFutureDate?"not-allowed":"pointer",opacity:isFutureDate?0.5:1,fontSize:14,fontWeight:800}}>Guardar asistencia</button>
         </div>
       </div>
     </div>
   );
 }
 
-function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAddStudent, courts=[], packages=[], onUpdateStudent, onUpdateStudentsBatch, isClassesWriteSettled, onDeleteClass, pendingReprog, onClearPendingReprog, onAddPackage, onRefresh, onReleaseAndRenew, onAddComboDay }) {
+
+// "Avisar ausencia" (BUG-AGENDA-05 stage 2.1): an advance individual absence for THIS class card and its real date,
+// stored apart from attendanceLog (class.attendanceNotices). Classmates are never touched. Refused when the day's
+// attendance is already recorded (correct Asistencia instead), on a paused/cancelled/reprogrammed or past date.
+function AbsenceNoticeModal({ card, students, onSave, onClose }) {
+  const seriesId=card._seriesId||card.id;
+  const refusal=cardNoticeRefusal(card,todayIso());
+  const roster=(card.students||[]).filter(sid=>students.some(s=>s.id===sid));
+  const initial=Object.fromEntries(roster.map(sid=>[sid,noticeOf(card,card.date,sid)?.status||null]));
+  const [sel,setSel]=useState(initial);
+  const [error,setError]=useState("");
+  const isMensual=sid=>attendanceCycleFor(students,seriesId,card.date,sid).length===2;
+  const cycleOf=sid=>isMensual(sid)?[null,"ausente_dada"]:[null,"ausente_reprog","ausente_dada"];
+  const LABEL={
+    none:{label:"Sin aviso",bg:C.blueL,color:C.blue2},
+    ausente_reprog:{label:"↩ Ausente — No Dada",bg:"#3949AB",color:"#fff"},
+    ausente_dada:{label:"✗ Ausente — Dada",bg:"#E65100",color:"#fff"},
+  };
+  const labelFor=(sid,st)=>{
+    if(!st) return LABEL.none;
+    if(st==="ausente_dada"&&isMensual(sid)) return {...LABEL.ausente_dada,label:"✗ Ausente"};
+    return LABEL[st];
+  };
+  const cycle=sid=>setSel(p=>{const c=cycleOf(sid);const i=c.indexOf(p[sid]??null);return {...p,[sid]:c[((i<0?0:i)+1)%c.length]};});
+  const changes=roster.filter(sid=>(sel[sid]??null)!==(initial[sid]??null)).map(sid=>({studentId:sid,status:sel[sid]??null}));
+  const save=()=>{
+    if(changes.length===0){onClose();return;}
+    const r=onSave({seriesId,date:card.date,changes});
+    if(r&&r.status==="refused"){setError(noticeMessage(r.reason));return;}
+    onClose();
+  };
+  const fmtAt=iso=>{const d=new Date(iso);return isNaN(d)?"":String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0")+" "+String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");};
+  return (
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:500,display:"flex",alignItems:"flex-end"}}>
+      <div style={{background:C.white,borderRadius:"20px 20px 0 0",width:"100%",boxSizing:"border-box",maxHeight:"85%",display:"flex",flexDirection:"column"}}>
+        <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",borderRadius:"20px 20px 0 0",padding:"16px 20px"}}>
+          <div style={{fontWeight:800,fontSize:16,color:C.white}}>Avisar ausencia</div>
+          <div style={{fontSize:12,color:C.muted,marginTop:2}}>{card.title} · {card.date}</div>
+        </div>
+        <div style={{flex:1,overflowY:"auto",padding:"12px 16px"}}>
+          {refusal?<div role="alert" style={{fontSize:13,color:"#E65100",background:"#FFF3E0",borderRadius:10,padding:"10px 12px"}}>{noticeMessage(refusal)}</div>:roster.map(sid=>{
+            const st=students.find(s=>s.id===sid);
+            const l=labelFor(sid,sel[sid]??null);
+            const rec=noticeRecordOf(card,card.date,sid);
+            return (
+              <div key={sid} style={{padding:"10px 0",borderBottom:"1px solid "+C.border,display:"flex",alignItems:"center",gap:12}}>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:700,fontSize:14,color:C.text}}>{st.name}</div>
+                  {rec&&rec.history&&rec.history.length>0&&<div style={{fontSize:11,color:C.mutedDark,marginTop:2}}>Último cambio: {fmtAt(rec.at)} · {rec.history.length} {rec.history.length===1?"registro":"registros"}</div>}
+                </div>
+                <button onClick={()=>cycle(sid)} style={{padding:"8px 16px",borderRadius:20,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:l.bg,color:l.color,minWidth:160,textAlign:"center"}}>{l.label}</button>
+              </div>
+            );
+          })}
+          {error&&<div role="alert" style={{marginTop:10,fontSize:12,color:"#C62828",fontWeight:600}}>{error}</div>}
+        </div>
+        <div style={{padding:"12px 16px",paddingBottom:"calc(28px + env(safe-area-inset-bottom, 34px))",borderTop:"1px solid "+C.border,display:"flex",gap:10}}>
+          <button onClick={onClose} style={{flex:1,padding:"12px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:14,color:C.mutedDark,fontWeight:700}}>{refusal?"Cerrar":"Cancelar"}</button>
+          {!refusal&&<button onClick={save} style={{flex:2,padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:14,fontWeight:800}}>Guardar aviso</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAbsenceNotice, onAddStudent, courts=[], packages=[], onUpdateStudent, onUpdateStudentsBatch, isClassesWriteSettled, onDeleteClass, pendingReprog, onClearPendingReprog, onAddPackage, onRefresh, onReleaseAndRenew, onAddComboDay }) {
   const [selDay,setSelDay]=useState(TODAY_DATE);
   const [viewYear,setViewYear]=useState(new Date().getFullYear());
   const [viewMonth,setViewMonth]=useState(new Date().getMonth());
@@ -5613,6 +5721,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
   const [att,setAtt]=useState(null);
   const [editCls,setEditCls]=useState(null);
   const [editScopeData,setEditScopeData]=useState(null);
+  const [noticeCard,setNoticeCard]=useState(null); // "Avisar ausencia" (stage 2.1)
   const [gridNewTime,setGridNewTime]=useState(null);
   const [highlightCls,setHighlightCls]=useState(null);
   const [confirmDelete,setConfirmDelete]=useState(null); // class to delete
@@ -6192,6 +6301,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                     {[
                       {label:"Editar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,action:()=>{setEditCls(c);setHighlightCls(null);},disabled:false,color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
                       {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt({...c,attendanceLog:c.attendanceLog||[]});setHighlightCls(null);},disabled:isNextComboPending(c,students),color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
+                      ...(onAbsenceNotice?[{label:"Avisar ausencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="17" y1="8" x2="23" y2="14"/><line x1="23" y1="8" x2="17" y2="14"/></svg>,action:()=>{setNoticeCard(c);setHighlightCls(null);},disabled:(()=>{const r=cardNoticeRefusal(c,todayIso());return !!r&&r!=="attendance-recorded";})()}]:[]),
                       {label:c.paused||c.cancelType==="paused"?"▶ Reanudar":"⏸ Pausar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{c.paused||c.cancelType==="paused"?<polygon points="5 3 19 12 5 21 5 3"/>:<g><line x1="10" y1="4" x2="10" y2="20"/><line x1="14" y1="4" x2="14" y2="20"/></g>}</svg>,action:()=>{if(c.paused||c.cancelType==="paused"){setShowResume(c);}else{setShowPause(c);}setHighlightCls(null);},disabled:c.date<WEEK_AGO,color:c.date<WEEK_AGO?"#ccc":c.paused||c.cancelType==="paused"?"linear-gradient(135deg,#2E7D32,#43A047)":"linear-gradient(135deg,#E65100,#FF8F00)"},
                       {label:c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo?"Asignar fecha":c.cancelled?"Reactivar":"Reprogramar / Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="15" x2="15" y2="15"/></svg>,action:()=>{if(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo){setShowCancel(c);}else if(c.cancelled){onSaveClass({...c,cancelled:false,cancelType:null,rescheduledTo:null,applyToAll:false,_reactivating:true},true);}else{setShowCancel(c);}setHighlightCls(null);},disabled:(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo)?false:c.date<WEEK_AGO,color:(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo)?"linear-gradient(135deg,#1565C0,#42A5F5)":c.date<WEEK_AGO?"#ccc":c.cancelled&&!c.rescheduledTo?"linear-gradient(135deg,#1565C0,#42A5F5)":c.cancelled?"linear-gradient(135deg,#1565C0,#42A5F5)":"linear-gradient(135deg,#E65100,#FF8F00)"},
                     ].map(btn=>(
@@ -6432,6 +6542,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
                         {[
                           {label:"Editar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,action:()=>{setEditCls(c);setHighlightCls(null);},color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
                           {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt({...c,attendanceLog:c.attendanceLog||[]});setHighlightCls(null);},color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
+                          ...(onAbsenceNotice?[{label:"Avisar ausencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="17" y1="8" x2="23" y2="14"/><line x1="23" y1="8" x2="17" y2="14"/></svg>,action:()=>{setNoticeCard(c);setHighlightCls(null);},disabled:(()=>{const r=cardNoticeRefusal(c,todayIso());return !!r&&r!=="attendance-recorded";})()}]:[]),
                           {label:c.paused||c.cancelType==="paused"?"▶ Reanudar":"⏸ Pausar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{c.paused||c.cancelType==="paused"?<polygon points="5 3 19 12 5 21 5 3"/>:<g><line x1="10" y1="4" x2="10" y2="20"/><line x1="14" y1="4" x2="14" y2="20"/></g>}</svg>,action:()=>{if(c.paused||c.cancelType==="paused"){setShowResume(c);}else{setShowPause(c);}setHighlightCls(null);},disabled:c.date<WEEK_AGO,color:c.date<WEEK_AGO?"#ccc":c.paused||c.cancelType==="paused"?"linear-gradient(135deg,#2E7D32,#43A047)":"linear-gradient(135deg,#E65100,#FF8F00)"},
                           {label:c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo?"Asignar fecha":c.cancelled?"Reactivar":"Reprogramar / Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="15" x2="15" y2="15"/></svg>,action:()=>{if(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo){setShowCancel(c);}else if(c.cancelled){onSaveClass({...c,cancelled:false,cancelType:null,rescheduledTo:null,applyToAll:false,_reactivating:true},true);}else{setShowCancel(c);}setHighlightCls(null);},disabled:(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo)?false:c.date<WEEK_AGO,color:(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo)?"linear-gradient(135deg,#1565C0,#42A5F5)":c.date<WEEK_AGO?"#ccc":c.cancelled&&!c.rescheduledTo?"linear-gradient(135deg,#1565C0,#42A5F5)":c.cancelled?"linear-gradient(135deg,#1565C0,#42A5F5)":"linear-gradient(135deg,#E65100,#FF8F00)"},
                         ].map(btn=>(
@@ -6531,6 +6642,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
       {showCancel&&<CancelReprogModal cls={showCancel} series={(rawClasses||classes).find(c2=>c2.id===(showCancel._seriesId||showCancel.id))} knownSeriesIds={new Set((rawClasses||classes).map(c2=>c2.id))} onClose={()=>setShowCancel(null)} onSave={(u)=>{const r=onSaveClass(u,true);if(u._endOfPackage&&r&&r.status==="end-of-package-unavailable") return r;setShowCancel(null);return r;}} students={students} onUpdateStudent={onUpdateStudent}/>}
       {showNew&&<NewClassModal onClose={()=>{setShowNew(false);setGridNewTime(null);setWeekOffset(0);}} onSave={onSaveClass} existingClasses={classes} students={students} dateLabel={viewMode==="month"?selLabel:weekLabel()} onCreateStudent={onAddStudent} prefill={gridNewTime||(viewMode==="month"?{date:selDay}:null)} courts={courts} packages={packages} onAddPackage={(pkg)=>{if(typeof onAddPackage==="function")onAddPackage(pkg);}}/>}
       {att&&<AttModal att={att} students={students} onAttendance={onAttendance} onClose={()=>setAtt(null)}/>}
+      {noticeCard&&onAbsenceNotice&&<AbsenceNoticeModal card={noticeCard} students={students} onSave={onAbsenceNotice} onClose={()=>setNoticeCard(null)}/>}
     </div>
   );
 }
@@ -6994,7 +7106,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   // (never just "the student's last combo", which may be a class combo); legacy keeps lastCombo.
   const mensualInfoCombo=mensualCombo||lastCombo;
   const totalPaid=lastCombo?.total||0;
-  const totalUsed=lastCombo?.used||0;
+  const totalUsed=lastCombo?effectiveComboUsed({combo:lastCombo,studentId:s.id,classes}):0; // = lastCombo.used without due notices
   // moraCount only applies when the last combo was paid and exceeded
   // If unpaid, there's no mora — just unpaid classes
   const moraCount=lastCombo?.paid?Math.max(0,totalUsed-totalPaid):0;
@@ -7051,11 +7163,17 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         const {isPaid:isPaidDate,displayPaid:displayPaidDate}=paymentAt(i);
         // Stage 2.0: attendance of this slot's own class on that date only.
         const slotCls=slotClassId(myClasses,c,ds);
-        const attEntry=slotCls!==undefined?readAttendance({classes:myClasses,classId:slotCls,date:ds,studentId:s.id}).entry:myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===ds);
-        const wasAusenteDada=attEntry?(attEntry.ausente_dada||[]).includes(s.id):false;
-        const wasAusenteReprog=attEntry?(attEntry.ausente_reprog||[]).includes(s.id):false;
-        const wasPresent=attEntry?(attEntry.present||[]).includes(s.id):false;
-        const wasAbsent=attEntry?(!wasPresent&&!wasAusenteDada&&!wasAusenteReprog):false;
+        const rd=slotCls!==undefined?readAttendance({classes:myClasses,classId:slotCls,date:ds,studentId:s.id}):null;
+        const attEntry=rd?rd.entry:myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===ds);
+        // Stage 2.1: an advance notice reads like that attendance only once the class has happened; before, the row
+        // says the student gave notice (noticeLabel).
+        const fromNotice=!!(rd&&rd.source==="notice");
+        const noticeDue=fromNotice&&isClassDone(ds,classOnDate?.timeEnd);
+        const wasAusenteDada=rd?((rd.source==="attendance"||noticeDue)&&rd.state==="ausente_dada"):(attEntry?(attEntry.ausente_dada||[]).includes(s.id):false);
+        const wasAusenteReprog=rd?((rd.source==="attendance"||noticeDue)&&rd.state==="ausente_reprog"):(attEntry?(attEntry.ausente_reprog||[]).includes(s.id):false);
+        const wasPresent=rd?(rd.source==="attendance"&&rd.state==="present"):(attEntry?(attEntry.present||[]).includes(s.id):false);
+        const wasAbsent=rd?(rd.source==="attendance"&&rd.state==="unmarked"):(attEntry?(!wasPresent&&!wasAusenteDada&&!wasAusenteReprog):false);
+        const noticeLabel=fromNotice&&!noticeDue?(rd.state==="ausente_reprog"?"📣 Avisó: No dada":"📣 Avisó: Dada"):null;
         // A definitively-cancelled Combo slot is billed and consumed like a given one —
         // isGiven=true (its row still shows "Cancelada", not "Realizada": the leftLabel
         // below checks isCancelled before isGiven). Individual is NOT extended (not a
@@ -7065,7 +7183,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         let status;
         if(isPaidDate){status=isGiven?"dada":"adar";}
         else{status=isGiven?"dada_unpaid":"pendiente";}
-        result.push({date:ds,status,comboId:c.id,sourceComboIndex,sourceClassId:c.sourceClassId,packType:c.packType||"combo",isGiven,wasPresent,wasAbsent,wasAusenteDada,wasAusenteReprog,isCancelled,isReprogWithDate,isReprogNoDate,isPaused,isCompensated:slot.isCompensated,displayPaid:displayPaidDate,rescheduledTo:slot.rescheduledTo||null,terminalDate:slot.terminalDate,reschedulePath:slot.reschedulePath,terminalStatus:slot.terminalStatus,historyRows:buildSlotHistoryRows(slot,displayPaidDate,isGiven,myClasses,s.id,classOnDate?.timeEnd)});
+        result.push({date:ds,status,comboId:c.id,sourceComboIndex,sourceClassId:c.sourceClassId,packType:c.packType||"combo",isGiven,wasPresent,wasAbsent,wasAusenteDada,wasAusenteReprog,isCancelled,isReprogWithDate,isReprogNoDate,isPaused,isCompensated:slot.isCompensated,displayPaid:displayPaidDate,rescheduledTo:slot.rescheduledTo||null,terminalDate:slot.terminalDate,reschedulePath:slot.reschedulePath,terminalStatus:slot.terminalStatus,historyRows:buildSlotHistoryRows(slot,displayPaidDate,isGiven,myClasses,s.id,classOnDate?.timeEnd),noticeLabel});
       });
     });
     // Dedup by (sourceComboIndex + date), NOT date alone — two distinct obligations
@@ -7227,6 +7345,10 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
           const clsD=slotCardOn(myClsForCombo,c,d); // stage 2.0: this combo's own class on that date
           if(clsD&&(clsD.paused||clsD.cancelType==="paused")) return false;
           const fulfillment=getSlotFulfillmentDate(d,clsD&&clsD.cancelled,clsD&&clsD.cancelType,clsD&&clsD.rescheduledTo);
+          // Stage 2.1: a slot read through an advance notice follows the notice rule (Dada once the class happened,
+          // No dada never); every other slot keeps this date rule.
+          const rn=fulfillment&&c.sourceClassId!==undefined?readAttendance({classes:myClsForCombo,classId:c.sourceClassId,date:fulfillment,studentId:s.id}):null;
+          if(rn&&rn.source==="notice") return givenByReading(rn,fulfillment,(clsD&&clsD.timeEnd)||"23:59");
           return !!fulfillment&&fulfillment<=TODAY_DATE;
         }).length;
         const paymentDates=rows.map(r=>r.date);
@@ -7765,6 +7887,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               else if(isCancelled){leftBg="#FFF0F0";leftColor="#C62828";leftLabel="⛔ Cancelada";}
               else if(isReprogWithDate){leftBg=SLOT_BADGES.reprogrammed.bg;leftColor=SLOT_BADGES.reprogrammed.color;leftLabel="🔄 Reprogramada";}
               else if(isReprogNoDate){leftBg="#E3F2FD";leftColor="#1565C0";leftLabel="🕐 A Reprogramar";}
+              else if(item.noticeLabel){const nr=item.noticeLabel.endsWith("No dada");leftBg=nr?"#E8EAF6":"#FFF3E0";leftColor=nr?"#3949AB":"#E65100";leftLabel=item.noticeLabel;}
               else if(wasAusenteReprog){leftBg="#E8EAF6";leftColor="#3949AB";leftLabel="↩ A Reprogramar";}
               else if(wasAusenteDada){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="🚫 Ausente (Dada)";}
               else if(wasAbsent){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="🚫 Ausente";}
@@ -11145,9 +11268,24 @@ export default function App() {
     return true;
   };
 
+  // "Avisar ausencia" (BUG-AGENDA-05 stage 2.1): re-validated on the LATEST class row, one classes write, the class
+  // row only (attendanceNotices); attendanceLog, students, combos and payments are never touched.
+  const saveAbsenceNotices=({seriesId,date,changes})=>{
+    if(isClassesWriteSettled&&!isClassesWriteSettled()) return {status:"refused",reason:"write-pending"};
+    const row=latestClassesRef.current.find(c=>c.id===seriesId);
+    const isMensual=sid=>{const st=latestStudentsRef.current.find(s=>s.id===sid);const combo=resolveStudentComboForClass(st,seriesId,date);return !!(combo&&combo.packType==="mensual");};
+    const refused=noticeWriteRefusal({row,date,changes,todayDate:todayIso(),isMensual});
+    if(refused) return {status:"refused",reason:refused};
+    const at=new Date().toISOString();
+    setClasses(p=>p.map(c=>c.id===seriesId?applyNoticesToClassRow(c,{date,changes,at}):c));
+    return {status:"saved"};
+  };
+
   const handleAttendance=(cls)=>{
     const wD=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
     const classDate=cls.date||new Date().toISOString().split("T")[0];
+    // Stage 2.1: no definitive attendance for a future date (only advance notices); nothing is written.
+    if(classDate>todayIso()) return {status:"future-attendance"};
     const day=wD[new Date(classDate+"T12:00:00").getDay()];
     const presentIds=cls.students||[];
     const ausenteDadaIds=cls.ausente_dada||[];
@@ -11172,7 +11310,8 @@ export default function App() {
         const combos=[...s.combos];
         const target=combos[guestIdx];
         const series=classesForMoves.find(c=>c.id===target.sourceClassId);
-        const newUsed=countUsedForCombo({combo:target,studentId:s.id,dc:series?.dateCancellations||{},attendanceLog:series?.attendanceLog||[],baseClassId:target.sourceClassId,classes:classesForMoves});
+        const newUsed=countUsedForCombo({combo:target,studentId:s.id,dc:series?.dateCancellations||{},attendanceLog:series?.attendanceLog||[],baseClassId:target.sourceClassId,classes:classesForMoves})
+          +dueDadaNoticeCount({combo:target,studentId:s.id,classes:classesForMoves});
         combos[guestIdx]={...target,used:newUsed};
         return {...s,combos};
       }
@@ -11205,7 +11344,9 @@ export default function App() {
       const targetDates=target.dates||(target.date?[target.date]:[]);
       const seriesDc=(target.sourceClassId===realId||target.sourceClassId===undefined)?(classes.find(c=>c.id===realId)?.dateCancellations||{}):{};
       // Same inputs as before (countAttendedSlots when the combo has no slotMoves); moved slots count at their destination.
-      const newUsed=countUsedForCombo({combo:{...target,dates:targetDates},studentId:s.id,dc:seriesDc,attendanceLog:mergedLog,baseClassId:target.sourceClassId!==undefined?target.sourceClassId:realId,classes:classesForMoves});
+      // Stage 2.1: plus slots consumed only by a due Ausente – Dada notice (0 without notices).
+      const newUsed=countUsedForCombo({combo:{...target,dates:targetDates},studentId:s.id,dc:seriesDc,attendanceLog:mergedLog,baseClassId:target.sourceClassId!==undefined?target.sourceClassId:realId,classes:classesForMoves})
+        +dueDadaNoticeCount({combo:{...target,dates:targetDates},studentId:s.id,classes:classesForMoves});
       combos[lastIdx]={...target,used:newUsed};
       return {...s,combos};
     }));
@@ -11462,11 +11603,13 @@ export default function App() {
         const lastCombo=targetIdx>=0?combos[targetIdx]:null;
         const lastDate=lastCombo?.dates?.slice(-1)[0]||"";
         const today=new Date().toISOString().slice(0,10);
-        const lastComboFullyUsed=!lastDate||((lastDate<today)&&(lastCombo?.used||0)>=(lastCombo?.total||0));
+        // Stage 2.1: `used` read with due Ausente – Dada notices (= lastCombo.used without them).
+        const lastUsed=lastCombo?effectiveComboUsed({combo:lastCombo,studentId:s.id,classes}):0;
+        const lastComboFullyUsed=!lastDate||((lastDate<today)&&lastUsed>=(lastCombo?.total||0));
         const hasActiveCombo=lastCombo&&(
           (lastDate&&lastDate>=today) ||
           (lastCombo.packType==="mensual") ||
-          ((lastCombo.used||0)<(lastCombo.total||0))
+          (lastUsed<(lastCombo.total||0))
         );
         // Existing mensual combo (modern or legacy) reached via Editar Clase: package and paid are
         // effectively read-only from this screen (Cobros/PagoModal own those — see
@@ -11532,7 +11675,7 @@ export default function App() {
             // class already given/paid) must be rejected outright, not silently
             // clamped — clamping would misrepresent classes the student already
             // received or paid for.
-            const consumed=Number(lastCombo.used||0);
+            const consumed=lastUsed;
             const existingPaidCount=Number(lastCombo.paidCount||0);
             if(newTotal<consumed||newTotal<existingPaidCount){
               alert("No se puede cambiar el paquete de "+s.name+": ya hay "+Math.max(consumed,existingPaidCount)+" clases dadas o pagadas, más que el nuevo total ("+newTotal+"). Elegí un paquete con más clases.");
@@ -12143,7 +12286,7 @@ export default function App() {
         {tab==="dashboard"&&!isFirstTime&&<Dashboard students={students} classes={xClasses} onNavigate={handleNavigate} onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)} expenses={expenses} coachProfile={coachProfile} onRefresh={handleRefresh}/>}
         {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onAddStudentDirect={(s)=>setStudents(p=>[...p,s])} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={xClasses} onInvite={()=>setShowInvite(true)} userId={user?.id} onInviteStudent={(s)=>setInviteTarget(s)} onRefresh={handleRefresh} families={families} setFamilies={setFamilies} getLatestClasses={()=>latestClassesRef.current} getLatestStudents={()=>latestStudentsRef.current}/>}
         {inviteTarget&&<InviteModal student={inviteTarget} userId={user?.id} coachName={coachProfile.name} onClose={()=>setInviteTarget(null)}/>}
-        {tab==="agenda"&&<Agenda onReleaseAndRenew={releaseAndRenew} onAddComboDay={addComboDay} students={students} classes={xClasses} rawClasses={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onUpdateStudentsBatch={commitStudentsBatch} isClassesWriteSettled={isClassesWriteSettled} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])} onRefresh={handleRefresh}/>}
+        {tab==="agenda"&&<Agenda onReleaseAndRenew={releaseAndRenew} onAddComboDay={addComboDay} onAbsenceNotice={saveAbsenceNotices} students={students} classes={xClasses} rawClasses={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onUpdateStudentsBatch={commitStudentsBatch} isClassesWriteSettled={isClassesWriteSettled} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])} onRefresh={handleRefresh}/>}
         {tab==="chat"&&<Chat key={user?.id||"no-user"} students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification} userId={user?.id} unreadChats={unreadChats} onMarkRead={(sid)=>setUnreadChats(p=>{const n={...p};delete n[String(sid)];return n;})}/>}
         {tab==="cobros"&&<Finances releaseRenewal={releaseRenewal} fusedRepair={fusedRepair} students={students} classes={xClasses} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance} families={families} onVoidMensualPayment={handleVoidMensualPayment} onRecordMensualPayment={handleRecordMensualPayment} onSaveMensualAmount={handleSaveMensualAmount} isStudentActiveNow={isStudentActiveNow}/>}
         {tab==="finanzas"&&<Finances students={students} classes={xClasses} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} onEditLinkedMensualIncome={handleEditLinkedMensualIncome}/>}

@@ -1,6 +1,6 @@
 import { resolveComboDateStatus, traceRescheduleHistory } from "./rescheduleChain.js";
-import { hasSlotMoves, planSlotMove, resolveComboMoves } from "./slotMoves.js";
-import { readAttendance, slotCardOn, slotClassId } from "./attendanceRead.js";
+import { countUsedForCombo, hasSlotMoves, planSlotMove, resolveComboMoves } from "./slotMoves.js";
+import { readAttendance, seriesIdOf, slotCardOn, slotClassId } from "./attendanceRead.js";
 
 /*
  * Per-slot reading of a student's combo (Cobros, Mis Clases, Agenda payment chips, "Por dar").
@@ -79,6 +79,18 @@ export const resolveContractSlotStatus=(myClasses,combo,originalDate,clsForDate)
     isReprogWithDate,isReprogNoDate,rescheduledTo:rescheduledTo||null,fulfillCancelled:cancelled,fulfillCancelType:cancelType};
 };
 
+/**
+ * Whether one reading (readAttendance) consumes the class: explicit Presente / Ausente – Dada yes; explicit Ausente –
+ * No dada or an entry without the student no; an advance notice Ausente – Dada only once the class has happened
+ * (date + end time, like every time-based reading); a notice Ausente – No dada never. null = nothing recorded.
+ */
+export const givenByReading=(r,date,timeEnd)=>{
+  if(!r||!r.source) return null;
+  if(r.source==="attendance") return r.state==="present"||r.state==="ausente_dada";
+  if(r.source==="notice") return r.state==="ausente_dada"&&isClassDone(date,timeEnd);
+  return null;
+};
+
 // Shared "was this contractual slot delivered" rule (Cobros counters and getClaseRem):
 // evaluated on the effective fulfillment date, never on both original and destination.
 // A paused slot is never delivered; a definitively-cancelled Combo slot is billed and
@@ -92,8 +104,8 @@ export const resolveSlotGiven=(slot,packType,originalDate,timeEnd,myClasses,stud
   const fulfillmentDate=getSlotFulfillmentDate(originalDate,slot.fulfillCancelled,slot.fulfillCancelType,slot.rescheduledTo);
   if(!fulfillmentDate) return false;
   if(classId!==undefined&&classId!==null){
-    const {state}=readAttendance({classes:myClasses,classId,date:fulfillmentDate,studentId});
-    if(state) return state==="present"||state==="ausente_dada";
+    const given=givenByReading(readAttendance({classes:myClasses,classId,date:fulfillmentDate,studentId}),fulfillmentDate,timeEnd);
+    if(given!==null) return given;
     return isClassDone(fulfillmentDate,timeEnd);
   }
   const att=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===fulfillmentDate);
@@ -209,4 +221,43 @@ export function createSlotReader({ classes, combo, studentId, allClasses }) {
 export function planStudentSlotMove({ classes, student, combo, slot, to, kind, id, at }) {
   const baseOfFor = (c) => slotBaseLocator({ classes: (classes || []).filter((cl) => cl.students && cl.students.includes(student.id)), lookup: classes, combo: c, studentId: student.id });
   return planSlotMove({ student, combo, slot, to, kind, classes, baseOfFor, id, at });
+}
+
+// ---- `used` and advance notices (BUG-AGENDA-05 stage 2.1 review) ----
+const sameSeries = (c, id) => String(seriesIdOf(c)) === String(id);
+
+/**
+ * Slots of `combo` consumed ONLY by an advance Ausente – Dada notice of its own class whose class has already happened
+ * (no attendance of the student that day): exactly what explicit-attendance `used` cannot see. Each terminal once;
+ * paused / cancelled / pending terminals never. A legacy combo without sourceClassId has no notices -> 0.
+ */
+export function dueDadaNoticeCount({ combo, studentId, classes }) {
+  if (!combo || combo.sourceClassId === undefined) return 0;
+  const rows = (classes || []).filter((c) => sameSeries(c, combo.sourceClassId));
+  if (rows.length === 0 || !rows.some((c) => c.attendanceNotices && Object.keys(c.attendanceNotices).length)) return 0;
+  const dc = rows[0].dateCancellations || {};
+  const timeEnd = rows[0].timeEnd || "23:59";
+  const seen = new Set();
+  for (const d of new Set(combo.dates || [])) {
+    const r = resolveComboDateStatus(dc, d);
+    if (r.broken || !r.terminal || seen.has(r.terminal) || r.cancelInfo) continue;
+    const reading = readAttendance({ classes: rows, classId: combo.sourceClassId, date: r.terminal, studentId });
+    if (reading.source === "notice" && reading.state === "ausente_dada" && isClassDone(r.terminal, timeEnd)) seen.add(r.terminal);
+  }
+  return seen.size;
+}
+
+/**
+ * The `used` to read for a combo: the stored value, unless due Ausente – Dada notices exist — then the explicit
+ * attendance count plus those notices, never below the stored value. Without due notices it IS combo.used.
+ */
+export function effectiveComboUsed({ combo, studentId, classes }) {
+  const stored = Number((combo && combo.used) || 0);
+  const due = dueDadaNoticeCount({ combo, studentId, classes });
+  if (!due) return stored;
+  const rows = (classes || []).filter((c) => sameSeries(c, combo.sourceClassId));
+  const byDate = new Map();
+  for (const c of rows) for (const e of c.attendanceLog || []) if (e && !byDate.has(e.date)) byDate.set(e.date, e);
+  const explicit = countUsedForCombo({ combo, studentId, dc: rows[0].dateCancellations || {}, attendanceLog: [...byDate.values()], baseClassId: combo.sourceClassId, classes });
+  return Math.max(stored, explicit + due);
 }

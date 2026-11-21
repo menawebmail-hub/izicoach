@@ -8,10 +8,11 @@
  * card that holds the slot's date (the previous reading for those combos).
  *
  * Reading priority (readAttendance), one place for every consumer:
- *   1. explicit attendance of that class and date (attendanceLog entry): "present" | "ausente_dada" | "ausente_reprog"
- *      or "unmarked" when the entry exists but does not list the student;
- *   2. (stage 2.1, not implemented) an advance absence notice for that class, date and student;
- *   3. nothing recorded -> state null; each caller keeps its current rule (time-based fallback).
+ *   1. explicit attendance of that class and date listing the student: "present" | "ausente_dada" | "ausente_reprog";
+ *   2. stage 2.1: an advance absence notice for that class, date and student ("ausente_dada" | "ausente_reprog",
+ *      source "notice") — an Ausente – Dada notice consumes only once the class has happened (callers check the time);
+ *   3. an entry that exists without the student: "unmarked" (as before);
+ *   4. nothing recorded -> state null; each caller keeps its current rule (time-based fallback).
  * Works with expanded Agenda cards (each card carries its own date's entry) and with raw class rows.
  */
 
@@ -47,6 +48,26 @@ export function attendanceState(entry, studentId) {
   return null;
 }
 
+/** Advance absence notice statuses (stage 2.1, see absenceNotices.js). */
+export const NOTICE_STATUSES = ["ausente_dada", "ausente_reprog"];
+
+/** The active advance notice ({status, at, history}) of a class row or Agenda card for (date, studentId), or null. */
+export function noticeOf(classOrCard, date, studentId) {
+  const byDate = classOrCard && classOrCard.attendanceNotices && classOrCard.attendanceNotices[date];
+  const n = byDate && byDate[studentId];
+  return n && NOTICE_STATUSES.includes(n.status) ? n : null;
+}
+
+/** The active notice of `classId` on `date` for a student (raw class rows or expanded cards), or null. */
+export function noticeAt(classes, classId, date, studentId) {
+  for (const c of classes || []) {
+    if (!sameId(seriesIdOf(c), classId)) continue;
+    const n = noticeOf(c, date, studentId);
+    if (n) return n;
+  }
+  return null;
+}
+
 /** The card of `classId` on `date` (an expanded Agenda card), or undefined. */
 export function classCardOn(classes, classId, date) {
   return (classes || []).find((cl) => cl.date === date && sameId(seriesIdOf(cl), classId));
@@ -69,11 +90,15 @@ export function slotClassId(classes, combo, date) {
 
 /**
  * The single reading of one student's attendance in one class on one date (see priority above).
- * -> { state: "present"|"ausente_dada"|"ausente_reprog"|"unmarked"|null, source: "attendance"|null, entry }
+ * -> { state: "present"|"ausente_dada"|"ausente_reprog"|"unmarked"|null, source: "attendance"|"notice"|null, entry, notice }
  */
 export function readAttendance({ classes, classId, date, studentId }) {
-  const entry = classId === undefined || classId === null ? null : attendanceAt(classes, classId, date);
-  if (entry) return { state: attendanceState(entry, studentId) || "unmarked", source: "attendance", entry };
-  // Stage 2.1 will read the advance absence notice of (classId, date, studentId) here.
-  return { state: null, source: null, entry: null };
+  if (classId === undefined || classId === null) return { state: null, source: null, entry: null, notice: null };
+  const entry = attendanceAt(classes, classId, date);
+  const listed = attendanceState(entry, studentId);
+  if (listed) return { state: listed, source: "attendance", entry, notice: null };
+  const notice = noticeAt(classes, classId, date, studentId);
+  if (notice) return { state: notice.status, source: "notice", entry, notice };
+  if (entry) return { state: "unmarked", source: "attendance", entry, notice: null };
+  return { state: null, source: null, entry: null, notice: null };
 }

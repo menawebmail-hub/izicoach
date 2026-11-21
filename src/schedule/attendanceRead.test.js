@@ -170,8 +170,10 @@ test("wiring: no date-only attendance or card lookup left in the slot readers ex
   const app = readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
   const ss = readFileSync(new URL("./slotStatus.js", import.meta.url), "utf8");
   assert.equal((app.match(/flatMap\(cls=>cls\.attendanceLog\|\|\[\]\)/g) || []).length, 3, "only the three legacy fallbacks (history, isComboClosed, PagoModal)");
-  assert.equal((app.match(/!==undefined\?readAttendance\(\{classes:myClasses,classId:slotCls,/g) || []).length, 2);
-  assert.match(app, /classId!==undefined&&classId!==null\?readAttendance\(\{classes:myClasses,classId,date,studentId\}\)\.entry:/);
+  // stage 2.1: isComboClosed and the history read the full reading (attendance, then notice); PagoModal keeps the entry
+  assert.match(app, /const r=readAttendance\(\{classes:myClasses,classId:slotCls,date:fulfillmentDate,studentId\}\);/);
+  assert.match(app, /const rd=slotCls!==undefined\?readAttendance\(\{classes:myClasses,classId:slotCls,date:ds,studentId:s\.id\}\):null;/);
+  assert.match(app, /const given=givenByReading\(readAttendance\(\{classes:myClasses,classId,date,studentId\}\),date,timeEnd\);/);
   assert.equal((app.match(/const cl=slotCardOn\(myClasses,c,d\);/g) || []).length, 5, "isComboClosed (3) + paused extension in counters and PagoModal (2)");
   assert.ok(!/myClasses\.find\(x=>x\.date===d\)/.test(app), "no date-only card lookup for the pause flag");
   assert.match(app, /const classOnDate=reader\.cardFor\(ds\);/);

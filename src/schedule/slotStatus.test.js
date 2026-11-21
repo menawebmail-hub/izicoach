@@ -45,7 +45,7 @@ test("the reader memoizes the slot per date, never mutates its inputs, and toler
 
 test("wiring: Cobros rows, counters, Por dar and PagoModal read slots only through createSlotReader", () => {
   const app = readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
-  assert.match(app, /^import \{ createSlotReader, getSlotFulfillmentDate, interpretContractDate, isClassDone \} from "\.\/schedule\/slotStatus\.js";$/m);
+  assert.match(app, /^import \{ createSlotReader, dueDadaNoticeCount, effectiveComboUsed, getSlotFulfillmentDate, givenByReading, interpretContractDate, isClassDone \} from "\.\/schedule\/slotStatus\.js";$/m);
   assert.match(app, /^import \{ comboIndexWithMoveInto, countUsedForCombo, hasSlotMoves \} from "\.\/schedule\/slotMoves\.js";$/m);
   assert.equal((app.match(/resolveContractSlotStatus\(/g) || []).length, 0, "no direct slot status call left in App.jsx");
   assert.equal((app.match(/resolveSlotGiven\(/g) || []).length, 0, "no direct given call left in App.jsx");
