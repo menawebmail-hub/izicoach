@@ -1,6 +1,19 @@
 SESSION_STATE.md — IziCoach
 
-# Current task — BUG-AGENDA-05 / BUG-AGENDA-03 stage 1d: reading per-student slot moves (branch `fix/agenda-edit-scope`)
+# Current task — BUG-AGENDA-05 stage 2.0: attendance read in each slot's own class (branch `fix/agenda-edit-scope`)
+
+- Implemented locally, NOT committed (2026-11-21), on top of `7402d18`: `src/schedule/attendanceRead.js` (single
+  reading: explicit attendance of that class and date -> [2.1 notice] -> nothing), fixed `resolveSlotGiven`, reader,
+  history rows, `isComboClosed`, `PagoModal`. No notices, overrides, guests, recoveries, Reprogramar change, SQL or
+  portal change. Details: `docs/BUGS.md` stage 2.0.
+- Verified: `npm test` 151/151; snapshot unchanged; build clean; oxlint 364; harness unchanged + new jsdom PagoModal test;
+  real account (read-only): 0 differences, no student with two classes on one day.
+- Pending, found in stage 2.0 (not fixed; details in BUGS.md): (1) Cobros/Mis Clases rows are merged by date across
+  combos (`buildPersonSlotRows` dedup), hiding the second combo's slot on a shared date (counters are correct);
+  (2) the paused-dates extension in `getAccountCounters` and `PagoModal` still finds the card by date only.
+- Next: stage 2.1 (advance notices) only with separate authorization; fix (1) and (2) before same-day guests.
+
+# Previous step — BUG-AGENDA-05 / BUG-AGENDA-03 stage 1d: reading per-student slot moves (branch `fix/agenda-edit-scope`)
 
 - Committed as `608532b` and pushed to `origin/fix/agenda-edit-scope` (2026-11-21); not merged, not deployed. On top of `eca0224`: `src/schedule/slotMoves.js` (read-only support for
   `combo.slotMoves`, validity rules, per-combo `used`, unused planner), reader overlay + `allClasses`, `handleAttendance`

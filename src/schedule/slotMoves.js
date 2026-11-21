@@ -1,5 +1,6 @@
 import { resolveComboDateStatus } from "./rescheduleChain.js";
 import { countAttendedSlots } from "./releaseReprogrammedDate.js";
+import { attendanceAt, attendanceState, dateEntryAt } from "./attendanceRead.js";
 
 /*
  * Per-student moves of ONE combo slot — BUG-AGENDA-05 / BUG-AGENDA-03 stage 1d. READ SUPPORT ONLY: nothing in
@@ -36,38 +37,12 @@ import { countAttendedSlots } from "./releaseReprogrammedDate.js";
 
 export const SLOT_MOVE_KINDS = ["recovery", "extension"];
 
-const seriesKeyOf = (c) => (c ? (c._seriesId !== undefined ? c._seriesId : c.id) : undefined);
 const sameId = (a, b) => a !== undefined && a !== null && String(a) === String(b);
 const locKey = (classId, date) => String(classId) + "|" + date;
 
-/** The attendance entry of `classId` on `date` (raw class rows or expanded Agenda cards). */
-export function attendanceAt(classes, classId, date) {
-  for (const c of classes || []) {
-    if (!sameId(seriesKeyOf(c), classId)) continue;
-    const e = (c.attendanceLog || []).find((x) => x && x.date === date);
-    if (e) return e;
-  }
-  return null;
-}
+// attendanceAt / dateEntryAt / attendanceState live in attendanceRead.js (stage 2.0: one reading for every consumer).
+export { attendanceAt, attendanceState, dateEntryAt };
 
-/** The dateCancellations entry of `classId` on `date` (pause, cancellation, reprogramming), or null. */
-export function dateEntryAt(classes, classId, date) {
-  for (const c of classes || []) {
-    if (!sameId(seriesKeyOf(c), classId)) continue;
-    const dc = c.dateCancellations;
-    if (dc && Object.prototype.hasOwnProperty.call(dc, date)) return dc[date];
-  }
-  return null;
-}
-
-/** "present" | "ausente_dada" | "ausente_reprog" | null for one student in one attendance entry. */
-export function attendanceState(entry, studentId) {
-  if (!entry) return null;
-  if ((entry.present || []).includes(studentId)) return "present";
-  if ((entry.ausente_dada || []).includes(studentId)) return "ausente_dada";
-  if ((entry.ausente_reprog || []).includes(studentId)) return "ausente_reprog";
-  return null;
-}
 const consumes = (state) => state === "present" || state === "ausente_dada";
 
 const wellFormed = (m) =>

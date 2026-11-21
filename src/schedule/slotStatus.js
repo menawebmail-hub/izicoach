@@ -1,5 +1,6 @@
 import { resolveComboDateStatus, traceRescheduleHistory } from "./rescheduleChain.js";
-import { attendanceAt, attendanceState, hasSlotMoves, planSlotMove, resolveComboMoves } from "./slotMoves.js";
+import { hasSlotMoves, planSlotMove, resolveComboMoves } from "./slotMoves.js";
+import { readAttendance, slotCardOn, slotClassId } from "./attendanceRead.js";
 
 /*
  * Per-slot reading of a student's combo (Cobros, Mis Clases, Agenda payment chips, "Por dar").
@@ -82,11 +83,19 @@ export const resolveContractSlotStatus=(myClasses,combo,originalDate,clsForDate)
 // evaluated on the effective fulfillment date, never on both original and destination.
 // A paused slot is never delivered; a definitively-cancelled Combo slot is billed and
 // consumed like a delivered one (Individual is deliberately not extended).
-export const resolveSlotGiven=(slot,packType,originalDate,timeEnd,myClasses,studentId)=>{
+// Stage 2.0 (BUG-AGENDA-05): classId = the slot's own class; its attendance is read only there (readAttendance), never
+// from another class of the student on the same date. Without a known class (a legacy slot with no card) the previous
+// date-only reading is kept.
+export const resolveSlotGiven=(slot,packType,originalDate,timeEnd,myClasses,studentId,classId)=>{
   if(slot.isPaused) return false;
   if(slot.isCancelled) return packType==="combo";
   const fulfillmentDate=getSlotFulfillmentDate(originalDate,slot.fulfillCancelled,slot.fulfillCancelType,slot.rescheduledTo);
   if(!fulfillmentDate) return false;
+  if(classId!==undefined&&classId!==null){
+    const {state}=readAttendance({classes:myClasses,classId,date:fulfillmentDate,studentId});
+    if(state) return state==="present"||state==="ausente_dada";
+    return isClassDone(fulfillmentDate,timeEnd);
+  }
   const att=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===fulfillmentDate);
   if(att) return (att.present||[]).includes(studentId)||(att.ausente_dada||[]).includes(studentId);
   return isClassDone(fulfillmentDate,timeEnd);
@@ -112,13 +121,13 @@ export function slotBaseLocator({ classes, lookup, combo, studentId }) {
   const list = classes || [];
   const all = lookup || list;
   return (date) => {
-    const card = list.find((cl) => cl.date === date);
+    const card = slotCardOn(list, combo, date);
     const s = resolveContractSlotStatus(list, combo, date, card);
-    const classId = combo && combo.sourceClassId !== undefined ? combo.sourceClassId : card ? (card._seriesId !== undefined ? card._seriesId : card.id) : undefined;
+    const classId = slotClassId(list, combo, date);
     if (classId === undefined) return null;
     if (s.terminalStatus === "pending" || s.terminalStatus === "inconsistent") return { classId, date: s.terminalDate || date, pending: true };
     if (s.terminalStatus === "paused" || s.terminalStatus === "cancelled" || !s.terminalDate) return { classId, date: s.terminalDate || date, pending: false };
-    const pending = attendanceState(attendanceAt(all, classId, s.terminalDate), studentId) === "ausente_reprog";
+    const pending = readAttendance({ classes: all, classId, date: s.terminalDate, studentId }).state === "ausente_reprog";
     return { classId, date: s.terminalDate, pending };
   };
 }
@@ -140,7 +149,8 @@ export function slotBaseLocator({ classes, lookup, combo, studentId }) {
 export function createSlotReader({ classes, combo, studentId, allClasses }) {
   const list = classes || [];
   const memo = new Map();
-  const cardFor = (date) => list.find((cl) => cl.date === date);
+  // Stage 2.0: the card of the slot's own class on that date (a legacy combo keeps the first card on that date).
+  const cardFor = (date) => slotCardOn(list, combo, date);
   const timeEndFor = (date) => {
     const card = cardFor(date);
     return (card && card.timeEnd) || "23:59";
@@ -190,7 +200,7 @@ export function createSlotReader({ classes, combo, studentId, allClasses }) {
       const m = moves().bySlot.get(date);
       if (m) return m.location.state === "given";
     }
-    return resolveSlotGiven(baseStatus(date), combo.packType, date, timeEndFor(date), list, studentId);
+    return resolveSlotGiven(baseStatus(date), combo.packType, date, timeEndFor(date), list, studentId, slotClassId(list, combo, date));
   };
   return { status, isGiven, cardFor, timeEndFor, moves };
 }

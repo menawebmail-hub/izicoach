@@ -23,6 +23,7 @@ import { additionMessage, applyAdditionToClassRow, applyAdditionToStudents, find
 import { cleanCombosAfterClassRemoval, comboDatesLeftWithoutCard, editableFromCard, editRefusalMessage, keepDatesWithHistory, regenerateOccurrences, seriesFieldsFromEdit, singleDateEditChanges, singleDateEditMessage, studentRemovalBlock, studentRemovalMessage, weekdayChangeMessage } from "./schedule/classEditScope.js";
 import { createSlotReader, getSlotFulfillmentDate, interpretContractDate, isClassDone } from "./schedule/slotStatus.js";
 import { comboIndexWithMoveInto, countUsedForCombo, hasSlotMoves } from "./schedule/slotMoves.js";
+import { readAttendance, slotCardOn, slotClassId } from "./schedule/attendanceRead.js";
 import { GROUP_SEND_UNAVAILABLE_TEXT, groupMemberCount, groupMemberNames, groupMembersLabel, isGroupChat } from "./chat/groupMembers.js";
 
 // Inject Inter font
@@ -802,7 +803,8 @@ const resolveSlotPayments=(dates,combo,paidCount,slotFor)=>{
 // no counter); the slot's display-paid status is simply repeated on every step. Intermediate steps are
 // "reprogrammed"; the terminal carries its real state: paused, cancelled, pending
 // ("A Reprogramar", also an inconsistent chain) or, for a live destination, done/scheduled.
-const buildSlotHistoryRows=(slot,displayPaid,isGiven,myClasses,studentId,timeEnd)=>{
+// classId (stage 2.0): the slot's own class — a reprogrammed step's attendance is read only there.
+const buildSlotHistoryRows=(slot,displayPaid,isGiven,myClasses,studentId,timeEnd,classId)=>{
   const path=slot.reschedulePath&&slot.reschedulePath.length?slot.reschedulePath:[slot.originalDate];
   return path.map((date,depth)=>{
     const isTerminal=depth===path.length-1;
@@ -815,7 +817,7 @@ const buildSlotHistoryRows=(slot,displayPaid,isGiven,myClasses,studentId,timeEnd
     else if(slot.studentMoves) status=isGiven?"done":"scheduled";
     else if(depth===0) status=isGiven?"done":"scheduled";
     else {
-      const att=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===date);
+      const att=classId!==undefined&&classId!==null?readAttendance({classes:myClasses,classId,date,studentId}).entry:myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===date);
       const done=att?((att.present||[]).includes(studentId)||(att.ausente_dada||[]).includes(studentId)):isClassDone(date,timeEnd);
       status=done?"done":"scheduled";
     }
@@ -844,7 +846,7 @@ const buildPersonSlotRows=(person,personClasses,todayDate,allClasses)=>{
       const displayPaid=slot.isCancelled?isPaid:displayByPosition;
       const isGiven=reader.isGiven(d);
       const timeEnd=reader.timeEndFor(d);
-      return {date:d,isPaid,displayPaid,isDisplaced,isGiven,isPast:d<=todayDate,isPaused:slot.isPaused,isCompensated:slot.isCompensated,isCancelledClass:slot.isCancelled,isReprogWithDate:slot.isReprogWithDate,isReprogNoDate:slot.isReprogNoDate,rescheduledTo:slot.rescheduledTo||null,terminalDate:slot.terminalDate,reschedulePath:slot.reschedulePath,terminalStatus:slot.terminalStatus,historyRows:buildSlotHistoryRows(slot,displayPaid,isGiven,personClasses,person.id,timeEnd)};
+      return {date:d,isPaid,displayPaid,isDisplaced,isGiven,isPast:d<=todayDate,isPaused:slot.isPaused,isCompensated:slot.isCompensated,isCancelledClass:slot.isCancelled,isReprogWithDate:slot.isReprogWithDate,isReprogNoDate:slot.isReprogNoDate,rescheduledTo:slot.rescheduledTo||null,terminalDate:slot.terminalDate,reschedulePath:slot.reschedulePath,terminalStatus:slot.terminalStatus,historyRows:buildSlotHistoryRows(slot,displayPaid,isGiven,personClasses,person.id,timeEnd,slotClassId(personClasses,c,d))};
     });
   }).sort((a,b)=>a.date.localeCompare(b.date));
   const seen2=new Set();
@@ -1719,22 +1721,24 @@ function getRem(s, classes=[]) {
 function isComboClosed(c, myClasses, studentId) {
   const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
   if(!(c.paid&&paidCount>=(c.total||1))) return false;
+  // Stage 2.0: each slot is read in its own class (card and attendance), never another class on the same date.
   const nonPausedDates=(c.dates||[]).filter(d=>{
-    const cl=myClasses.find(cls=>cls.date===d);
+    const cl=slotCardOn(myClasses,c,d);
     return !(cl&&(cl.paused||cl.cancelType==="paused"));
   });
   const hasPausedDates=(c.dates||[]).some(d=>{
-    const cl=myClasses.find(cls=>cls.date===d);
+    const cl=slotCardOn(myClasses,c,d);
     return cl&&(cl.paused||cl.cancelType==="paused");
   });
   const allDone=nonPausedDates.length>0&&nonPausedDates.every(d=>{
-    const cl=myClasses.find(cls=>cls.date===d);
+    const cl=slotCardOn(myClasses,c,d);
     const fulfillmentDate=getSlotFulfillmentDate(d,cl?.cancelled,cl?.cancelType,cl?.rescheduledTo);
     if(!fulfillmentDate) return false;
     // Definitively cancelled never counts as Realizada (getAccountCounters), but it
     // owes no makeup — the slot is resolved.
     if(cl?.cancelled&&cl?.cancelType==="cancelled") return true;
-    const attEntry=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===fulfillmentDate);
+    const slotCls=slotClassId(myClasses,c,d);
+    const attEntry=slotCls!==undefined?readAttendance({classes:myClasses,classId:slotCls,date:fulfillmentDate,studentId}).entry:myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===fulfillmentDate);
     const wasPresent=attEntry?(attEntry.present||[]).includes(studentId):false;
     const wasAusenteDada=attEntry?(attEntry.ausente_dada||[]).includes(studentId):false;
     const wasAusenteReprog=attEntry?(attEntry.ausente_reprog||[]).includes(studentId):false;
@@ -7033,12 +7037,14 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
       // Show all dates in the combo, no dynamic extension needed
       // The ResumeModal already adds the replacement dates to combo.dates
       dates.forEach((ds,i)=>{
-        const classOnDate=myClasses.find(cl=>cl.date===ds);
+        const classOnDate=reader.cardFor(ds);
         const slot=slotFor(ds);
         const {isCancelled,isReprogWithDate,isReprogNoDate,isPaused}=slot;
         const isAnyCancelled=isCancelled||isReprogWithDate||isReprogNoDate;
         const {isPaid:isPaidDate,displayPaid:displayPaidDate}=paymentAt(i);
-        const attEntry=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===ds);
+        // Stage 2.0: attendance of this slot's own class on that date only.
+        const slotCls=slotClassId(myClasses,c,ds);
+        const attEntry=slotCls!==undefined?readAttendance({classes:myClasses,classId:slotCls,date:ds,studentId:s.id}).entry:myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===ds);
         const wasAusenteDada=attEntry?(attEntry.ausente_dada||[]).includes(s.id):false;
         const wasAusenteReprog=attEntry?(attEntry.ausente_reprog||[]).includes(s.id):false;
         const wasPresent=attEntry?(attEntry.present||[]).includes(s.id):false;
@@ -7211,7 +7217,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         // BUG-COMBO-01: a reprogrammed slot is judged on its destination (getSlotFulfillmentDate), never on its
         // original date; a pending reprogramming has no destination yet and never counts.
         const givenCount=(c.dates||[]).filter(d=>{
-          const clsD=myClsForCombo.find(cl=>cl.date===d);
+          const clsD=slotCardOn(myClsForCombo,c,d); // stage 2.0: this combo's own class on that date
           if(clsD&&(clsD.paused||clsD.cancelType==="paused")) return false;
           const fulfillment=getSlotFulfillmentDate(d,clsD&&clsD.cancelled,clsD&&clsD.cancelType,clsD&&clsD.rescheduledTo);
           return !!fulfillment&&fulfillment<=TODAY_DATE;
