@@ -2,12 +2,12 @@ SESSION_STATE.md — IziCoach
 
 # Current task — BUG-AGENDA-05 / BUG-AGENDA-03 stage 1d: reading per-student slot moves (branch `fix/agenda-edit-scope`)
 
-- Implemented locally, NOT committed (2026-11-21), on top of `eca0224`: `src/schedule/slotMoves.js` (read-only support for
+- Committed as `608532b` and pushed to `origin/fix/agenda-edit-scope` (2026-11-21); not merged, not deployed. On top of `eca0224`: `src/schedule/slotMoves.js` (read-only support for
   `combo.slotMoves`, validity rules, per-combo `used`, unused planner), reader overlay + `allClasses`, `handleAttendance`
   recount through `countUsedForCombo` (+ guests with a move into the class/date). Nothing writes slotMoves; no UI, SQL
   or portal change. Without slotMoves everything reads as before (snapshot, harness, 0 differences on real data).
 - Verified: `npm test` 142/142; build clean; oxlint 364. Details and pending adaptations: `docs/BUGS.md` stage 1d.
-- Next: owner review → commit authorization. Writers (recovery UI, advance notice, extension), `isComboClosed` and the
+- Next (each with separate authorization): writers (recovery UI, advance notice, extension), `isComboClosed` and the
   other direct `combo.dates` readers, Agenda guest cards and the portal RPC are later stages.
 
 # Previous step — BUG-AGENDA-05 stage 1: shared slot reader (branch `fix/agenda-edit-scope`)
