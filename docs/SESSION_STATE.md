@@ -2,7 +2,7 @@ SESSION_STATE.md — IziCoach
 
 # Current task — BUG-AGENDA-05 stage 2.0: attendance read in each slot's own class (branch `fix/agenda-edit-scope`)
 
-- Implemented locally, NOT committed (2026-11-21), on top of `7402d18`: `src/schedule/attendanceRead.js` (single
+- Committed as `f879be2` and pushed to `origin/fix/agenda-edit-scope` (2026-11-21); not merged, not deployed. On top of `7402d18`: `src/schedule/attendanceRead.js` (single
   reading: explicit attendance of that class and date -> [2.1 notice] -> nothing), fixed `resolveSlotGiven`, reader,
   history rows, `isComboClosed`, `PagoModal`. No notices, overrides, guests, recoveries, Reprogramar change, SQL or
   portal change. Details: `docs/BUGS.md` stage 2.0.
