@@ -28,7 +28,9 @@
       "isPaid": true,
       "isTerminal": true
      }
-    ]
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
    },
    {
     "date": "2026-10-07",
@@ -56,7 +58,9 @@
       "isPaid": true,
       "isTerminal": true
      }
-    ]
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
    },
    {
     "date": "2026-10-12",
@@ -84,7 +88,9 @@
       "isPaid": true,
       "isTerminal": true
      }
-    ]
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
    },
    {
     "date": "2026-10-14",
@@ -112,7 +118,9 @@
       "isPaid": true,
       "isTerminal": true
      }
-    ]
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
    },
    {
     "date": "2026-10-19",
@@ -140,7 +148,9 @@
       "isPaid": true,
       "isTerminal": true
      }
-    ]
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
    },
    {
     "date": "2026-10-21",
@@ -168,7 +178,9 @@
       "isPaid": false,
       "isTerminal": true
      }
-    ]
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
    },
    {
     "date": "2026-11-23",
@@ -196,7 +208,9 @@
       "isPaid": false,
       "isTerminal": true
      }
-    ]
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
    },
    {
     "date": "2026-12-07",
@@ -224,7 +238,9 @@
       "isPaid": false,
       "isTerminal": true
      }
-    ]
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
    }
   ],
   "counters": {
@@ -272,7 +288,9 @@
       "isPaid": true,
       "isTerminal": true
      }
-    ]
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
    },
    {
     "date": "2026-10-07",
@@ -300,7 +318,9 @@
       "isPaid": true,
       "isTerminal": true
      }
-    ]
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
    },
    {
     "date": "2026-10-12",
@@ -328,7 +348,9 @@
       "isPaid": true,
       "isTerminal": true
      }
-    ]
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
    },
    {
     "date": "2026-10-26",
@@ -364,7 +386,9 @@
       "isPaid": true,
       "isTerminal": true
      }
-    ]
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
    },
    {
     "date": "2026-11-02",
@@ -392,7 +416,9 @@
       "isPaid": true,
       "isTerminal": true
      }
-    ]
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
    },
    {
     "date": "2026-11-09",
@@ -420,7 +446,9 @@
       "isPaid": true,
       "isTerminal": true
      }
-    ]
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
    },
    {
     "date": "2026-11-11",
@@ -448,7 +476,9 @@
       "isPaid": true,
       "isTerminal": true
      }
-    ]
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
    },
    {
     "date": "2026-11-25",
@@ -476,7 +506,9 @@
       "isPaid": true,
       "isTerminal": true
      }
-    ]
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
    },
    {
     "date": "2026-11-30",
@@ -504,7 +536,9 @@
       "isPaid": true,
       "isTerminal": true
      }
-    ]
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
    }
   ],
   "counters": {
@@ -554,7 +588,9 @@
       "isPaid": true,
       "isTerminal": true
      }
-    ]
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
    },
    {
     "date": "2026-11-18",
@@ -582,7 +618,9 @@
       "isPaid": false,
       "isTerminal": true
      }
-    ]
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
    },
    {
     "date": "2026-11-23",
@@ -610,7 +648,9 @@
       "isPaid": false,
       "isTerminal": true
      }
-    ]
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
    }
   ],
   "counters": {
@@ -658,7 +698,9 @@
       "isPaid": false,
       "isTerminal": true
      }
-    ]
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
    },
    {
     "date": "2026-10-07",
@@ -686,7 +728,9 @@
       "isPaid": false,
       "isTerminal": true
      }
-    ]
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
    },
    {
     "date": "2026-10-30",
@@ -714,7 +758,9 @@
       "isPaid": false,
       "isTerminal": true
      }
-    ]
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
    },
    {
     "date": "2026-12-02",
@@ -742,7 +788,9 @@
       "isPaid": false,
       "isTerminal": true
      }
-    ]
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
    }
   ],
   "counters": {
@@ -798,7 +846,8 @@
       "isPaid": true,
       "isTerminal": true
      }
-    ]
+    ],
+    "comboIndex": 0
    }
   ],
   "counters": {

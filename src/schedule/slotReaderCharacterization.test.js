@@ -5,7 +5,8 @@ import { NOW, slotReaderFixture } from "./slotReaderFixtures.js";
 
 // BUG-AGENDA-05 stage 1 (= BUG-AGENDA-03 stage 0): characterization of every per-slot reading Cobros shows.
 // The snapshot was generated from main 9a26124 + stage 0 (5db25f9) BEFORE the shared reader existed; the
-// refactor must keep every row, counter and "Por dar" value byte-identical.
+// refactor must keep every row, counter and "Por dar" value byte-identical. Regenerated once (stage 2.0 follow-up)
+// only to add each row's comboIndex/sourceClassId; every other value was checked identical before replacing it.
 mock.timers.enable({ apis: ["Date"], now: new Date(NOW).getTime() });
 const { loadAppFunctions } = await import("../test/loadAppFunctions.js");
 const NAMES = [

@@ -59,9 +59,11 @@ test("two classes on the same day: the morning attendance never decides the even
   // The previous reading took the morning Presente for the evening 05/10 and counted 6.
   assert.equal(counters.realizadas, 5);
   assert.equal(counters.aReprogramar, 0);
-  // existing limitation (not changed here): Cobros rows keep one row per DATE across combos, so the evening 05/10 row
-  // is merged into the morning one
-  assert.equal(rows.filter((r) => r.date === "2026-10-05").length, 1);
+  // one row per combo and date: the morning and the evening 05/10 each keep their own row
+  const monday = rows.filter((r) => r.date === "2026-10-05");
+  assert.equal(monday.length, 2);
+  assert.equal(monday.find((r) => r.sourceClassId === 1).isGiven, true, "morning: Presente");
+  assert.equal(monday.find((r) => r.sourceClassId === 2).isGiven, false, "evening: Ausente – No dada");
   // per-combo reading through the shared reader
   const w = twoClasses();
   const x = A.expandClasses(w.classes);
@@ -170,10 +172,11 @@ test("wiring: no date-only attendance or card lookup left in the slot readers ex
   assert.equal((app.match(/flatMap\(cls=>cls\.attendanceLog\|\|\[\]\)/g) || []).length, 3, "only the three legacy fallbacks (history, isComboClosed, PagoModal)");
   assert.equal((app.match(/!==undefined\?readAttendance\(\{classes:myClasses,classId:slotCls,/g) || []).length, 2);
   assert.match(app, /classId!==undefined&&classId!==null\?readAttendance\(\{classes:myClasses,classId,date,studentId\}\)\.entry:/);
-  assert.equal((app.match(/const cl=slotCardOn\(myClasses,c,d\);/g) || []).length, 3, "isComboClosed");
+  assert.equal((app.match(/const cl=slotCardOn\(myClasses,c,d\);/g) || []).length, 5, "isComboClosed (3) + paused extension in counters and PagoModal (2)");
+  assert.ok(!/myClasses\.find\(x=>x\.date===d\)/.test(app), "no date-only card lookup for the pause flag");
   assert.match(app, /const classOnDate=reader\.cardFor\(ds\);/);
   assert.match(app, /const clsD=slotCardOn\(myClsForCombo,c,d\);/);
-  assert.match(app, /historyRows:buildSlotHistoryRows\(slot,displayPaid,isGiven,personClasses,person\.id,timeEnd,slotClassId\(personClasses,c,d\)\)/);
+  assert.match(app, /historyRows:buildSlotHistoryRows\(slot,displayPaid,isGiven,personClasses,person\.id,timeEnd,slotClassId\(personClasses,c,d\)\),comboIndex,sourceClassId:c\.sourceClassId\}/);
   assert.match(ss, /const cardFor = \(date\) => slotCardOn\(list, combo, date\);/);
   assert.match(ss, /resolveSlotGiven\(baseStatus\(date\), combo\.packType, date, timeEndFor\(date\), list, studentId, slotClassId\(list, combo, date\)\)/);
   assert.equal((ss.match(/flatMap\(cls=>cls\.attendanceLog/g) || []).length, 1, "legacy fallback only");

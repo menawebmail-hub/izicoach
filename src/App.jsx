@@ -830,7 +830,8 @@ const buildSlotHistoryRows=(slot,displayPaid,isGiven,myClasses,studentId,timeEnd
 // The reschedule path/terminal are information only — never extra economic rows.
 // allClasses (optional): every class, so a slot moved to another group (slotMoves) is read at its destination.
 const buildPersonSlotRows=(person,personClasses,todayDate,allClasses)=>{
-  const rows=(person.combos||[]).filter(c=>c.total>0&&c.packType!=="mensual").flatMap(c=>{
+  // comboIndex/sourceClassId: which combo a row belongs to (two combos can share a date). Stage 2.0 follow-up.
+  const rows=(person.combos||[]).map((c,comboIndex)=>({c,comboIndex})).filter(({c})=>c.total>0&&c.packType!=="mensual").flatMap(({c,comboIndex})=>{
     const seen=new Set();
     const dates=(c.dates||[]).filter(d=>{if(seen.has(d))return false;seen.add(d);return true;});
     const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
@@ -846,11 +847,12 @@ const buildPersonSlotRows=(person,personClasses,todayDate,allClasses)=>{
       const displayPaid=slot.isCancelled?isPaid:displayByPosition;
       const isGiven=reader.isGiven(d);
       const timeEnd=reader.timeEndFor(d);
-      return {date:d,isPaid,displayPaid,isDisplaced,isGiven,isPast:d<=todayDate,isPaused:slot.isPaused,isCompensated:slot.isCompensated,isCancelledClass:slot.isCancelled,isReprogWithDate:slot.isReprogWithDate,isReprogNoDate:slot.isReprogNoDate,rescheduledTo:slot.rescheduledTo||null,terminalDate:slot.terminalDate,reschedulePath:slot.reschedulePath,terminalStatus:slot.terminalStatus,historyRows:buildSlotHistoryRows(slot,displayPaid,isGiven,personClasses,person.id,timeEnd,slotClassId(personClasses,c,d))};
+      return {date:d,isPaid,displayPaid,isDisplaced,isGiven,isPast:d<=todayDate,isPaused:slot.isPaused,isCompensated:slot.isCompensated,isCancelledClass:slot.isCancelled,isReprogWithDate:slot.isReprogWithDate,isReprogNoDate:slot.isReprogNoDate,rescheduledTo:slot.rescheduledTo||null,terminalDate:slot.terminalDate,reschedulePath:slot.reschedulePath,terminalStatus:slot.terminalStatus,historyRows:buildSlotHistoryRows(slot,displayPaid,isGiven,personClasses,person.id,timeEnd,slotClassId(personClasses,c,d)),comboIndex,sourceClassId:c.sourceClassId};
     });
   }).sort((a,b)=>a.date.localeCompare(b.date));
+  // One row per combo and date (previously one per DATE across combos, which hid the second combo's slot on a shared date).
   const seen2=new Set();
-  return rows.filter(d=>{if(seen2.has(d.date))return false;seen2.add(d.date);return true;});
+  return rows.filter(d=>{const k=d.comboIndex+"|"+d.date;if(seen2.has(k))return false;seen2.add(k);return true;});
 };
 
 // Agenda-only reading of ONE expanded occurrence card, layered on the shared Cobros helpers
@@ -876,13 +878,16 @@ const resolveAgendaCardStatus=(card,students,classes,todayDate)=>{
   // A paused date already replaced by a resume is history (its contractual slot lives on the
   // replacement). The slot reading also honours resumeOperations when compensatedBy was lost.
   let isCompensated=isPausedCard&&!!(own&&own.compensated);
+  // Only combos and rows of THIS card's class (a legacy combo without sourceClassId keeps matching by date).
+  const cardSeries=card._seriesId!==undefined?card._seriesId:card.id;
+  const ofCard=r=>r.sourceClassId===undefined||String(r.sourceClassId)===String(cardSeries);
   for(const sid of card.students||[]){
     const st=students.find(s=>s.id===sid);
     if(!st) continue;
-    const isReplacement=isLiveCard&&(st.combos||[]).some(c=>(c.resumeOperations||[]).some(op=>(op.replacementDates||[]).includes(card.date)));
+    const isReplacement=isLiveCard&&(st.combos||[]).some(c=>ofCard(c)&&(c.resumeOperations||[]).some(op=>(op.replacementDates||[]).includes(card.date)));
     if(!isPausedCard&&!isReplacement) continue;
     const rows=buildPersonSlotRows(st,classes.filter(c=>c.students&&c.students.includes(sid)),todayDate,classes);
-    const row=isPausedCard?rows.find(r=>r.terminalStatus==="paused"&&r.terminalDate===card.date):rows.find(r=>r.date===card.date);
+    const row=isPausedCard?rows.find(r=>ofCard(r)&&r.terminalStatus==="paused"&&r.terminalDate===card.date):rows.find(r=>ofCard(r)&&r.date===card.date);
     if(!row) continue;
     payment=row.displayPaid?"paid":null;
     if(isPausedCard) isCompensated=isCompensated||!!row.isCompensated;
@@ -1441,15 +1446,16 @@ const expandClasses=(classes)=>{
 const slotReadingsOf=(student,rawClasses,todayDate)=>{
   if(!student) return [];
   const mine=expandClasses((rawClasses||[]).filter(c=>(c.students||[]).includes(student.id)));
-  return buildPersonSlotRows(student,mine,todayDate,(student.combos||[]).some(hasSlotMoves)?expandClasses(rawClasses||[]):mine).map(r=>({date:r.date,isPaid:r.isPaid,displayPaid:r.displayPaid,isDisplaced:r.isDisplaced,isGiven:r.isGiven,isPaused:r.isPaused,isCancelledClass:r.isCancelledClass}));
+  return buildPersonSlotRows(student,mine,todayDate,(student.combos||[]).some(hasSlotMoves)?expandClasses(rawClasses||[]):mine).map(r=>({date:r.date,comboIndex:r.comboIndex,isPaid:r.isPaid,displayPaid:r.displayPaid,isDisplaced:r.isDisplaced,isGiven:r.isGiven,isPaused:r.isPaused,isCancelledClass:r.isCancelledClass}));
 };
 // True when every slot reads exactly as before: same paid/displayed/given/paused/cancelled state, the released slot
 // on its destination. Checked for the final state AND for the half-written one (students saved, class not yet).
 const sameSlotReadings=(before,after,date,destination)=>{
   if(before.length!==after.length) return false;
   const key=r=>JSON.stringify([r.isPaid,r.displayPaid,r.isDisplaced,r.isGiven,r.isPaused,r.isCancelledClass]);
-  const expected=new Map(before.map(r=>[r.date===date?destination:r.date,key(r)]));
-  return after.every(r=>expected.get(r.date)===key(r));
+  // keyed by combo and date: two combos of the student may share a date
+  const expected=new Map(before.map(r=>[r.comboIndex+"|"+(r.date===date?destination:r.date),key(r)]));
+  return after.every(r=>expected.get(r.comboIndex+"|"+r.date)===key(r));
 };
 // Full plan of a release, never written here. ok -> {release, nextStudents, nextClasses, record}.
 const planRelease=({classes,students,seriesId,date,todayDate,opId,at})=>{
@@ -2083,14 +2089,15 @@ function getAccountCounters(s, classes=[]) {
     let dates=[...(c.dates||[])];
     const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
     // Dynamic extension for paused dates
-    const _pi2=dates.map(d=>{const cl=myClasses.find(x=>x.date===d);return{date:d,paused:!!(cl&&(cl.paused||cl.cancelType==="paused"))};});
+    // Stage 2.0 follow-up: the pause flag of THIS combo's class on each date (never another class on the same date).
+    const _pi2=dates.map(d=>{const cl=slotCardOn(myClasses,c,d);return{date:d,paused:!!(cl&&(cl.paused||cl.cancelType==="paused"))};});
     const _pC2=_pi2.filter(x=>x.paused).length;
     const _npC2=_pi2.filter(x=>!x.paused).length;
     const _fpi2=_pi2.findIndex(x=>x.paused);const _afp2=_fpi2>=0&&_pi2.slice(_fpi2).every(x=>x.paused);
     const _ae2=dates.length>=(c.total||8)+_pC2;
     if(_pC2>0&&_npC2>0&&!_afp2&&!_ae2){
       const _ld2=dates[dates.length-1];
-      const _pc2=myClasses.find(cl=>(cl.occurrences||[]).some(od=>dates.includes(od)));
+      const _pc2=c.sourceClassId!==undefined?myClasses.find(cl=>String(cl._seriesId!==undefined?cl._seriesId:cl.id)===String(c.sourceClassId)):myClasses.find(cl=>(cl.occurrences||[]).some(od=>dates.includes(od)));
       if(_pc2&&_pc2.occurrences){
         const _ex2=_pc2.occurrences.filter(d=>d>_ld2&&!dates.includes(d)).slice(0,_pC2);
         dates=[...dates,..._ex2];
@@ -7025,7 +7032,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         dates=[matchingCls?matchingCls.date:c.date];
       }
       // Dynamic extension for paused dates - visual only, never modifies combo.dates
-      const _pi=dates.map(d=>{const cl=myClasses.find(x=>x.date===d);return{date:d,paused:!!(cl&&(cl.paused||cl.cancelType==="paused"))};});
+      const _pi=dates.map(d=>{const cl=slotCardOn(myClasses,c,d);return{date:d,paused:!!(cl&&(cl.paused||cl.cancelType==="paused"))};});
       const _pCount=_pi.filter(x=>x.paused).length;
       const _npCount=_pi.filter(x=>!x.paused).length;
       // Same terminal-aware interpretation and paid-status assignment getAccountCounters
@@ -9277,7 +9284,9 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
   // Shared "Mis Clases" card rendering — same logic used for the own classes and for family members' classes
   const renderClassCards=(person,personClasses)=>{
     return [...new Map(personClasses.map(c=>[c.title,c])).values()].map(cls=>{
-      const deduped=buildPersonSlotRows(person,personClasses,TODAY_DATE);
+      // Rows of this card's class only (cards are grouped by title; a legacy combo without sourceClassId shows everywhere, as before).
+      const cardSeriesIds=new Set(personClasses.filter(c=>c.title===cls.title).map(c=>String(c._seriesId!==undefined?c._seriesId:c.id)));
+      const deduped=buildPersonSlotRows(person,personClasses,TODAY_DATE).filter(r=>r.sourceClassId===undefined||cardSeriesIds.has(String(r.sourceClassId)));
       return (
         <WhiteCard key={cls.id} style={{marginBottom:12}}>
           {/* The class title is the coach's internal label — the student reads days, time and place only. */}
