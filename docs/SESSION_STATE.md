@@ -2,11 +2,13 @@ SESSION_STATE.md — IziCoach
 
 # Current task — BUG-AGENDA-05 stage 1: shared slot reader (branch `fix/agenda-edit-scope`)
 
-- Implemented locally, NOT committed (2026-11-21): `src/schedule/slotStatus.js` (helpers moved verbatim +
+- Committed as `6848b19` and pushed to `origin/fix/agenda-edit-scope` (2026-11-21); not merged, not deployed.
+  `src/schedule/slotStatus.js` (helpers moved verbatim +
   `createSlotReader`), consumers switched (Cobros rows, counters, Por dar, PagoModal status). No visible change:
   characterization snapshot identical, 128/128, build clean, oxlint 364, harness failure set unchanged, 0 differences
   on the account's 81 real slots (read-only). Divergent "given" rules left as they are (see BUGS.md stage 1).
-- Next: owner review → commit authorization; stage 1d (dormant slotMoves + per-combo used recount) separately.
+- Next: stage 1d (dormant slotMoves + per-combo used recount) only with separate authorization; merge/publication of
+  stages 0-1 only with explicit authorization (no recoveries enabled).
 
 # Previous step — BUG-AGENDA-05 phase 1 + stage 0 (branch `fix/agenda-edit-scope`, from `main` `9a26124`)
 
