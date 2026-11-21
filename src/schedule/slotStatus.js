@@ -1,4 +1,5 @@
 import { resolveComboDateStatus, traceRescheduleHistory } from "./rescheduleChain.js";
+import { attendanceAt, attendanceState, hasSlotMoves, planSlotMove, resolveComboMoves } from "./slotMoves.js";
 
 /*
  * Per-slot reading of a student's combo (Cobros, Mis Clases, Agenda payment chips, "Por dar").
@@ -103,14 +104,40 @@ export function getSlotFulfillmentDate(originalDate, cancelled, cancelType, resc
 }
 
 /**
+ * Where one slot of `combo` is for `studentId` WITHOUT student moves (its base terminal, read exactly like Cobros)
+ * and whether it is pending for this student there: a class-level "A Reprogramar" (or inconsistent chain), or an
+ * explicit Ausente – No dada at its live terminal. `lookup` must hold the attendance of that class (cards or rows).
+ */
+export function slotBaseLocator({ classes, lookup, combo, studentId }) {
+  const list = classes || [];
+  const all = lookup || list;
+  return (date) => {
+    const card = list.find((cl) => cl.date === date);
+    const s = resolveContractSlotStatus(list, combo, date, card);
+    const classId = combo && combo.sourceClassId !== undefined ? combo.sourceClassId : card ? (card._seriesId !== undefined ? card._seriesId : card.id) : undefined;
+    if (classId === undefined) return null;
+    if (s.terminalStatus === "pending" || s.terminalStatus === "inconsistent") return { classId, date: s.terminalDate || date, pending: true };
+    if (s.terminalStatus === "paused" || s.terminalStatus === "cancelled" || !s.terminalDate) return { classId, date: s.terminalDate || date, pending: false };
+    const pending = attendanceState(attendanceAt(all, classId, s.terminalDate), studentId) === "ausente_reprog";
+    return { classId, date: s.terminalDate, pending };
+  };
+}
+
+/**
  * The shared reader of one combo's slots for one student: exactly resolveContractSlotStatus + resolveSlotGiven as
  * Cobros has always composed them (the card of a date is the first of `classes` on that date; its timeEnd, else
  * "23:59"), with the slot reading memoized per date for the duration of one reading. Read-only.
  *   status(date)    -> resolveContractSlotStatus(classes, combo, date, card)
  *   isGiven(date)   -> resolveSlotGiven(status(date), combo.packType, date, timeEnd, classes, studentId)
  *   cardFor(date), timeEndFor(date)
+ * Stage 1d: a combo with `slotMoves` (src/schedule/slotMoves.js; nothing writes them yet) reads its validly moved slots
+ * at their destination, found in `allClasses` (default `classes`): status(date) keeps the slot's base fields and its
+ * position, and reads as a reprogramming with date to the destination (or "A Reprogramar" again when the recovery was
+ * missed), with `studentMoves`, `terminalClassId` and `recoveryState` added; isGiven(date) is true only for an explicit
+ * Presente / Ausente – Dada there. A combo without slotMoves takes the exact previous path (no extra work).
+ *   moves() -> { bySlot, conflicts } (resolveComboMoves)
  */
-export function createSlotReader({ classes, combo, studentId }) {
+export function createSlotReader({ classes, combo, studentId, allClasses }) {
   const list = classes || [];
   const memo = new Map();
   const cardFor = (date) => list.find((cl) => cl.date === date);
@@ -118,10 +145,58 @@ export function createSlotReader({ classes, combo, studentId }) {
     const card = cardFor(date);
     return (card && card.timeEnd) || "23:59";
   };
-  const status = (date) => {
+  const baseStatus = (date) => {
     if (!memo.has(date)) memo.set(date, resolveContractSlotStatus(list, combo, date, cardFor(date)));
     return memo.get(date);
   };
-  const isGiven = (date) => resolveSlotGiven(status(date), combo.packType, date, timeEndFor(date), list, studentId);
-  return { status, isGiven, cardFor, timeEndFor };
+  const withMoves = hasSlotMoves(combo);
+  let resolved = null;
+  const moves = () => {
+    if (!resolved) {
+      resolved = withMoves
+        ? resolveComboMoves({ combo, studentId, classes: allClasses || list, baseOf: slotBaseLocator({ classes: list, lookup: allClasses || list, combo, studentId }) })
+        : { bySlot: new Map(), conflicts: [] };
+    }
+    return resolved;
+  };
+  const overlay = new Map();
+  const status = (date) => {
+    const base = baseStatus(date);
+    if (!withMoves) return base;
+    const m = moves().bySlot.get(date);
+    if (!m) return base;
+    if (!overlay.has(date)) {
+      const loc = m.location;
+      const again = loc.state === "missed";
+      overlay.set(date, {
+        ...base,
+        terminalDate: loc.date,
+        terminalClassId: loc.classId,
+        reschedulePath: [...(base.reschedulePath && base.reschedulePath.length ? base.reschedulePath : [date]), ...m.moves.map((x) => x.to.date)],
+        terminalStatus: again ? "pending" : "reprogrammed",
+        isPaused: false, isCompensated: false, isCancelled: false,
+        isReprogrammed: !again, isReprogramPending: again, wasRescheduled: true,
+        isReprogWithDate: !again, isReprogNoDate: again,
+        rescheduledTo: again ? null : loc.date,
+        fulfillCancelled: true, fulfillCancelType: "cancelled_reprog",
+        studentMoves: m.history,
+        recoveryState: loc.state,
+      });
+    }
+    return overlay.get(date);
+  };
+  const isGiven = (date) => {
+    if (withMoves) {
+      const m = moves().bySlot.get(date);
+      if (m) return m.location.state === "given";
+    }
+    return resolveSlotGiven(baseStatus(date), combo.packType, date, timeEndFor(date), list, studentId);
+  };
+  return { status, isGiven, cardFor, timeEndFor, moves };
+}
+
+/** planSlotMove wired to the Cobros base reading (expanded Agenda cards in `classes`). Not used by any UI yet. */
+export function planStudentSlotMove({ classes, student, combo, slot, to, kind, id, at }) {
+  const baseOfFor = (c) => slotBaseLocator({ classes: (classes || []).filter((cl) => cl.students && cl.students.includes(student.id)), lookup: classes, combo: c, studentId: student.id });
+  return planSlotMove({ student, combo, slot, to, kind, classes, baseOfFor, id, at });
 }

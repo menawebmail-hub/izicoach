@@ -46,12 +46,14 @@ test("the reader memoizes the slot per date, never mutates its inputs, and toler
 test("wiring: Cobros rows, counters, Por dar and PagoModal read slots only through createSlotReader", () => {
   const app = readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
   assert.match(app, /^import \{ createSlotReader, getSlotFulfillmentDate, interpretContractDate, isClassDone \} from "\.\/schedule\/slotStatus\.js";$/m);
+  assert.match(app, /^import \{ comboIndexWithMoveInto, countUsedForCombo, hasSlotMoves \} from "\.\/schedule\/slotMoves\.js";$/m);
   assert.equal((app.match(/resolveContractSlotStatus\(/g) || []).length, 0, "no direct slot status call left in App.jsx");
   assert.equal((app.match(/resolveSlotGiven\(/g) || []).length, 0, "no direct given call left in App.jsx");
   assert.ok(!/^const (isClassDone|interpretContractDate|resolveContractSlotStatus|resolveSlotGiven)=/m.test(app), "moved, not duplicated");
   assert.ok(!/^function getSlotFulfillmentDate\(/m.test(app));
-  assert.match(app, /const reader=createSlotReader\(\{classes:personClasses,combo:c,studentId:person\.id\}\);/);
-  assert.match(app, /const reader=createSlotReader\(\{classes:myClasses,combo:c,studentId:s\.id\}\);/);
-  assert.match(app, /const reader=createSlotReader\(\{classes:studentClasses,combo:c,studentId:s\.id\}\);/);
-  assert.match(app, /const slotFor=createSlotReader\(\{classes:myClasses,combo:c,studentId:s\.id\}\)\.status;/);
+  assert.match(app, /const reader=createSlotReader\(\{classes:personClasses,combo:c,studentId:person\.id,allClasses\}\);/);
+  assert.equal((app.match(/const reader=createSlotReader\(\{classes:myClasses,combo:c,studentId:s\.id,allClasses:classes\}\);/g) || []).length, 2, "counters + PagoModal");
+  assert.match(app, /const reader=createSlotReader\(\{classes:studentClasses,combo:c,studentId:s\.id,allClasses:classes\}\);/);
+  // PagoModal keeps its own isGiven rule, except for a slot moved for this student
+  assert.match(app, /const isGiven=slot\.studentMoves\?reader\.isGiven\(ds\):isPaused\?false:/);
 });

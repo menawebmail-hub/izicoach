@@ -22,6 +22,7 @@ import { applyFusedRepairToClassRow, findFusedGroups, fusedMessage, planFusedRep
 import { additionMessage, applyAdditionToClassRow, applyAdditionToStudents, findPendingAdditionCompletions, hasCurrentComboForDayAddition, resolveComboDayAddition } from "./schedule/comboDayAddition.js";
 import { cleanCombosAfterClassRemoval, comboDatesLeftWithoutCard, editableFromCard, editRefusalMessage, keepDatesWithHistory, regenerateOccurrences, seriesFieldsFromEdit, singleDateEditChanges, singleDateEditMessage, studentRemovalBlock, studentRemovalMessage, weekdayChangeMessage } from "./schedule/classEditScope.js";
 import { createSlotReader, getSlotFulfillmentDate, interpretContractDate, isClassDone } from "./schedule/slotStatus.js";
+import { comboIndexWithMoveInto, countUsedForCombo, hasSlotMoves } from "./schedule/slotMoves.js";
 import { GROUP_SEND_UNAVAILABLE_TEXT, groupMemberCount, groupMemberNames, groupMembersLabel, isGroupChat } from "./chat/groupMembers.js";
 
 // Inject Inter font
@@ -810,6 +811,8 @@ const buildSlotHistoryRows=(slot,displayPaid,isGiven,myClasses,studentId,timeEnd
     else if(slot.terminalStatus==="paused") status="paused";
     else if(slot.terminalStatus==="cancelled") status="cancelled";
     else if(slot.terminalStatus==="pending"||slot.terminalStatus==="inconsistent") status="pending";
+    // Stage 1d: a slot moved for this student (recovery/extension) is done only by explicit attendance there (isGiven).
+    else if(slot.studentMoves) status=isGiven?"done":"scheduled";
     else if(depth===0) status=isGiven?"done":"scheduled";
     else {
       const att=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===date);
@@ -823,13 +826,14 @@ const buildSlotHistoryRows=(slot,displayPaid,isGiven,myClasses,studentId,timeEnd
 // Rows of the student/family "Mis Clases" cards: one row per ORIGINAL contractual date
 // (combo.dates), built with the same shared helpers as Cobros so both views agree.
 // The reschedule path/terminal are information only — never extra economic rows.
-const buildPersonSlotRows=(person,personClasses,todayDate)=>{
+// allClasses (optional): every class, so a slot moved to another group (slotMoves) is read at its destination.
+const buildPersonSlotRows=(person,personClasses,todayDate,allClasses)=>{
   const rows=(person.combos||[]).filter(c=>c.total>0&&c.packType!=="mensual").flatMap(c=>{
     const seen=new Set();
     const dates=(c.dates||[]).filter(d=>{if(seen.has(d))return false;seen.add(d);return true;});
     const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
     // Shared slot reader (src/schedule/slotStatus.js): the same status + given rule as before, in one place.
-    const reader=createSlotReader({classes:personClasses,combo:c,studentId:person.id});
+    const reader=createSlotReader({classes:personClasses,combo:c,studentId:person.id,allClasses});
     const slotFor=reader.status;
     const paymentAt=resolveSlotPayments(dates,c,paidCount,slotFor);
     return dates.map((d,i)=>{
@@ -875,7 +879,7 @@ const resolveAgendaCardStatus=(card,students,classes,todayDate)=>{
     if(!st) continue;
     const isReplacement=isLiveCard&&(st.combos||[]).some(c=>(c.resumeOperations||[]).some(op=>(op.replacementDates||[]).includes(card.date)));
     if(!isPausedCard&&!isReplacement) continue;
-    const rows=buildPersonSlotRows(st,classes.filter(c=>c.students&&c.students.includes(sid)),todayDate);
+    const rows=buildPersonSlotRows(st,classes.filter(c=>c.students&&c.students.includes(sid)),todayDate,classes);
     const row=isPausedCard?rows.find(r=>r.terminalStatus==="paused"&&r.terminalDate===card.date):rows.find(r=>r.date===card.date);
     if(!row) continue;
     payment=row.displayPaid?"paid":null;
@@ -1435,7 +1439,7 @@ const expandClasses=(classes)=>{
 const slotReadingsOf=(student,rawClasses,todayDate)=>{
   if(!student) return [];
   const mine=expandClasses((rawClasses||[]).filter(c=>(c.students||[]).includes(student.id)));
-  return buildPersonSlotRows(student,mine,todayDate).map(r=>({date:r.date,isPaid:r.isPaid,displayPaid:r.displayPaid,isDisplaced:r.isDisplaced,isGiven:r.isGiven,isPaused:r.isPaused,isCancelledClass:r.isCancelledClass}));
+  return buildPersonSlotRows(student,mine,todayDate,(student.combos||[]).some(hasSlotMoves)?expandClasses(rawClasses||[]):mine).map(r=>({date:r.date,isPaid:r.isPaid,displayPaid:r.displayPaid,isDisplaced:r.isDisplaced,isGiven:r.isGiven,isPaused:r.isPaused,isCancelledClass:r.isCancelledClass}));
 };
 // True when every slot reads exactly as before: same paid/displayed/given/paused/cancelled state, the released slot
 // on its destination. Checked for the final state AND for the half-written one (students saved, class not yet).
@@ -2016,7 +2020,7 @@ function getClaseRem(s, classes=[]) {
     // Realizadas uses (resolveContractSlotStatus + resolveSlotGiven, terminal-aware):
     // a paused, undelivered slot stays remaining, a reprogramación is delivered once
     // (on its fulfillment date), a definitive Combo cancellation consumes the slot.
-    const reader=createSlotReader({classes:studentClasses,combo:c,studentId:s.id});
+    const reader=createSlotReader({classes:studentClasses,combo:c,studentId:s.id,allClasses:classes});
     const pastGiven=(c.dates||[c.date]).filter(d=>!!d&&reader.isGiven(d)).length;
     const effectiveUsed=Math.max(c.used||0,pastGiven);
     const porDar=Math.max(0,paidCount-effectiveUsed);
@@ -2093,7 +2097,7 @@ function getAccountCounters(s, classes=[]) {
     // in resolveSlotPayments. Every slot is read through the shared terminal-aware interpretation (the same
     // one PagoModal.buildAllDates uses): a chain ending on a paused date counts as
     // paused here too, never as a pending reprogramación.
-    const reader=createSlotReader({classes:myClasses,combo:c,studentId:s.id});
+    const reader=createSlotReader({classes:myClasses,combo:c,studentId:s.id,allClasses:classes});
     const slotFor=reader.status;
     const paymentAt=resolveSlotPayments(dates,c,paidCount,slotFor);
     return dates.map((d,idx)=>{
@@ -7023,7 +7027,8 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
       // Same terminal-aware interpretation and paid-status assignment getAccountCounters
       // uses (shared helpers) — list and counters agree; pause never removes a payment.
       // Its own isGiven rule below is NOT the shared one (stage 1 keeps it as it was; see BUG-AGENDA-05 notes).
-      const slotFor=createSlotReader({classes:myClasses,combo:c,studentId:s.id}).status;
+      const reader=createSlotReader({classes:myClasses,combo:c,studentId:s.id,allClasses:classes});
+      const slotFor=reader.status;
       const paymentAt=resolveSlotPayments(dates,c,paidCount,slotFor);
       // Show all dates in the combo, no dynamic extension needed
       // The ResumeModal already adds the replacement dates to combo.dates
@@ -7042,7 +7047,8 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         // isGiven=true (its row still shows "Cancelada", not "Realizada": the leftLabel
         // below checks isCancelled before isGiven). Individual is NOT extended (not a
         // normal Individual flow) — stays isGiven=false, matching getAccountCounters.
-        const isGiven=isPaused?false:isCancelled?(c.packType==="combo"):isReprogWithDate?true:isReprogNoDate?false:wasAusenteReprog?false:attEntry?(wasPresent||wasAusenteDada):isClassDone(ds,classOnDate?.timeEnd);
+        // Stage 1d: a slot moved for this student is given only by explicit attendance at its destination (shared reader).
+        const isGiven=slot.studentMoves?reader.isGiven(ds):isPaused?false:isCancelled?(c.packType==="combo"):isReprogWithDate?true:isReprogNoDate?false:wasAusenteReprog?false:attEntry?(wasPresent||wasAusenteDada):isClassDone(ds,classOnDate?.timeEnd);
         let status;
         if(isPaidDate){status=isGiven?"dada":"adar";}
         else{status=isGiven?"dada_unpaid":"pendiente";}
@@ -11141,7 +11147,20 @@ export default function App() {
       {date:classDate,day,present:presentIds,ausente_dada:ausenteDadaIds,ausente_reprog:ausenteReprogIds}];
     // Save attendance log with full status
     setClasses(p=>p.map(c=>c.id===realId?{...c,attendanceLog:mergedLog}:c));
+    // Stage 1d: `used` is per student and combo, wherever a class of the combo was taken (slotMoves). The class
+    // being saved is read with its merged log; without slotMoves nothing below differs from before.
+    const classesForMoves=classes.map(c=>c.id===realId?{...c,attendanceLog:mergedLog}:c);
     setStudents(p=>p.map(s=>{
+      // A student outside the roster whose combo moved a slot INTO this class and date (a recovery): only that combo.
+      const guestIdx=allClassStudents.includes(s.id)?-1:comboIndexWithMoveInto(s.combos,realId,classDate);
+      if(guestIdx>=0){
+        const combos=[...s.combos];
+        const target=combos[guestIdx];
+        const series=classesForMoves.find(c=>c.id===target.sourceClassId);
+        const newUsed=countUsedForCombo({combo:target,studentId:s.id,dc:series?.dateCancellations||{},attendanceLog:series?.attendanceLog||[],baseClassId:target.sourceClassId,classes:classesForMoves});
+        combos[guestIdx]={...target,used:newUsed};
+        return {...s,combos};
+      }
       if(!allClassStudents.includes(s.id)) return s;
       const combos=[...s.combos];
       if(combos.length===0) return s;
@@ -11170,7 +11189,8 @@ export default function App() {
       // THIS series), so a class reprogrammed and given elsewhere counts; explicit attendance only.
       const targetDates=target.dates||(target.date?[target.date]:[]);
       const seriesDc=(target.sourceClassId===realId||target.sourceClassId===undefined)?(classes.find(c=>c.id===realId)?.dateCancellations||{}):{};
-      const newUsed=countAttendedSlots({dates:targetDates,dc:seriesDc,attendanceLog:mergedLog,studentId:s.id});
+      // Same inputs as before (countAttendedSlots when the combo has no slotMoves); moved slots count at their destination.
+      const newUsed=countUsedForCombo({combo:{...target,dates:targetDates},studentId:s.id,dc:seriesDc,attendanceLog:mergedLog,baseClassId:target.sourceClassId!==undefined?target.sourceClassId:realId,classes:classesForMoves});
       combos[lastIdx]={...target,used:newUsed};
       return {...s,combos};
     }));
