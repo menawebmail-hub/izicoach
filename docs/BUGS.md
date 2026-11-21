@@ -209,7 +209,7 @@ Does not touch `getAccountCounters`, `getRem`, `AttModal`, payment logic (`PagoM
 ---
 ## BUG-COBROS-01 — Detalles de Pagos stepper blocked at 0 for students whose first class has no weekly days
 
-**Status:** Fixed (local branch `fix/cobros-stepper-no-calendar`; pending the coach's real payment test and publication)  
+**Status:** Fixed — in `main` (`83740a4`) and deployed (2026-10-24); the coach's real payment test on Production is still pending  
 **Area:** Cobros → Detalles de Pagos (`PagoModal`, class payments)  
 **Priority:** High
 
@@ -247,7 +247,7 @@ Relevant code:
 
 ## BUG-COBROS-02 — Rescheduled dates show two badges ("Reprogramada" and "Pagada")
 
-**Status:** Fixed (local branch `fix/cobros-reprog-badges`; pending review and publication)  
+**Status:** Fixed — in `main` (`83740a4`) and deployed (2026-10-24)  
 **Area:** Cobros → Detalles de Pagos and Student Portal (`SlotGroup`, presentation only)  
 **Priority:** Medium
 
@@ -286,7 +286,7 @@ Relevant code:
 
 ## BUG-ISO-01 — Chat groups shared between coaches on the same device
 
-**Status:** Fixed (local branch `fix/iso-device-storage`; pending review and publication)  
+**Status:** Fixed — in `main` (`79ea17c`) and deployed (2026-10-25)  
 **Area:** Chat (`Chat`, `CreateGroupScreen`) / device storage  
 **Priority:** Medium
 
@@ -317,7 +317,7 @@ Relevant code:
 
 ## BUG-ISO-02 — Obsolete local copies of a coach's business data
 
-**Status:** Partially fixed (local branch `fix/iso-device-storage`): writes removed; existing copies kept pending authorization  
+**Status:** Partially fixed — in `main` (`79ea17c`) and deployed (2026-10-25): writes removed; existing copies kept pending authorization  
 **Area:** Device storage (`App` setters)  
 **Priority:** Low–Medium
 
@@ -374,7 +374,7 @@ The individual `send` also ignores the insert error: a failed individual message
 
 ## BUG-COMBO-01 — `combo.used` counts a reprogrammed class by its original date
 
-**Status:** Fixed on branch `fix/combo-used-release-date` (local, not committed)  
+**Status:** Fixed — `ca54ba0`, in `main` (`9a26124`) and reported deployed  
 **Area:** `handleAttendance` (used recount), `PagoModal` (given count at payment)  
 **Priority:** High
 
@@ -393,7 +393,7 @@ A class reprogrammed and given on another date (Pato Ojeda: 26/10 → 02/10) nev
 
 ## BUG-AGENDA-04 — The original date of a class already given elsewhere stays blocked
 
-**Status:** Fixed on branch `fix/combo-used-release-date` (local, not committed)  
+**Status:** Fixed — `ca54ba0`, in `main` (`9a26124`) and reported deployed  
 **Area:** Agenda (grey cards, "Renovar Combo desde esta fecha"), Cobros (both renewal buttons)  
 **Priority:** High
 
@@ -417,7 +417,7 @@ Pato regression on the real App functions with "today" = 25/10/2026: 26/10 grey,
 
 ## BUG-AGENDA-03 — Reprogramming onto a date with its own entry fuses two classes (prevention + repair)
 
-**Status:** Prevented and repairable on branch `fix/combo-used-release-date`; the full fix (plan B, slot identity by original date) is still pending  
+**Status:** Prevented and repairable — `070c582` + `c5a0fa0`, in `main` (`9a26124`) and reported deployed; the full fix (plan B, slot identity by original date) is still pending  
 **Area:** `CancelReprogModal` / `handleSaveClass` (prevention), Detalles de Pagos (repair)  
 **Priority:** High
 
@@ -442,7 +442,7 @@ Combos, payments, amounts and attendance are never written. Attendance is per da
 
 ## FEATURE-AGENDA-01 — "Agregar día al combo"
 
-**Status:** Implemented on branch `fix/combo-used-release-date` (`eb303e5`, pushed; not merged, not deployed). Validated locally by the owner with a test coach account (2026-10-25)  
+**Status:** Implemented — `eb303e5`, in `main` (`9a26124`) and reported deployed. Validated locally by the owner with a test coach account (2026-10-25); no Production smoke yet  
 **Area:** Agenda (class menu), `src/schedule/comboDayAddition.js`
 
 ### Behavior
@@ -461,7 +461,7 @@ Past dates, dates with attendance, reprogrammed or arriving dates, resume (pause
 
 ## BUG-AGENDA-05 — Editar clase: "Solo esta clase" changes the whole class; a weekday change leaves the combo behind
 
-**Status:** Pending (diagnosed 2026-10-25, not implemented; postponed by the owner)  
+**Status:** Phase 1 and stage 0 implemented on branch `fix/agenda-edit-scope` (`5db25f9`, local commit, not pushed, 2026-11-21); later stages pending  
 **Area:** `EditClassScreen` (occurrence regeneration), Agenda scope prompt (`editScopeData`), `applyEditToClass`, `updateStudentPacks`  
 **Priority:** High
 
@@ -482,6 +482,25 @@ Coaches who move one class with "Solo esta clase" actually move the whole class;
 1. **"Solo esta clase" + one weekday swapped = reprogram that date** to the same week's new weekday through the existing reprogramming (with the fused-chain prevention); combo, payments and attendance as in "Reprogramar". An ambiguous change (several days added/removed) is refused: "Para mover solo esta clase, usá Reprogramar".
 2. **Other structural changes in "Solo esta clase"** (time, students) do not exist per date in the model: say so in the prompt or refuse them ("El horario y los alumnos se cambian para todas las clases").
 3. **"A todas las clases" + weekday change:** keep every past occurrence and every date with attendance, reprogramming or pause; move each current combo's future clean dates, in order, to the next dates with the new weekdays (in the student-pack flow, per ARCHITECTURE.md), keeping total, price and payments (same positions); never move past, attended, reprogrammed, paused, resume or added dates; same slot-readings check; all combo students or none; preview before saving.
+### Phase 1 (authorized 2026-11-20, committed in `5db25f9` on `fix/agenda-edit-scope`)
+Correction 2 plus history protection, in `src/schedule/classEditScope.js`:
+- **Scope prompt:** "📅 Solo esta clase" is disabled, with the message "Solo esta clase no puede cambiar días, horario, cancha, título ni alumnos: esos cambios se aplican a todas las clases. Para mover solo esta fecha, usá Reprogramar." (only the changed fields are named), when the edit changes any series field (`singleDateEditChanges`; timeEnd defaults to "09:00" and deleted students are ignored, as in EditClassScreen). "🔄 A Todas las Clases" is unchanged.
+- **handleSaveClass:** the choice is marked `_singleDate`; it is re-checked against the latest row before any write (`{status:"single-date-edit-refused",changes}`, nothing written) and never enters the per-date pause/cancel branch, even when the edited card is paused or cancelled. `applyEditToClass` then writes only the occurrences: no card field (`date`, `cancelled`, `_virtualId`…) reaches the series row. Package changes (`updateStudentPacks`) work as before. Removing a student is only possible with "A Todas las Clases".
+- **Regenerated occurrences (both choices):** `keepDatesWithHistory` keeps every previous date that is past, has attendance, has a `dateCancellations` entry (paused, cancelled, reprogrammed origin — keeps the destination card) or was added with "Agregar día al combo", read from the real row. Clean future dates of the old weekdays still go.
+- Not changed: non-recurring classes (no scope prompt) keep their own path; "A Todas las Clases" still copies the card fields into the row as before, and a weekday change still does not move the combo (correction 3). Editing a paused or cancelled card with "A Todas las Clases" still goes through the per-date branch (found during this work, not changed, to verify separately).
+- Tests: `src/schedule/classEditScope.test.js` (fields, message, history kept, real `expandClasses` after a weekday change), `src/schedule/classEditScopeWiring.test.js`; `fusedWiring.test.js` anchor updated to the new per-date condition.
+- Verified: `npm test` 101/101; `vite build` clean; `oxlint` 364 = `main`. Browser (localhost:5173, huevo@huevo.com, class "Clase test", nothing saved): unchanged edit → "Solo esta clase" enabled; Friday removed → disabled with the message, click does nothing; coach_data revisions unchanged (classes 82, students 156). A real save with "Solo esta clase" or "A Todas las Clases" was not exercised.
+
+### Stage 0 (authorized 2026-11-21, committed in `5db25f9` on `fix/agenda-edit-scope`)
+Safety fixes in `src/schedule/classEditScope.js`, wired in `EditClassScreen`, the scope prompt, `handleSaveClass`, `applyEditToClass`, `removeStudentsFromClass`:
+- **0.1 Historical dates.** Phase 1 regenerated from the class `startDate`, so a weekday change invented past dates with the new weekdays (and kept the real ones too). `regenerateOccurrences` now starts at the selected card's date, or today when later: every earlier date is kept exactly; new weekdays up to the class end date or 6 months after the change point; later dates with a `dateCancellations` entry and added dates stay. On save, `keepDatesWithHistory` rejects any past date that was not an occurrence. Temporary block (until combos follow a weekday change): the edit is refused when it would leave future combo or individual dates without a card (`comboDatesLeftWithoutCard`, only dates that are occurrences now; mensual never blocks); the prompt disables "A Todas las Clases" and names the students and date counts. Old and new dates are never mixed to avoid the block. Applies from today inclusive.
+- **0.2 Students and combos.** `removeStudentsFromClass` cut every class date from the combo and deleted it when empty, with its payments (also paid mensualidades). `studentRemovalBlock` refuses the edit when a removed student has payments, paid months, used classes, attendance in the class or class history (resume, relocation, added dates, a `dateCancellations` entry on a combo date), judging exactly the combos `cleanCombosAfterClassRemoval` (the previous logic, moved verbatim) would cut or delete. A student without history (added by mistake) is removed as before. Deleted students are not judged. Removing a student from a future date on stays for a later stage.
+- **0.3 Paused/cancelled cards.** Editing such a card sent its state, so "A Todas las Clases" ran the pause interceptor (re-pausing every combo date from that day) and copied card ids/state into the series. `editableFromCard` strips the card state before saving; the per-date branch never runs for `applyToAll` or `_singleDate`; "A Todas" merges `seriesFieldsFromEdit` (no `_virtualId`, `_seriesId`, state or scope flags). Pause, reprogram, reactivate, resume and revert flows are unchanged.
+- Refusals return `{status}` before any write (`single-date-edit-refused`, `student-removal-blocked`, `weekday-change-blocked`); the prompt and the non-recurring edit path show `editRefusalMessage` and keep the screen open.
+- Tests: `classEditScopeStage0.test.js` (new), `classEditScopeWiring.test.js` (rewritten for the new wiring), `classEditScope.test.js` (no invented past date), anchors updated in `fusedWiring.test.js` and `comboDayWiring.test.js`.
+- Verified: `npm test` 119/119; `vite build` clean; `oxlint` 364 (known baseline). Browser (2026-11-21, localhost:5173, huevo@huevo.com logged in by the owner, "Clase test" only, nothing saved): unchanged edit → both choices enabled; Friday removed → "Solo esta clase" disabled, "A Todas" enabled (only a mensual student, no combo dates lost); student removed → both disabled, message "Alumno test (mensualidades pagadas)", click on the disabled button does nothing; coach_data revisions unchanged (classes 83, students 158); no console errors. In-memory check of the new module on the account's 4 recurring classes (one weekday removed, nothing written): no invented past date, every past date identical; none blocked (no future combo dates there). The combo block was then verified in the UI with synthetic data only: local harness `.local-tests/agenda-edit-scope-stage0.jsdom.test.mjs` (git-excluded; real `Agenda` → card menu → `EditClassScreen` → scope prompt in jsdom, Supabase mocked, every write callback a spy): TEST combo of 8 future dates on two weekdays, one weekday removed → "A Todas las Clases" and "Solo esta clase" disabled, message names "TEST Alumno Combo" and the lost date count, clicks do nothing, zero write calls; unchanged edit → both enabled; TEST mensual class with a weekday removed → "A Todas" enabled, one save call to the spy with no card state and every past date identical; 5/5, and a mutation (block disabled) makes the combo case fail. Harness note: `refresh.sh` currently stops at `extract.mjs` (looks for `resolveRescheduleChain` in App.jsx, moved to a module in `ca54ba0`); the bundle was built with `node build-app-copy.mjs` after the copy step.
+- Still pending: combos following a weekday change, removal from a date on, per-occurrence time/court/students, recoveries (later stages); "A Todas las Clases" still copies `studentPacks` into the row (pre-existing).
+
 Tests to add: single-date weekday swap (reprograms only that date, prevention respected), ambiguous change refused, all-classes weekday change with unpaid / partly paid / fully paid combos, past attended dates kept, reprogrammed and added dates not moved, group classes.
 
 ---

@@ -1,8 +1,32 @@
 SESSION_STATE.md — IziCoach
 
-# Current task — Agenda: used, released dates, fused chains, add a day (branch `fix/combo-used-release-date`)
+# Current task — BUG-AGENDA-05 phase 1 + stage 0 (branch `fix/agenda-edit-scope`, from `main` `9a26124`)
 
-- Branch from `main` `79ea17c`, pushed for local QA; not merged, not deployed; no SQL, no migration.
+- Committed locally as `5db25f9` (code + tests, owner's authorization 2026-11-21); not pushed, not merged, not deployed.
+  No SQL, no data written.
+  - Phase 1: "Solo esta clase" refuses days/time/court/title/students and writes only the occurrences.
+  - Stage 0: 0.1 dates regenerated from the selected date (or today), no invented past dates, temporary block when a
+    weekday change would leave future combo/individual dates without a card; 0.2 a student with payments, paid months,
+    attendance or class history cannot be removed (no combo is cut or deleted); 0.3 edits never carry card state, never
+    run Pausar/Cancelar, and "A Todas" merges only series fields. Details: `docs/BUGS.md` → BUG-AGENDA-05.
+- Verified: `npm test` 119/119; `vite build` clean; `oxlint` 364 (baseline).
+- Browser (2026-11-21, owner logged in, "Clase test", nothing saved): refusals and messages OK, revisions unchanged (83/158).
+- Combo weekday block verified in the real Agenda UI with synthetic TEST data in the local jsdom harness (5/5, mutation
+  check fails as expected); no account data used. Not verified: any real save.
+- Approved rules for later stages (2026-11-21): per-student attendance and balance; Ausente – No dada recoverable;
+  recoveries linked to one pending slot, pending until explicit Presente / Ausente – Dada; no publication of recoveries
+  before the student portal shows them. Stages 0 and 1 may be published separately after validation and explicit
+  authorization. Not now: `slotMoves`, `resolveStudentSlot`, recoveries, SQL.
+- Next: push/merge/publication of stage 0 only with explicit authorization; then stage 1 (shared slot reader, no visible change).
+- The docs corrections from 2026-11-20 (branch merged/deployed statuses) are in the same uncommitted diff.
+
+# Last closed task — Agenda: used, released dates, fused chains, add a day (branch `fix/combo-used-release-date`)
+
+- Branch from `main` `79ea17c`; no SQL, no migration. Integrated: `main` fast-forwarded to `9a26124` (= the
+  branch tip; the merge date was not recorded) and reported deployed to Production by Vercel's automatic
+  deployment. Check on 2026-11-20 (read-only): `app.izicoach.app` serves `assets/index-B3tA1xVw.js`, which
+  contains "Agregar día al combo", "Separar clases fusionadas" and the BUG-CHAT-03 group notice; the Vercel
+  deployment record itself was not checked (CLI token not authorized). No Production smoke of these features yet.
   - `ca54ba0`: BUG-COMBO-01 (`used` by original date) and BUG-AGENDA-04 (release of a single-hop reprogrammed
     original date; renewal from it in Agenda and Cobros).
   - `070c582`: BUG-AGENDA-03 prevention (no reprogramming onto a date that would fuse two classes) and the
@@ -16,7 +40,9 @@ SESSION_STATE.md — IziCoach
 - Verified on `eb303e5`: `npm test` 92/92; `vite build` clean; `oxlint` 364 = main. Details: `docs/BUGS.md`.
 - Pending, not implemented: BUG-AGENDA-05 (Editar clase "Solo esta clase" changes the whole class; a weekday
   change leaves the combo behind and drops past dates from the Agenda) — postponed by the owner.
-- Next decision: merge the branch to `main` (automatic Production deploy) — separate authorization.
+- Still to do by the owner on Production (test fixtures only): a smoke of "Agregar día al combo", the
+  fused-chain prevention and "Separar clases fusionadas"; Pato Ojeda's 19/10 attendance and renewal from 26/10.
+- The branch `fix/combo-used-release-date` is fully in `main`; it can be deleted (separate authorization).
 
 # Previous task — account isolation (device storage), closed
 
@@ -57,7 +83,7 @@ SESSION_STATE.md — IziCoach
   no SQL, migration or data cleanup; R4 and the outbox untouched.
 - Verified on the branch vs `main` `c241570`: `npm test` 41/41 (main 15/15); `vite build` clean
   on both; `oxlint` 364 problems on both, same warnings (no new one).
-- Open risks before Production (merge to `main` = automatic Vercel deploy):
+- Open risks (in Production since `79ea17c`):
   - Chat groups remain device-local (not in Supabase): another device or browser, or cleared
     site data, shows no groups. Same as before.
   - Existing `izi_groups` on a device: a group is adopted only if every member is one of the
@@ -95,15 +121,20 @@ SESSION_STATE.md — IziCoach
 - Owner's local validation approved. Still to do by the owner on Production: check Alexia
   Monzon and Pato Ojeda in Cobros and in the Student Portal, and Alexia's real payment
   (expected after paying the 10: No pagadas 0, Pagadas 10, Realizadas 10).
-- The branches `fix/cobros-stepper-no-calendar`, `fix/cobros-reprog-badges` and
-  `validate/cobros-01-02` remain on `origin`; they can be deleted.
+- The branches `fix/cobros-stepper-no-calendar`, `fix/cobros-reprog-badges`,
+  `validate/cobros-01-02` and `fix/iso-device-storage` remain on `origin` and are already in
+  `main`; they can be deleted.
 
 ## 2. Open items
 
+- BUG-AGENDA-05 (Editar clase "Solo esta clase" changes the whole class; a weekday change leaves
+  the combo behind and drops past dates from the Agenda): diagnosed, three corrections proposed
+  in `docs/BUGS.md`, not implemented; postponed by the owner.
 - BUG-AGENDA-03 (rescheduling another class of the same series into a vacated original date
-  merges both classes): diagnosed. The full fix (solution B: slot identity = original date,
-  explicit reschedule `path` per slot, staged rollout behind a coach allowlist) is planned
-  and waits for the owner's decisions before Stage 0. Separate branch; nothing implemented.
+  merges both classes): prevention and the "Separar clases fusionadas" repair are in `main`
+  (`070c582`). The full fix (solution B: slot identity = original date, explicit reschedule
+  `path` per slot, staged rollout behind a coach allowlist) is planned and waits for the
+  owner's decisions before Stage 0. Separate branch; not implemented.
 - BUG-ACCOUNT-01 … 04 (`docs/BUGS.md`): pending, on hold for the PaymentCard presentation
   decision.
 - `PagoModal` reads the weekly calendar from `myClasses[0]` only; projections/renewals for
