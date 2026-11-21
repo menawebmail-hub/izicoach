@@ -21,6 +21,7 @@ import { applyReleaseToClassRow, applyReleaseToCombo, countAttendedSlots, findPe
 import { applyFusedRepairToClassRow, findFusedGroups, fusedMessage, planFusedRepair, rescheduleDestinationConflict, shortDate } from "./schedule/fusedChains.js";
 import { additionMessage, applyAdditionToClassRow, applyAdditionToStudents, findPendingAdditionCompletions, hasCurrentComboForDayAddition, resolveComboDayAddition } from "./schedule/comboDayAddition.js";
 import { cleanCombosAfterClassRemoval, comboDatesLeftWithoutCard, editableFromCard, editRefusalMessage, keepDatesWithHistory, regenerateOccurrences, seriesFieldsFromEdit, singleDateEditChanges, singleDateEditMessage, studentRemovalBlock, studentRemovalMessage, weekdayChangeMessage } from "./schedule/classEditScope.js";
+import { createSlotReader, getSlotFulfillmentDate, interpretContractDate, isClassDone } from "./schedule/slotStatus.js";
 import { GROUP_SEND_UNAVAILABLE_TEXT, groupMemberCount, groupMemberNames, groupMembersLabel, isGroupChat } from "./chat/groupMembers.js";
 
 // Inject Inter font
@@ -640,18 +641,7 @@ const mensualPaymentMessage=(reason,detail)=>reason==="skip-month"&&detail&&deta
 
 const WEEK_AGO=(()=>{const d=new Date();d.setDate(d.getDate()-7);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
 
-// Check if a class date+timeEnd has passed (dynamic - called at render time)
-const CLASS_DONE_MARGIN=30; // minutes after class ends before auto-realizing
-const isClassDone=(date,timeEnd)=>{
-  if(!date) return false;
-  const now=new Date();
-  const todayStr=now.getFullYear()+"-"+String(now.getMonth()+1).padStart(2,"0")+"-"+String(now.getDate()).padStart(2,"0");
-  if(date<todayStr) return true;
-  if(date>todayStr) return false;
-  const [eh,em]=(timeEnd||"23:59").split(":").map(Number);
-  const endWithMargin=new Date(now.getFullYear(),now.getMonth(),now.getDate(),eh,em+CLASS_DONE_MARGIN);
-  return now>=endWithMargin;
-};
+// isClassDone: src/schedule/slotStatus.js
 
 // Attendance status for a student chip on an Agenda class card, for the occurrence c.date.
 // Paused/cancelled/reprogramming states always win — never assume Present for those.
@@ -767,61 +757,9 @@ const fmtDate=(ds)=>{const d=new Date(ds+"T12:00:00");return _wDFull[d.getDay()]
 
 // resolveRescheduleChain / resolveComboDateStatus / traceRescheduleHistory: src/schedule/rescheduleChain.js
 
-// Single interpretation of one ORIGINAL contracted date (combo.dates entry) for
-// Cobros, resolved to the terminal of its reschedule chain. The row's economic
-// identity stays originalDate; terminalDate/reschedulePath are information only.
-// A terminal that is paused reads as Pausada (expandClasses deliberately hides
-// non-live terminals from its cards, which is right for Agenda but made Cobros
-// read such a chain as "A Reprogramar"). Never mutates its input.
-const interpretContractDate=(dateCancellations,originalDate)=>{
-  const {terminal,cancelInfo,broken}=resolveComboDateStatus(dateCancellations,originalDate);
-  const {path}=traceRescheduleHistory(dateCancellations,originalDate);
-  const wasRescheduled=path.length>1;
-  if(broken){
-    return {originalDate,terminalDate:null,cancelInfo:null,reschedulePath:path,terminalStatus:"inconsistent",isPaused:false,isCompensated:false,isCancelled:false,isReprogrammed:false,isReprogramPending:true,wasRescheduled};
-  }
-  const t=cancelInfo?cancelInfo.cancelType:null;
-  const isPaused=t==="paused";
-  const isCancelled=t==="cancelled";
-  const isReprogrammed=wasRescheduled&&cancelInfo===null;
-  const isReprogramPending=t==="cancelled_reprog"||(wasRescheduled&&cancelInfo!==null&&!isPaused&&!isCancelled);
-  const terminalStatus=isPaused?"paused":isCancelled?"cancelled":isReprogramPending?"pending":isReprogrammed?"reprogrammed":"normal";
-  const isCompensated=isPaused&&!!(cancelInfo&&cancelInfo.compensated);
-  return {originalDate,terminalDate:terminal,cancelInfo,reschedulePath:path,terminalStatus,isPaused,isCompensated,isCancelled,isReprogrammed,isReprogramPending,wasRescheduled};
-};
+// interpretContractDate: src/schedule/slotStatus.js
 
-// Shared by getAccountCounters and PagoModal.buildAllDates so list and counters
-// can never disagree. The series row is found via combo.sourceClassId (expanded
-// cards keep the series id in `id`, plus `_seriesId`); a card without
-// dateCancellations (legacy/single class) keeps the previous top-level-flags
-// reading, and so does any date the series has no entry for.
-const resolveContractSlotStatus=(myClasses,combo,originalDate,clsForDate)=>{
-  const series=(combo&&combo.sourceClassId!==undefined)?myClasses.find(cl=>cl.id===combo.sourceClassId||cl._seriesId===combo.sourceClassId):undefined;
-  const dc=(series&&series.dateCancellations)||(clsForDate&&clsForDate.dateCancellations)||null;
-  if(dc){
-    const r=interpretContractDate(dc,originalDate);
-    if(r.terminalStatus!=="normal"){
-      // A paused terminal is "compensated" once a resume replaced it: its dateCancellations
-      // entry says so (compensated), and so does the combo's resumeOperations[].pausedDates —
-      // either is enough, so a lost compensatedBy never hides the fact.
-      const compensatedByOps=r.isPaused&&(combo&&combo.resumeOperations||[]).some(op=>(op.pausedDates||[]).includes(r.terminalDate));
-      return {...r,isCompensated:r.isCompensated||!!compensatedByOps,isReprogWithDate:r.isReprogrammed,isReprogNoDate:r.isReprogramPending,rescheduledTo:r.isReprogrammed?r.terminalDate:null,
-        fulfillCancelled:r.isCancelled||r.isReprogrammed||r.isReprogramPending,
-        fulfillCancelType:r.isCancelled?"cancelled":(r.isReprogrammed||r.isReprogramPending)?"cancelled_reprog":null};
-    }
-  }
-  const cancelled=clsForDate?clsForDate.cancelled:undefined;
-  const cancelType=clsForDate?clsForDate.cancelType:undefined;
-  const rescheduledTo=clsForDate?clsForDate.rescheduledTo:undefined;
-  const isCancelled=!!(cancelled&&cancelType==="cancelled");
-  const isReprogWithDate=!!(cancelled&&cancelType==="cancelled_reprog"&&rescheduledTo);
-  const isReprogNoDate=!!(cancelled&&cancelType==="cancelled_reprog"&&!rescheduledTo);
-  const isPaused=!!((clsForDate&&clsForDate.paused)||cancelType==="paused");
-  return {originalDate,terminalDate:isReprogWithDate?rescheduledTo:originalDate,cancelInfo:null,reschedulePath:isReprogWithDate?[originalDate,rescheduledTo]:[originalDate],
-    terminalStatus:isPaused?"paused":isCancelled?"cancelled":isReprogNoDate?"pending":isReprogWithDate?"reprogrammed":"normal",
-    isPaused,isCompensated:false,isCancelled,isReprogrammed:isReprogWithDate,isReprogramPending:isReprogNoDate,wasRescheduled:isReprogWithDate,
-    isReprogWithDate,isReprogNoDate,rescheduledTo:rescheduledTo||null,fulfillCancelled:cancelled,fulfillCancelType:cancelType};
-};
+// resolveContractSlotStatus: src/schedule/slotStatus.js (read through createSlotReader)
 
 // Shared paid-status assignment for the slots of ONE combo (Cobros counters, Cobros
 // list and the student/family "Mis Clases" cards all use it). Payment and pause are
@@ -856,19 +794,7 @@ const resolveSlotPayments=(dates,combo,paidCount,slotFor)=>{
   };
 };
 
-// Shared "was this contractual slot delivered" rule (Cobros counters and getClaseRem):
-// evaluated on the effective fulfillment date, never on both original and destination.
-// A paused slot is never delivered; a definitively-cancelled Combo slot is billed and
-// consumed like a delivered one (Individual is deliberately not extended).
-const resolveSlotGiven=(slot,packType,originalDate,timeEnd,myClasses,studentId)=>{
-  if(slot.isPaused) return false;
-  if(slot.isCancelled) return packType==="combo";
-  const fulfillmentDate=getSlotFulfillmentDate(originalDate,slot.fulfillCancelled,slot.fulfillCancelType,slot.rescheduledTo);
-  if(!fulfillmentDate) return false;
-  const att=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===fulfillmentDate);
-  if(att) return (att.present||[]).includes(studentId)||(att.ausente_dada||[]).includes(studentId);
-  return isClassDone(fulfillmentDate,timeEnd);
-};
+// resolveSlotGiven: src/schedule/slotStatus.js (read through createSlotReader)
 
 // Visual history of ONE contractual slot: [original, ...every reschedule destination],
 // depth 0..n. Presentation only — these are never economic rows (no number, no payment,
@@ -902,17 +828,18 @@ const buildPersonSlotRows=(person,personClasses,todayDate)=>{
     const seen=new Set();
     const dates=(c.dates||[]).filter(d=>{if(seen.has(d))return false;seen.add(d);return true;});
     const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
-    const slotFor=dd=>resolveContractSlotStatus(personClasses,c,dd,personClasses.find(cl=>cl.date===dd));
+    // Shared slot reader (src/schedule/slotStatus.js): the same status + given rule as before, in one place.
+    const reader=createSlotReader({classes:personClasses,combo:c,studentId:person.id});
+    const slotFor=reader.status;
     const paymentAt=resolveSlotPayments(dates,c,paidCount,slotFor);
     return dates.map((d,i)=>{
       const slot=slotFor(d);
-      const clsForDate=personClasses.find(cl=>cl.date===d);
       const {isPaid:paidByPosition,isDisplaced,displayPaid:displayByPosition}=paymentAt(i);
       // Individual is deliberately not extended: its cancelled slots are never paid here.
       const isPaid=slot.isCancelled?(c.packType==="combo"&&paidByPosition):paidByPosition;
       const displayPaid=slot.isCancelled?isPaid:displayByPosition;
-      const isGiven=resolveSlotGiven(slot,c.packType,d,(clsForDate&&clsForDate.timeEnd)||"23:59",personClasses,person.id);
-      const timeEnd=(clsForDate&&clsForDate.timeEnd)||"23:59";
+      const isGiven=reader.isGiven(d);
+      const timeEnd=reader.timeEndFor(d);
       return {date:d,isPaid,displayPaid,isDisplaced,isGiven,isPast:d<=todayDate,isPaused:slot.isPaused,isCompensated:slot.isCompensated,isCancelledClass:slot.isCancelled,isReprogWithDate:slot.isReprogWithDate,isReprogNoDate:slot.isReprogNoDate,rescheduledTo:slot.rescheduledTo||null,terminalDate:slot.terminalDate,reschedulePath:slot.reschedulePath,terminalStatus:slot.terminalStatus,historyRows:buildSlotHistoryRows(slot,displayPaid,isGiven,personClasses,person.id,timeEnd)};
     });
   }).sort((a,b)=>a.date.localeCompare(b.date));
@@ -1777,16 +1704,7 @@ function getRem(s, classes=[]) {
   return getClaseRem(s, classes);
 }
 
-// Single source of truth for "which date decides whether a combo slot is fulfilled" —
-// shared by getAccountCounters, isComboClosed and the renewal checks (PaymentCard,
-// Dashboard) so none of them re-implement a different rule for the same slot. A slot
-// reprogrammed with a rescheduledTo is fulfilled by that new date, never by its
-// original one; a slot still pending reprogramming (no rescheduledTo yet) is never
-// fulfilled.
-function getSlotFulfillmentDate(originalDate, cancelled, cancelType, rescheduledTo) {
-  if(cancelled&&cancelType==="cancelled_reprog") return rescheduledTo||null;
-  return originalDate;
-}
+// getSlotFulfillmentDate: src/schedule/slotStatus.js
 // Shared by getAccountCounters and PagoModal.buildAllDates: a combo with total>0 is
 // "closed" once fully paid AND every non-paused slot is RESOLVED — present, ausente_dada,
 // or definitively cancelled (owes no makeup) all resolve regardless of time; with no
@@ -2098,12 +2016,8 @@ function getClaseRem(s, classes=[]) {
     // Realizadas uses (resolveContractSlotStatus + resolveSlotGiven, terminal-aware):
     // a paused, undelivered slot stays remaining, a reprogramación is delivered once
     // (on its fulfillment date), a definitive Combo cancellation consumes the slot.
-    const pastGiven=(c.dates||[c.date]).filter(d=>{
-      if(!d) return false;
-      const clsForDate=studentClasses.find(cls=>cls.date===d);
-      const slot=resolveContractSlotStatus(studentClasses,c,d,clsForDate);
-      return resolveSlotGiven(slot,c.packType,d,(clsForDate&&clsForDate.timeEnd)||"23:59",studentClasses,s.id);
-    }).length;
+    const reader=createSlotReader({classes:studentClasses,combo:c,studentId:s.id});
+    const pastGiven=(c.dates||[c.date]).filter(d=>!!d&&reader.isGiven(d)).length;
     const effectiveUsed=Math.max(c.used||0,pastGiven);
     const porDar=Math.max(0,paidCount-effectiveUsed);
     const lastDate=c.dates&&c.dates.length>0?c.dates[c.dates.length-1]:"";
@@ -2179,20 +2093,20 @@ function getAccountCounters(s, classes=[]) {
     // in resolveSlotPayments. Every slot is read through the shared terminal-aware interpretation (the same
     // one PagoModal.buildAllDates uses): a chain ending on a paused date counts as
     // paused here too, never as a pending reprogramación.
-    const slotFor=dd=>resolveContractSlotStatus(myClasses,c,dd,myClasses.find(cls=>cls.date===dd));
+    const reader=createSlotReader({classes:myClasses,combo:c,studentId:s.id});
+    const slotFor=reader.status;
     const paymentAt=resolveSlotPayments(dates,c,paidCount,slotFor);
     return dates.map((d,idx)=>{
-      const clsForDate=myClasses.find(cls=>cls.date===d);
       const slot=slotFor(d);
       const {isCancelled,isReprogWithDate,isReprogNoDate,isPaused}=slot;
-      const timeEnd=clsForDate?.timeEnd||"23:59";
+      const timeEnd=reader.timeEndFor(d);
       const {isPaid,isDisplaced}=paymentAt(idx);
       const isDone=isClassDone(d,timeEnd);
       // Fulfillment (isGiven) is evaluated on the effective date — rescheduledTo for a
       // reprogrammed slot, the original date otherwise — never on both, so a slot always
       // contributes 0 or 1 to realizadas, never 2. A definitively-cancelled Combo slot is
       // billed and consumed like a given one (Individual is deliberately not extended).
-      const isGiven=resolveSlotGiven(slot,c.packType,d,timeEnd,myClasses,s.id);
+      const isGiven=reader.isGiven(d);
       return {date:d,isPaid,isGiven,isPast:isDone,isCancelled,isReprogWithDate,isReprogNoDate,isPaused,isCompensated:slot.isCompensated,isDisplaced,packType:c.packType,sourceComboIndex,comboId:c.id,sourceClassId:c.sourceClassId,terminalDate:slot.terminalDate,reschedulePath:slot.reschedulePath,terminalStatus:slot.terminalStatus};
     });
   });
@@ -7108,7 +7022,8 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
       const _npCount=_pi.filter(x=>!x.paused).length;
       // Same terminal-aware interpretation and paid-status assignment getAccountCounters
       // uses (shared helpers) — list and counters agree; pause never removes a payment.
-      const slotFor=dd=>resolveContractSlotStatus(myClasses,c,dd,myClasses.find(cls=>cls.date===dd));
+      // Its own isGiven rule below is NOT the shared one (stage 1 keeps it as it was; see BUG-AGENDA-05 notes).
+      const slotFor=createSlotReader({classes:myClasses,combo:c,studentId:s.id}).status;
       const paymentAt=resolveSlotPayments(dates,c,paidCount,slotFor);
       // Show all dates in the combo, no dynamic extension needed
       // The ResumeModal already adds the replacement dates to combo.dates

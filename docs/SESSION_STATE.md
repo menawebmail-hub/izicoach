@@ -1,8 +1,17 @@
 SESSION_STATE.md — IziCoach
 
-# Current task — BUG-AGENDA-05 phase 1 + stage 0 (branch `fix/agenda-edit-scope`, from `main` `9a26124`)
+# Current task — BUG-AGENDA-05 stage 1: shared slot reader (branch `fix/agenda-edit-scope`)
 
-- Committed locally as `5db25f9` (code + tests, owner's authorization 2026-11-21); not pushed, not merged, not deployed.
+- Implemented locally, NOT committed (2026-11-21): `src/schedule/slotStatus.js` (helpers moved verbatim +
+  `createSlotReader`), consumers switched (Cobros rows, counters, Por dar, PagoModal status). No visible change:
+  characterization snapshot identical, 128/128, build clean, oxlint 364, harness failure set unchanged, 0 differences
+  on the account's 81 real slots (read-only). Divergent "given" rules left as they are (see BUGS.md stage 1).
+- Next: owner review → commit authorization; stage 1d (dormant slotMoves + per-combo used recount) separately.
+
+# Previous step — BUG-AGENDA-05 phase 1 + stage 0 (branch `fix/agenda-edit-scope`, from `main` `9a26124`)
+
+- Committed as `5db25f9` (code + tests) and `81c3bf8` (docs); pushed to `origin/fix/agenda-edit-scope` 2026-11-21; not merged,
+  not deployed.
   No SQL, no data written.
   - Phase 1: "Solo esta clase" refuses days/time/court/title/students and writes only the occurrences.
   - Stage 0: 0.1 dates regenerated from the selected date (or today), no invented past dates, temporary block when a
