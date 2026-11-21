@@ -20,6 +20,7 @@ import { resolveRescheduleChain, resolveComboDateStatus, traceRescheduleHistory 
 import { applyReleaseToClassRow, applyReleaseToCombo, countAttendedSlots, findPendingReleaseCompletions, releaseMessage, releaseStateOf, resolveReleasableDate } from "./schedule/releaseReprogrammedDate.js";
 import { applyFusedRepairToClassRow, findFusedGroups, fusedMessage, planFusedRepair, rescheduleDestinationConflict, shortDate } from "./schedule/fusedChains.js";
 import { additionMessage, applyAdditionToClassRow, applyAdditionToStudents, findPendingAdditionCompletions, hasCurrentComboForDayAddition, resolveComboDayAddition } from "./schedule/comboDayAddition.js";
+import { cleanCombosAfterClassRemoval, comboDatesLeftWithoutCard, editableFromCard, editRefusalMessage, keepDatesWithHistory, regenerateOccurrences, seriesFieldsFromEdit, singleDateEditChanges, singleDateEditMessage, studentRemovalBlock, studentRemovalMessage, weekdayChangeMessage } from "./schedule/classEditScope.js";
 import { GROUP_SEND_UNAVAILABLE_TEXT, groupMemberCount, groupMemberNames, groupMembersLabel, isGroupChat } from "./chat/groupMembers.js";
 
 // Inject Inter font
@@ -4604,28 +4605,16 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
           const daysChanged=JSON.stringify(days)!==JSON.stringify(cls.days);
           const tooFewOccurrences=days.length>0&&newOccurrences.length<days.length*4; // less than ~1 month of classes
           if((daysChanged||tooFewOccurrences)&&hasValidClassDays(days)){
-            const dowSet=classDowSetFrom(days);
-            const result=[];
-            const sd=cls.startDate||cls.date;
-            const ed=cls.endDate;
-            let cur=new Date(sd+"T12:00:00");
-            const end=ed?new Date(ed+"T12:00:00"):new Date(new Date(sd+"T12:00:00").setMonth(new Date(sd+"T12:00:00").getMonth()+6));
-            while(cur<=end&&result.length<200){
-              if(dowSet.has(cur.getDay())){
-                result.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
-              }
-              cur.setDate(cur.getDate()+1);
-            }
-            // Preserve existing occurrences that have attendance/cancellation data
-            const preserved=(cls.occurrences||[]).filter(d=>d<sd);
+            // BUG-AGENDA-05 stage 0: regenerated from the selected date (or today, if later) only; every earlier date is
+            // kept exactly, no past date is invented; horizon = the class end date or 6 months after the change point.
             // "Agregar día al combo": dates added to combos are not weekly days; never drop them (class.addedDates).
-            const addedKeep=(cls.addedDates||[]).map(a=>a&&a.date).filter(d=>typeof d==="string");
-            newOccurrences=[...new Set([...preserved,...result,...addedKeep])].sort();
+            newOccurrences=regenerateOccurrences({previous:cls.occurrences||[],dowSet:classDowSetFrom(days),fromDate:cls.date,todayDate:todayIso(),endDate:cls.endDate,addedDates:cls.addedDates,dateCancellations:cls.dateCancellations});
           }
           // Only send studentPacks for students the professor explicitly changed
           const filteredPacks={};
           changedPacks.forEach(sid=>{if(studentPacks[sid])filteredPacks[sid]=studentPacks[sid];});
-          onSave({...cls,title,court,days,time:t1,timeEnd:t2,students:clsSt,studentPacks:Object.keys(filteredPacks).length>0?filteredPacks:undefined,occurrences:newOccurrences});
+          // The card's own state (paused, cancelled, reprogrammed, per-date flags) never travels with an edit.
+          onSave({...editableFromCard(cls),title,court,days,time:t1,timeEnd:t2,students:clsSt,studentPacks:Object.keys(filteredPacks).length>0?filteredPacks:undefined,occurrences:newOccurrences});
         }} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:10}}>Actualizar Clase</button>
         {confirmDeleteClass?(
           <div style={{padding:12,borderRadius:14,background:"#FFEBEE",border:"1px solid #FFCDD2",marginBottom:20}}>
@@ -6543,15 +6532,32 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
           <div style={{background:"#fff",borderRadius:20,padding:24,width:"100%",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
             <div style={{fontSize:17,fontWeight:800,color:C.text,marginBottom:6}}>¿Aplicar cambios a?</div>
             <div style={{fontSize:13,color:C.mutedDark,marginBottom:20}}>Esta es una clase recurrente. ¿El cambio aplica solo a esta fecha o a toda la serie?</div>
+            {(()=>{
+              // BUG-AGENDA-05: days, time, court, title and students exist only for the whole series — "Solo esta clase"
+              // refuses them (handleSaveClass re-checks on the latest state). Moving one date is "Reprogramar".
+              const scopeSeries=(rawClasses||classes).find(c2=>c2.id===(editScopeData._seriesId||editScopeData.id));
+              const singleDateChanges=singleDateEditChanges(scopeSeries,editScopeData,students.map(s=>s.id));
+              const singleDateBlocked=singleDateChanges.length>0;
+              // Stage 0 (BUG-AGENDA-05): "A Todas las Clases" is refused when it would leave future combo/individual dates
+              // without a card, or remove a student with history (handleSaveClass re-checks on the latest state).
+              const lostCards=comboDatesLeftWithoutCard({series:scopeSeries,students,nextOccurrences:editScopeData.occurrences,todayDate:todayIso()});
+              const removalBlocked=studentRemovalBlock({series:scopeSeries,students,nextStudentIds:editScopeData.students});
+              const allBlocked=lostCards.length>0||removalBlocked.length>0;
+              return (
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
-              <button onClick={()=>{onSaveClass(editScopeData,true);setEditScopeData(null);setEditCls(null);}} style={{padding:"14px",borderRadius:12,border:"1.5px solid "+C.border,background:C.blueL,color:C.blue2,cursor:"pointer",fontSize:14,fontWeight:700,textAlign:"left"}}>
+              <button disabled={singleDateBlocked} onClick={()=>{const r=onSaveClass({...editScopeData,_singleDate:true},true);const msg=editRefusalMessage(r);if(msg){alert(msg);return;}setEditScopeData(null);setEditCls(null);}} style={{padding:"14px",borderRadius:12,border:"1.5px solid "+C.border,background:C.blueL,color:C.blue2,cursor:singleDateBlocked?"not-allowed":"pointer",opacity:singleDateBlocked?0.5:1,fontSize:14,fontWeight:700,textAlign:"left"}}>
                 📅 Solo esta clase ({editScopeData.date})
               </button>
-              <button onClick={()=>{onSaveClass({...editScopeData,applyToAll:true},true);setEditScopeData(null);setEditCls(null);}} style={{padding:"14px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:700,textAlign:"left"}}>
+              {singleDateBlocked&&<div role="alert" style={{fontSize:12,color:"#C62828",fontWeight:600}}>{singleDateEditMessage(singleDateChanges)}</div>}
+              <button disabled={allBlocked} onClick={()=>{const r=onSaveClass({...editScopeData,applyToAll:true},true);const msg=editRefusalMessage(r);if(msg){alert(msg);return;}setEditScopeData(null);setEditCls(null);}} style={{padding:"14px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:"#fff",cursor:allBlocked?"not-allowed":"pointer",opacity:allBlocked?0.5:1,fontSize:14,fontWeight:700,textAlign:"left"}}>
                 🔄 A Todas las Clases
               </button>
+              {lostCards.length>0&&<div role="alert" style={{fontSize:12,color:"#C62828",fontWeight:600}}>{weekdayChangeMessage(lostCards)}</div>}
+              {removalBlocked.length>0&&<div role="alert" style={{fontSize:12,color:"#C62828",fontWeight:600}}>{studentRemovalMessage(removalBlocked)}</div>}
               <button onClick={()=>setEditScopeData(null)} style={{padding:"12px",borderRadius:12,border:"1.5px solid "+C.border,background:"#fff",color:C.mutedDark,cursor:"pointer",fontSize:13,fontWeight:600}}>Cancelar</button>
             </div>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -6562,7 +6568,8 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
         if(isRecurring){
           setEditScopeData(u);
         } else {
-          onSaveClass(u,true);
+          const msg=editRefusalMessage(onSaveClass(u,true));
+          if(msg){alert(msg);return;}
           setEditCls(null);
         }
       }} onCreateStudent={onAddStudent} packages={packages} onDelete={(id)=>{const realId=editCls?._seriesId||id;onDeleteClass&&onDeleteClass(realId);setEditCls(null);}}/>}
@@ -11422,21 +11429,12 @@ export default function App() {
       const removedStudentIds=(originalClass?.students||[]).filter(id=>!(cd.students||[]).includes(id));
       if(removedStudentIds.length>0){
         const classDates=new Set(originalClass?.occurrences||[originalClass?.date].filter(Boolean));
+        // Stage 0 (BUG-AGENDA-05): handleSaveClass refuses the edit before any write when a removed student has a
+        // history (studentRemovalBlock judges exactly the combos cleanCombosAfterClassRemoval touches), so this only
+        // ever cleans students added by mistake.
         setStudents(p=>p.map(s=>{
           if(!removedStudentIds.includes(s.id)) return s;
-          const cleanedCombos=(s.combos||[]).map(combo=>{
-            // A combo with a known sourceClassId is only ever touched when it's
-            // THIS class — never stripped by date coincidence once we know for
-            // certain which class it belongs to. Legacy combos (no
-            // sourceClassId) keep the existing date-set heuristic exactly as
-            // before — the only signal available for data that predates this.
-            if(combo.sourceClassId!==undefined&&combo.sourceClassId!==realId) return combo;
-            const comboDates=combo.dates||[combo.date].filter(Boolean);
-            const filteredDates=comboDates.filter(d=>!classDates.has(d));
-            if(filteredDates.length===0) return null;
-            return {...combo, dates:filteredDates, total:filteredDates.length, date:filteredDates[0]};
-          }).filter(Boolean);
-          return {...s,combos:cleanedCombos};
+          return {...s,combos:cleanCombosAfterClassRemoval(s.combos,realId,classDates)};
         }));
       }
     }
@@ -11736,6 +11734,15 @@ export default function App() {
       setClasses(p=>p.map(c=>c.id!==realId?c:{...c,occurrences:cd.occurrences||c.occurrences}));
       return;
     }
+    // BUG-AGENDA-05: regenerated occurrences never drop a date with a history (past, attendance, dateCancellations
+    // entry, added date) — read from the real row, not from the edited card.
+    const occurrencesKeepingHistory=(c)=>cd.occurrences?keepDatesWithHistory({previous:c.occurrences||[],next:cd.occurrences,attendanceLog:c.attendanceLog,dateCancellations:c.dateCancellations,addedDates:c.addedDates,todayDate:todayIso()}):c.occurrences;
+    if(cd._singleDate){
+      // "Solo esta clase": the series fields were already checked unchanged in handleSaveClass; none of the card's
+      // fields (date, cancelled, _virtualId…) are merged into the series row. Only the occurrences may change.
+      setClasses(p=>p.map(c=>c.id===realId?{...c,occurrences:occurrencesKeepingHistory(c)}:c));
+      return;
+    }
     if(cd.applyToAll){
       setClasses(p=>p.map(c=>{
         if(c.id===realId){
@@ -11744,7 +11751,8 @@ export default function App() {
           // edited (expandClasses sets it to just that one date's log entry, or
           // none), never the class's real full history. Force it back to the
           // real value so a plain field edit can never truncate attendance.
-          return {...c,...cd,id:realId,date:c.date,occurrences:cd.occurrences||c.occurrences,attendanceLog:c.attendanceLog};
+          // Stage 0: no card id, card state (paused, cancelled…) or scope flag is ever merged into the series row.
+          return {...c,...seriesFieldsFromEdit(cd),id:realId,date:c.date,occurrences:occurrencesKeepingHistory(c),attendanceLog:c.attendanceLog};
         }
         return c;
       }));
@@ -11843,8 +11851,17 @@ export default function App() {
       const realId=cd._seriesId||cd.id;
       const editDate=cd.date; // the specific date being edited
 
-      // Handle per-date cancellation/pause for recurring classes
-      if((cd.cancelled===true||cd.cancelType==="paused"||cd._resuming||cd._reactivating)&&editDate){
+      // "Solo esta clase" (BUG-AGENDA-05): refused when it changes a series field, checked against the LATEST row;
+      // nothing is written. It never goes through the per-date branch below (the edited card may be paused or
+      // cancelled): only the package changes and the occurrences are saved.
+      if(cd._singleDate){
+        const changes=singleDateEditChanges(latestClassesRef.current.find(c2=>c2.id===realId),cd,latestStudentsRef.current.map(s=>s.id));
+        if(changes.length>0) return {status:"single-date-edit-refused",changes};
+      }
+
+      // Handle per-date cancellation/pause for recurring classes. An edit (EditClassScreen sends no card state, and
+      // "A Todas las Clases" / "Solo esta clase" are edits) never runs Pausar or Cancelar here.
+      if(!cd._singleDate&&!cd.applyToAll&&(cd.cancelled===true||cd.cancelType==="paused"||cd._resuming||cd._reactivating)&&editDate){
         // A dated reprogramming may never land on a date that already carries another class or reprogramming of this
         // series (that fuses two classes into one — BUG-AGENDA-03). Checked against the LATEST state; nothing is written.
         // "Mover al final del paquete" keeps its own write-time guard (guardEndOfPackageWrite) and is not re-judged here.
@@ -11983,6 +12000,16 @@ export default function App() {
       if(hasRecurringSpEdit&&!hasValidClassDays(cd.days)){
         alert(NO_VALID_CLASS_DAYS_MESSAGE);
         return;
+      }
+      // Stage 0 (BUG-AGENDA-05), against the LATEST state, before any write: a student with a history is never
+      // removed (no combo with payments/attendance is cut or deleted), and an edit never leaves future combo or
+      // individual dates without an Agenda card. Nothing is written when refused.
+      {
+        const latestSeries=latestClassesRef.current.find(c2=>c2.id===realId);
+        const blocked=studentRemovalBlock({series:latestSeries,students:latestStudentsRef.current,nextStudentIds:cd.students});
+        if(blocked.length>0) return {status:"student-removal-blocked",blocked};
+        const affected=comboDatesLeftWithoutCard({series:latestSeries,students:latestStudentsRef.current,nextOccurrences:cd.occurrences,todayDate:todayIso()});
+        if(affected.length>0) return {status:"weekday-change-blocked",affected};
       }
       applyEditToClass(cd, realId);
       removeStudentsFromClass(cd, realId);
