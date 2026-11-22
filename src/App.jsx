@@ -25,7 +25,7 @@ import { createSlotReader, dueDadaNoticeCount, effectiveComboUsed, getSlotFulfil
 import { comboIndexWithMoveInto, countUsedForCombo, hasSlotMoves } from "./schedule/slotMoves.js";
 import { noticeOf, readAttendance, slotCardOn, slotClassId } from "./schedule/attendanceRead.js";
 import { applyOverrideToClassRow, withoutCardOverride, overrideCardFields, overrideChanges, overrideRefusal, overrideValuesFrom, reprogDestinationValues, seriesEditFromCard } from "./schedule/occurrenceOverrides.js";
-import { applyNoticesToClassRow, cardNoticeRefusal, individualRecoveryMessage, isWholeClassAbsence, noticeMessage, noticeRecordOf, noticeWriteRefusal, pendingNoticeStudentIds } from "./schedule/absenceNotices.js";
+import { applyNoticesToClassRow, individualRecoveryMessage, isWholeClassAbsence, noticeMessage, noticeWriteRefusal, pendingNoticeStudentIds } from "./schedule/absenceNotices.js";
 import { GROUP_SEND_UNAVAILABLE_TEXT, groupMemberCount, groupMemberNames, groupMembersLabel, isGroupChat } from "./chat/groupMembers.js";
 
 // Inject Inter font
@@ -5542,7 +5542,7 @@ const resolveClassAttendanceBadgeCounts=(students,classRealId,classDate,log)=>{
   (log?.ausente_reprog||[]).forEach(sid=>{if(!isMensual(sid))aReprogramar++;});
   return {ausenteDada,aReprogramar};
 };
-function AttModal({ att, students, onAttendance, onClose }) {
+function AttModal({ att, students, onAttendance, onAbsenceNotice, onClose }) {
   const classRealId=att._seriesId||att.id;
   const [attStatus,setAttStatus]=useState(()=>{
     const init={};
@@ -5568,10 +5568,24 @@ function AttModal({ att, students, onAttendance, onClose }) {
     return init;
   });
 
-  // Stage 2.1: definitive attendance is never saved for a future date (only advance notices).
+  // Stage 2.1: definitive attendance is never saved for a future date. There the same screen saves only the absences,
+  // as advance notices (class.attendanceNotices, re-validated in saveAbsenceNotices); a student left on Presente is not
+  // recorded, and setting back Presente withdraws an existing notice (its history is kept).
   const isFutureDate=att.date>todayIso();
   const handleSave=()=>{
-    if(isFutureDate) return;
+    if(isFutureDate){
+      if(!onAbsenceNotice) return;
+      const changes=att.students.filter(sid=>students.some(s=>s.id===sid)).map(sid=>{
+        const want=attStatus[sid]==="presente"?null:attStatus[sid];
+        const cur=noticeOf(att,att.date,sid)?.status||null;
+        return want!==cur?{studentId:sid,status:want}:null;
+      }).filter(Boolean);
+      if(changes.length===0){onClose();return;}
+      const r=onAbsenceNotice({seriesId:classRealId,date:att.date,changes});
+      if(r&&r.status==="refused"){alert(noticeMessage(r.reason));return;}
+      onClose();
+      return;
+    }
     const presentStudents=att.students.filter(sid=>attStatus[sid]==="presente");
     const ausente_dada=att.students.filter(sid=>attStatus[sid]==="ausente_dada");
     // A mensual student's attStatus is only ever "presente"/"ausente_dada" (attendanceCycleFor never
@@ -5642,11 +5656,11 @@ function AttModal({ att, students, onAttendance, onClose }) {
             );
           })}
         </div>
-        {isFutureDate&&<div role="alert" style={{margin:"0 16px 8px",fontSize:12,color:"#E65100",background:"#FFF3E0",borderRadius:10,padding:"10px 12px"}}>La asistencia se registra el día de la clase. Para una ausencia anticipada usá «Avisar ausencia».</div>}
+        {isFutureDate&&<div role="alert" style={{margin:"0 16px 8px",fontSize:12,color:"#E65100",background:"#FFF3E0",borderRadius:10,padding:"10px 12px"}}>Fecha futura: se guardan solo las ausencias, como avisos. Quien queda en Presente no se registra.</div>}
         {/* Footer */}
         <div style={{padding:"12px 16px",paddingBottom:"calc(28px + env(safe-area-inset-bottom, 34px))",borderTop:"1px solid "+C.border,display:"flex",gap:10}}>
           <button onClick={onClose} style={{flex:1,padding:"12px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:14,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
-          <button onClick={handleSave} disabled={isFutureDate} style={{flex:2,padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:isFutureDate?"not-allowed":"pointer",opacity:isFutureDate?0.5:1,fontSize:14,fontWeight:800}}>Guardar asistencia</button>
+          <button onClick={handleSave} disabled={isFutureDate&&!onAbsenceNotice} style={{flex:2,padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:isFutureDate&&!onAbsenceNotice?"not-allowed":"pointer",opacity:isFutureDate&&!onAbsenceNotice?0.5:1,fontSize:14,fontWeight:800}}>{isFutureDate?"Guardar avisos":"Guardar asistencia"}</button>
         </div>
       </div>
     </div>
@@ -5654,69 +5668,7 @@ function AttModal({ att, students, onAttendance, onClose }) {
 }
 
 
-// "Avisar ausencia" (BUG-AGENDA-05 stage 2.1): an advance individual absence for THIS class card and its real date,
-// stored apart from attendanceLog (class.attendanceNotices). Classmates are never touched. Refused when the day's
-// attendance is already recorded (correct Asistencia instead), on a paused/cancelled/reprogrammed or past date.
-function AbsenceNoticeModal({ card, students, onSave, onClose }) {
-  const seriesId=card._seriesId||card.id;
-  const refusal=cardNoticeRefusal(card,todayIso());
-  const roster=(card.students||[]).filter(sid=>students.some(s=>s.id===sid));
-  const initial=Object.fromEntries(roster.map(sid=>[sid,noticeOf(card,card.date,sid)?.status||null]));
-  const [sel,setSel]=useState(initial);
-  const [error,setError]=useState("");
-  const isMensual=sid=>attendanceCycleFor(students,seriesId,card.date,sid).length===2;
-  const cycleOf=sid=>isMensual(sid)?[null,"ausente_dada"]:[null,"ausente_reprog","ausente_dada"];
-  const LABEL={
-    none:{label:"Sin aviso",bg:C.blueL,color:C.blue2},
-    ausente_reprog:{label:"↩ Ausente — No Dada",bg:"#3949AB",color:"#fff"},
-    ausente_dada:{label:"✗ Ausente — Dada",bg:"#E65100",color:"#fff"},
-  };
-  const labelFor=(sid,st)=>{
-    if(!st) return LABEL.none;
-    if(st==="ausente_dada"&&isMensual(sid)) return {...LABEL.ausente_dada,label:"✗ Ausente"};
-    return LABEL[st];
-  };
-  const cycle=sid=>setSel(p=>{const c=cycleOf(sid);const i=c.indexOf(p[sid]??null);return {...p,[sid]:c[((i<0?0:i)+1)%c.length]};});
-  const changes=roster.filter(sid=>(sel[sid]??null)!==(initial[sid]??null)).map(sid=>({studentId:sid,status:sel[sid]??null}));
-  const save=()=>{
-    if(changes.length===0){onClose();return;}
-    const r=onSave({seriesId,date:card.date,changes});
-    if(r&&r.status==="refused"){setError(noticeMessage(r.reason));return;}
-    onClose();
-  };
-  const fmtAt=iso=>{const d=new Date(iso);return isNaN(d)?"":String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0")+" "+String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");};
-  return (
-    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.55)",zIndex:500,display:"flex",alignItems:"flex-end"}}>
-      <div style={{background:C.white,borderRadius:"20px 20px 0 0",width:"100%",boxSizing:"border-box",maxHeight:"85%",display:"flex",flexDirection:"column"}}>
-        <div style={{background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",borderRadius:"20px 20px 0 0",padding:"16px 20px"}}>
-          <div style={{fontWeight:800,fontSize:16,color:C.white}}>Avisar ausencia</div>
-          <div style={{fontSize:12,color:C.muted,marginTop:2}}>{card.title} · {card.date}</div>
-        </div>
-        <div style={{flex:1,overflowY:"auto",padding:"12px 16px"}}>
-          {refusal?<div role="alert" style={{fontSize:13,color:"#E65100",background:"#FFF3E0",borderRadius:10,padding:"10px 12px"}}>{noticeMessage(refusal)}</div>:roster.map(sid=>{
-            const st=students.find(s=>s.id===sid);
-            const l=labelFor(sid,sel[sid]??null);
-            const rec=noticeRecordOf(card,card.date,sid);
-            return (
-              <div key={sid} style={{padding:"10px 0",borderBottom:"1px solid "+C.border,display:"flex",alignItems:"center",gap:12}}>
-                <div style={{flex:1}}>
-                  <div style={{fontWeight:700,fontSize:14,color:C.text}}>{st.name}</div>
-                  {rec&&rec.history&&rec.history.length>0&&<div style={{fontSize:11,color:C.mutedDark,marginTop:2}}>Último cambio: {fmtAt(rec.at)} · {rec.history.length} {rec.history.length===1?"registro":"registros"}</div>}
-                </div>
-                <button onClick={()=>cycle(sid)} style={{padding:"8px 16px",borderRadius:20,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:l.bg,color:l.color,minWidth:160,textAlign:"center"}}>{l.label}</button>
-              </div>
-            );
-          })}
-          {error&&<div role="alert" style={{marginTop:10,fontSize:12,color:"#C62828",fontWeight:600}}>{error}</div>}
-        </div>
-        <div style={{padding:"12px 16px",paddingBottom:"calc(28px + env(safe-area-inset-bottom, 34px))",borderTop:"1px solid "+C.border,display:"flex",gap:10}}>
-          <button onClick={onClose} style={{flex:1,padding:"12px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:14,color:C.mutedDark,fontWeight:700}}>{refusal?"Cerrar":"Cancelar"}</button>
-          {!refusal&&<button onClick={save} style={{flex:2,padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:14,fontWeight:800}}>Guardar aviso</button>}
-        </div>
-      </div>
-    </div>
-  );
-}
+
 function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAbsenceNotice, onAddStudent, courts=[], packages=[], onUpdateStudent, onUpdateStudentsBatch, isClassesWriteSettled, onDeleteClass, pendingReprog, onClearPendingReprog, onAddPackage, onRefresh, onReleaseAndRenew, onAddComboDay }) {
   const [selDay,setSelDay]=useState(TODAY_DATE);
   const [viewYear,setViewYear]=useState(new Date().getFullYear());
@@ -5727,7 +5679,6 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAb
   const [att,setAtt]=useState(null);
   const [editCls,setEditCls]=useState(null);
   const [editScopeData,setEditScopeData]=useState(null);
-  const [noticeCard,setNoticeCard]=useState(null); // "Avisar ausencia" (stage 2.1)
   const [gridNewTime,setGridNewTime]=useState(null);
   const [highlightCls,setHighlightCls]=useState(null);
   const [confirmDelete,setConfirmDelete]=useState(null); // class to delete
@@ -6307,7 +6258,6 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAb
                     {[
                       {label:"Editar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,action:()=>{setEditCls(c);setHighlightCls(null);},disabled:false,color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
                       {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt({...c,attendanceLog:c.attendanceLog||[]});setHighlightCls(null);},disabled:isNextComboPending(c,students),color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
-                      ...(onAbsenceNotice?[{label:"Avisar ausencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="17" y1="8" x2="23" y2="14"/><line x1="23" y1="8" x2="17" y2="14"/></svg>,action:()=>{setNoticeCard(c);setHighlightCls(null);},disabled:(()=>{const r=cardNoticeRefusal(c,todayIso());return !!r&&r!=="attendance-recorded";})()}]:[]),
                       {label:c.paused||c.cancelType==="paused"?"▶ Reanudar":"⏸ Pausar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{c.paused||c.cancelType==="paused"?<polygon points="5 3 19 12 5 21 5 3"/>:<g><line x1="10" y1="4" x2="10" y2="20"/><line x1="14" y1="4" x2="14" y2="20"/></g>}</svg>,action:()=>{if(c.paused||c.cancelType==="paused"){setShowResume(c);}else{setShowPause(c);}setHighlightCls(null);},disabled:c.date<WEEK_AGO,color:c.date<WEEK_AGO?"#ccc":c.paused||c.cancelType==="paused"?"linear-gradient(135deg,#2E7D32,#43A047)":"linear-gradient(135deg,#E65100,#FF8F00)"},
                       {label:c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo?"Asignar fecha":c.cancelled?"Reactivar":"Reprogramar / Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="15" x2="15" y2="15"/></svg>,action:()=>{if(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo){setShowCancel(c);}else if(c.cancelled){onSaveClass({...c,cancelled:false,cancelType:null,rescheduledTo:null,applyToAll:false,_reactivating:true},true);}else{setShowCancel(c);}setHighlightCls(null);},disabled:(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo)?false:c.date<WEEK_AGO,color:(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo)?"linear-gradient(135deg,#1565C0,#42A5F5)":c.date<WEEK_AGO?"#ccc":c.cancelled&&!c.rescheduledTo?"linear-gradient(135deg,#1565C0,#42A5F5)":c.cancelled?"linear-gradient(135deg,#1565C0,#42A5F5)":"linear-gradient(135deg,#E65100,#FF8F00)"},
                     ].map(btn=>(
@@ -6548,7 +6498,6 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAb
                         {[
                           {label:"Editar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,action:()=>{setEditCls(c);setHighlightCls(null);},color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
                           {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt({...c,attendanceLog:c.attendanceLog||[]});setHighlightCls(null);},color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
-                          ...(onAbsenceNotice?[{label:"Avisar ausencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="17" y1="8" x2="23" y2="14"/><line x1="23" y1="8" x2="17" y2="14"/></svg>,action:()=>{setNoticeCard(c);setHighlightCls(null);},disabled:(()=>{const r=cardNoticeRefusal(c,todayIso());return !!r&&r!=="attendance-recorded";})()}]:[]),
                           {label:c.paused||c.cancelType==="paused"?"▶ Reanudar":"⏸ Pausar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{c.paused||c.cancelType==="paused"?<polygon points="5 3 19 12 5 21 5 3"/>:<g><line x1="10" y1="4" x2="10" y2="20"/><line x1="14" y1="4" x2="14" y2="20"/></g>}</svg>,action:()=>{if(c.paused||c.cancelType==="paused"){setShowResume(c);}else{setShowPause(c);}setHighlightCls(null);},disabled:c.date<WEEK_AGO,color:c.date<WEEK_AGO?"#ccc":c.paused||c.cancelType==="paused"?"linear-gradient(135deg,#2E7D32,#43A047)":"linear-gradient(135deg,#E65100,#FF8F00)"},
                           {label:c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo?"Asignar fecha":c.cancelled?"Reactivar":"Reprogramar / Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="15" x2="15" y2="15"/></svg>,action:()=>{if(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo){setShowCancel(c);}else if(c.cancelled){onSaveClass({...c,cancelled:false,cancelType:null,rescheduledTo:null,applyToAll:false,_reactivating:true},true);}else{setShowCancel(c);}setHighlightCls(null);},disabled:(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo)?false:c.date<WEEK_AGO,color:(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo)?"linear-gradient(135deg,#1565C0,#42A5F5)":c.date<WEEK_AGO?"#ccc":c.cancelled&&!c.rescheduledTo?"linear-gradient(135deg,#1565C0,#42A5F5)":c.cancelled?"linear-gradient(135deg,#1565C0,#42A5F5)":"linear-gradient(135deg,#E65100,#FF8F00)"},
                         ].map(btn=>(
@@ -6648,8 +6597,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAb
       {addDayFor&&(rawClasses||classes).find(cl=>cl.id===addDayFor)&&<AddComboDayModal series={(rawClasses||classes).find(cl=>cl.id===addDayFor)} classes={rawClasses||classes} students={students} onConfirm={onAddComboDay} onClose={()=>setAddDayFor(null)}/>}
       {showCancel&&<CancelReprogModal cls={showCancel} series={(rawClasses||classes).find(c2=>c2.id===(showCancel._seriesId||showCancel.id))} knownSeriesIds={new Set((rawClasses||classes).map(c2=>c2.id))} onClose={()=>setShowCancel(null)} onSave={(u)=>{const r=onSaveClass(u,true);if(u._endOfPackage&&r&&r.status==="end-of-package-unavailable") return r;setShowCancel(null);return r;}} students={students} onUpdateStudent={onUpdateStudent}/>}
       {showNew&&<NewClassModal onClose={()=>{setShowNew(false);setGridNewTime(null);setWeekOffset(0);}} onSave={onSaveClass} existingClasses={classes} students={students} dateLabel={viewMode==="month"?selLabel:weekLabel()} onCreateStudent={onAddStudent} prefill={gridNewTime||(viewMode==="month"?{date:selDay}:null)} courts={courts} packages={packages} onAddPackage={(pkg)=>{if(typeof onAddPackage==="function")onAddPackage(pkg);}}/>}
-      {att&&<AttModal att={att} students={students} onAttendance={onAttendance} onClose={()=>setAtt(null)}/>}
-      {noticeCard&&onAbsenceNotice&&<AbsenceNoticeModal card={noticeCard} students={students} onSave={onAbsenceNotice} onClose={()=>setNoticeCard(null)}/>}
+      {att&&<AttModal att={att} students={students} onAttendance={onAttendance} onAbsenceNotice={onAbsenceNotice} onClose={()=>setAtt(null)}/>}
     </div>
   );
 }
@@ -11275,7 +11223,7 @@ export default function App() {
     return true;
   };
 
-  // "Avisar ausencia" (BUG-AGENDA-05 stage 2.1): re-validated on the LATEST class row, one classes write, the class
+  // Advance absence notices (BUG-AGENDA-05 stage 2.1), saved from Asistencia on a future date: re-validated on the LATEST class row, one classes write, the class
   // row only (attendanceNotices); attendanceLog, students, combos and payments are never touched.
   const saveAbsenceNotices=({seriesId,date,changes})=>{
     if(isClassesWriteSettled&&!isClassesWriteSettled()) return {status:"refused",reason:"write-pending"};

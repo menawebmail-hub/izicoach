@@ -160,8 +160,13 @@ test("equivalence without notices; no definitive attendance in the future", () =
   assert.deepEqual(counters([withEmpty], st, J), counters([{ ...plain, attendanceNotices: undefined }], st, J));
   for (const d of EIGHT) assert.deepEqual(R.readAttendance({ classes: [plain], classId: 10, date: d, studentId: J }).state, R.readAttendance({ classes: [withEmpty], classId: 10, date: d, studentId: J }).state);
   const app = readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
-  assert.match(app, /const isFutureDate=att\.date>todayIso\(\);\s*const handleSave=\(\)=>\{\s*if\(isFutureDate\) return;/);
-  assert.match(app, /<button onClick=\{handleSave\} disabled=\{isFutureDate\}/);
+  // future date: Asistencia saves only the absences, as notices (no definitive attendance)
+  assert.match(app, /const isFutureDate=att\.date>todayIso\(\);\s*const handleSave=\(\)=>\{\s*if\(isFutureDate\)\{/);
+  assert.match(app, /const want=attStatus\[sid\]==="presente"\?null:attStatus\[sid\];/);
+  assert.match(app, /const r=onAbsenceNotice\(\{seriesId:classRealId,date:att\.date,changes\}\);/);
+  assert.match(app, /\{isFutureDate\?"Guardar avisos":"Guardar asistencia"\}/);
+  const attModal = app.slice(app.indexOf("function AttModal("), app.indexOf("\nfunction Agenda("));
+  assert.ok(attModal.indexOf("return;\n    }") < attModal.indexOf("onAttendance({...att"), "the future branch returns before any definitive attendance");
   assert.match(app, /if\(classDate>todayIso\(\)\) return \{status:"future-attendance"\};/);
   const att = app.slice(app.indexOf("const handleAttendance=(cls)=>{"));
   assert.ok(att.indexOf('return {status:"future-attendance"}') < att.indexOf("setClasses("), "refused before any write");
@@ -171,5 +176,7 @@ test("equivalence without notices; no definitive attendance in the future", () =
   assert.match(save, /noticeWriteRefusal\(\{row,date,changes,todayDate:todayIso\(\),isMensual\}\)/);
   assert.match(save, /setClasses\(p=>p\.map\(c=>c\.id===seriesId\?applyNoticesToClassRow\(c,\{date,changes,at\}\):c\)\);/);
   assert.ok(!/setStudents\(/.test(save), "never writes students");
-  assert.equal((app.match(/\.\.\.\(onAbsenceNotice\?\[\{label:"Avisar ausencia"/g) || []).length, 2, "day and week menus");
+  // the separate "Avisar ausencia" menu entry and modal were removed: everything goes through Asistencia
+  assert.ok(!/label:"Avisar ausencia"/.test(app) && !/function AbsenceNoticeModal\(/.test(app));
+  assert.match(app, /<AttModal att=\{att\} students=\{students\} onAttendance=\{onAttendance\} onAbsenceNotice=\{onAbsenceNotice\}/);
 });

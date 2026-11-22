@@ -1,8 +1,17 @@
 SESSION_STATE.md — IziCoach
 
-# Current task — BUG-AGENDA-05 stage 2.2: time and court of one occurrence (branch `fix/agenda-edit-scope`)
+# Current task — simplified Asistencia (BUG-AGENDA-05 stage 2.1 UI, branch `fix/agenda-edit-scope`)
 
-- Committed locally (2026-11-22) on top of `98fe7c6`; not pushed, not merged, not deployed. Per-date time/court in
+- Committed locally (2026-11-22) on top of `29381a5`; not pushed, not merged, not deployed. Owner decision: the separate
+  "Avisar ausencia" menu entry and modal were removed; on a FUTURE date Asistencia saves only the absences as advance
+  notices (`saveAbsenceNotices`, same validation; Presente is not recorded and withdraws an existing notice, history
+  kept); today and past keep the definitive attendance flow. Cycle unchanged: Presente → Ausente – No dada → Ausente –
+  Dada → Presente (mensual: Presente ↔ Ausente). Details: `docs/BUGS.md` stage 2.1.
+- NOT publishable until the student portal reads `occurrenceOverrides` and `attendanceNotices`.
+
+# Previous step — BUG-AGENDA-05 stage 2.2: time and court of one occurrence (branch `fix/agenda-edit-scope`)
+
+- Committed as `29381a5` (2026-11-22) on top of `98fe7c6`; not pushed, not merged, not deployed. Per-date time/court in
   `class.occurrenceOverrides`, applied by `expandClasses` to that date's card only; "Solo esta clase" saves them for that
   date and applies directly (prompt keeps its 3 original options; restore = series values back); Reprogramar saves the
   chosen destination time keeping the duration; a card's own values never reach the series. Details: `docs/BUGS.md`.
