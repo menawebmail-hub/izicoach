@@ -15,15 +15,20 @@ const slice = (from, to) => {
 test("scope modal: both choices are disabled and explained when refused, and every refusal is honoured", () => {
   const modal = slice("{editScopeData&&(", "{editCls&&<EditClassScreen");
   assert.match(modal, /const scopeSeries=\(rawClasses\|\|classes\)\.find\(c2=>c2\.id===\(editScopeData\._seriesId\|\|editScopeData\.id\)\);/);
-  assert.match(modal, /singleDateEditChanges\(scopeSeries,editScopeData,students\.map\(s=>s\.id\)\)/);
+  // stage 2.2: time and court are allowed for this date; days, title and students are still refused
+  assert.match(modal, /singleDateRefusedChanges\(scopeSeries,editScopeData,students\.map\(s=>s\.id\)\)/);
   assert.match(modal, /comboDatesLeftWithoutCard\(\{series:scopeSeries,students,nextOccurrences:editScopeData\.occurrences,todayDate:todayIso\(\)\}\)/);
   assert.match(modal, /studentRemovalBlock\(\{series:scopeSeries,students,nextStudentIds:editScopeData\.students\}\)/);
   assert.match(modal, /<button disabled=\{singleDateBlocked\} onClick=\{\(\)=>\{const r=onSaveClass\(\{\.\.\.editScopeData,_singleDate:true\},true\);const msg=editRefusalMessage\(r\);if\(msg\)\{alert\(msg\);return;\}/);
-  assert.match(modal, /<button disabled=\{allBlocked\} onClick=\{\(\)=>\{const r=onSaveClass\(\{\.\.\.editScopeData,applyToAll:true\},true\);const msg=editRefusalMessage\(r\);if\(msg\)\{alert\(msg\);return;\}/);
+  assert.match(modal, /<button disabled=\{allBlocked\} onClick=\{\(\)=>\{const r=onSaveClass\(\{\.\.\.seriesEditFromCard\(\{series:scopeSeries,card:editCls,edited:editScopeData\}\),applyToAll:true\},true\);const msg=editRefusalMessage\(r\);if\(msg\)\{alert\(msg\);return;\}/);
   assert.match(modal, /\{singleDateBlocked&&<div role="alert"[^>]*>\{singleDateEditMessage\(singleDateChanges\)\}<\/div>\}/);
   assert.match(modal, /\{lostCards\.length>0&&<div role="alert"[^>]*>\{weekdayChangeMessage\(lostCards\)\}<\/div>\}/);
   assert.match(modal, /\{removalBlocked\.length>0&&<div role="alert"[^>]*>\{studentRemovalMessage\(removalBlocked\)\}<\/div>\}/);
+  // only the three original options (owner decision 2026-11-21): no restore button, no extra confirmation
   assert.equal((modal.match(/onSaveClass\(/g) || []).length, 2);
+  assert.ok(!/Restaurar horario/.test(modal) && !/window\.confirm\(/.test(modal) && !/saveSingle/.test(modal));
+  const app2 = app.slice(app.indexOf("const handleSaveClass=(cd,isEdit=false)=>{"));
+  assert.match(app2, /overrideRefusal\(\{row:latestRow,date:editDate,values,confirmedAttendance:true\}\)/, "applied directly, other internal checks kept");
 });
 
 test("non-recurring classes (no scope prompt) honour a refusal and keep the edit screen open", () => {
@@ -41,7 +46,7 @@ test("EditClassScreen: regenerates from the selected date and never sends the ca
 test("handleSaveClass: Solo esta clase is re-checked first; edits never enter the per-date branch", () => {
   const save = slice("const handleSaveClass=(cd,isEdit=false)=>{", "return createNewClass(cd);");
   const guard = save.indexOf("if(cd._singleDate){");
-  const check = save.indexOf("singleDateEditChanges(latestClassesRef.current.find(c2=>c2.id===realId),cd,latestStudentsRef.current.map(s=>s.id))", guard);
+  const check = save.indexOf("singleDateRefusedChanges(latestRow,cd,latestStudentsRef.current.map(s=>s.id))", guard);
   const refuse = save.indexOf('if(changes.length>0) return {status:"single-date-edit-refused",changes};', check);
   const perDate = save.indexOf('if(!cd._singleDate&&!cd.applyToAll&&(cd.cancelled===true||cd.cancelType==="paused"||cd._resuming||cd._reactivating)&&editDate){');
   const firstWrite = save.indexOf("setClasses(", guard);
@@ -55,7 +60,7 @@ test("handleSaveClass: removal and lost-card refusals run on the latest state be
   const removalRet = edit.indexOf('if(blocked.length>0) return {status:"student-removal-blocked",blocked};', removal);
   const lost = edit.indexOf("comboDatesLeftWithoutCard({series:latestSeries,students:latestStudentsRef.current,nextOccurrences:cd.occurrences,todayDate:todayIso()})", removalRet);
   const lostRet = edit.indexOf('if(affected.length>0) return {status:"weekday-change-blocked",affected};', lost);
-  const apply = edit.indexOf("applyEditToClass(cd, realId);", lostRet);
+  const apply = edit.indexOf("applyEditToClass(cd, realId, singleDateOverride);", lostRet);
   const remove = edit.indexOf("removeStudentsFromClass(cd, realId);", apply);
   const packs = edit.indexOf("updateStudentPacks(cd);", remove);
   assert.ok(edit.indexOf("const latestSeries=latestClassesRef.current.find(c2=>c2.id===realId);") >= 0);
@@ -63,9 +68,10 @@ test("handleSaveClass: removal and lost-card refusals run on the latest state be
 });
 
 test("applyEditToClass: Solo esta clase writes only the occurrences; A Todas merges only series fields", () => {
-  const apply = slice("const applyEditToClass=(cd,realId)=>{", "\n  };\n");
+  const apply = slice("const applyEditToClass=(cd,realId,singleDateOverride)=>{", "\n  };\n");
   assert.match(apply, /keepDatesWithHistory\(\{previous:c\.occurrences\|\|\[\],next:cd\.occurrences,attendanceLog:c\.attendanceLog,dateCancellations:c\.dateCancellations,addedDates:c\.addedDates,todayDate:todayIso\(\)\}\)/);
-  assert.match(apply, /if\(cd\._singleDate\)\{[\s\S]*?setClasses\(p=>p\.map\(c=>c\.id===realId\?\{\.\.\.c,occurrences:occurrencesKeepingHistory\(c\)\}:c\)\);\s*return;\s*\}/);
+  // stage 2.2: Solo esta clase writes the occurrences and, when changed, this date's own time/court
+  assert.match(apply, /if\(cd\._singleDate\)\{[\s\S]*?const next=\{\.\.\.c,occurrences:occurrencesKeepingHistory\(c\)\};\s*return singleDateOverride\?applyOverrideToClassRow\(next,singleDateOverride\):next;[\s\S]*?return;\s*\}/);
   assert.match(apply, /return \{\.\.\.c,\.\.\.seriesFieldsFromEdit\(cd\),id:realId,date:c\.date,occurrences:occurrencesKeepingHistory\(c\),attendanceLog:c\.attendanceLog\};/);
   // non-recurring classes (no scope prompt) keep their own path, including the date change
   assert.match(apply, /setClasses\(p=>p\.map\(c=>c\.id===realId\?\{\.\.\.c,\.\.\.cd,id:realId,attendanceLog:c\.attendanceLog\}:c\)\);/);

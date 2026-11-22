@@ -20,10 +20,11 @@ import { resolveRescheduleChain, resolveComboDateStatus, traceRescheduleHistory 
 import { applyReleaseToClassRow, applyReleaseToCombo, countAttendedSlots, findPendingReleaseCompletions, releaseMessage, releaseStateOf, resolveReleasableDate } from "./schedule/releaseReprogrammedDate.js";
 import { applyFusedRepairToClassRow, findFusedGroups, fusedMessage, planFusedRepair, rescheduleDestinationConflict, shortDate } from "./schedule/fusedChains.js";
 import { additionMessage, applyAdditionToClassRow, applyAdditionToStudents, findPendingAdditionCompletions, hasCurrentComboForDayAddition, resolveComboDayAddition } from "./schedule/comboDayAddition.js";
-import { cleanCombosAfterClassRemoval, comboDatesLeftWithoutCard, editableFromCard, editRefusalMessage, keepDatesWithHistory, regenerateOccurrences, seriesFieldsFromEdit, singleDateEditChanges, singleDateEditMessage, studentRemovalBlock, studentRemovalMessage, weekdayChangeMessage } from "./schedule/classEditScope.js";
+import { cleanCombosAfterClassRemoval, comboDatesLeftWithoutCard, editableFromCard, editRefusalMessage, keepDatesWithHistory, regenerateOccurrences, seriesFieldsFromEdit, singleDateEditMessage, singleDateRefusedChanges, studentRemovalBlock, studentRemovalMessage, weekdayChangeMessage } from "./schedule/classEditScope.js";
 import { createSlotReader, dueDadaNoticeCount, effectiveComboUsed, getSlotFulfillmentDate, givenByReading, interpretContractDate, isClassDone } from "./schedule/slotStatus.js";
 import { comboIndexWithMoveInto, countUsedForCombo, hasSlotMoves } from "./schedule/slotMoves.js";
 import { noticeOf, readAttendance, slotCardOn, slotClassId } from "./schedule/attendanceRead.js";
+import { applyOverrideToClassRow, withoutCardOverride, overrideCardFields, overrideChanges, overrideRefusal, overrideValuesFrom, reprogDestinationValues, seriesEditFromCard } from "./schedule/occurrenceOverrides.js";
 import { applyNoticesToClassRow, cardNoticeRefusal, individualRecoveryMessage, isWholeClassAbsence, noticeMessage, noticeRecordOf, noticeWriteRefusal, pendingNoticeStudentIds } from "./schedule/absenceNotices.js";
 import { GROUP_SEND_UNAVAILABLE_TEXT, groupMemberCount, groupMemberNames, groupMembersLabel, isGroupChat } from "./chat/groupMembers.js";
 
@@ -1427,6 +1428,8 @@ const expandClasses=(classes)=>{
           paused:!!(cancelInfo&&cancelInfo.cancelType==="paused"),
           _isRescheduledInstance:rescheduledIntoOccurrence.has(date),
           attendanceLog:log?[log]:[],
+          // Stage 2.2: this date's own time/court (class.occurrenceOverrides), never another date's.
+          ...overrideCardFields(c,date),
         });
       }
       // Expand rescheduled-to dates (new class instances on the new day) —
@@ -1444,6 +1447,7 @@ const expandClasses=(classes)=>{
           rescheduled:false,
           _isRescheduledInstance:true,
           attendanceLog:log?[log]:[],
+          ...overrideCardFields(c,date),
         });
       }
     } else {
@@ -2216,7 +2220,7 @@ const applyResumeToClassRow=({c,cd,realId,editDate,dc,occ,plannedResume})=>{
   if(cd._newOccurrenceDates&&cd._newOccurrenceDates.length>0) nextOcc.sort();
   const nextPlanned=plannedResume&&!plannedResume.completed?{...plannedResume,completed:true}:plannedResume;
   const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,dateCancellations:_dc2,_compensatedPausedDates:_cpd,_resumeOperationId:_roid,_newOccurrenceDates:_nod,_plannedResumeDate:_prdate,...rest}=cd;
-  return {...c,...rest,id:realId,dateCancellations:nextDc,occurrences:nextOcc,plannedResume:nextPlanned};
+  return {...c,...withoutCardOverride(rest,cd),id:realId,dateCancellations:nextDc,occurrences:nextOcc,plannedResume:nextPlanned};
 };
 
 // One contractual slot as a group: the single numbered row (original date) followed by one
@@ -4880,7 +4884,8 @@ function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent,
   const [stage,setStage]=useState(isAssigningDate0?"reprog":"choose"); // "choose" | "reprog"
   const [selected,setSelected]=useState(isAssigningDate0?"reprog":null); // null, "cancel", "reprog"
   const [newDate,setNewDate]=useState("");
-  const [newTime,setNewTime]=useState(cls.time||"08:00");
+  // Stage 2.2: starts from the SERIES time — an origin date's own time is never carried to the destination automatically.
+  const [newTime,setNewTime]=useState((series&&series.time)||cls.time||"08:00");
 
   const clsStudents=(cls.students||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean);
   // Same recurrence signal used elsewhere (EditClassScreen's hasRecurringObligation): any
@@ -4963,7 +4968,8 @@ function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent,
       if(destConflict){alert(fusedMessage(destConflict));return;}
       const oldDate=cls.date;
       const updatedLog=(cls.attendanceLog||[]).map(e=>e.date===oldDate?{...e,ausente_reprog:[],rescheduled_to:targetDate}:e);
-      const r=onSave({...cls,cancelled:true,cancelType:"cancelled_reprog",rescheduledTo:targetDate,rescheduled:true,attendanceLog:updatedLog,applyToAll:false},true);
+      // Stage 2.2: the chosen time is saved for the destination date (class.occurrenceOverrides) when it is not the series one.
+      const r=onSave({...cls,cancelled:true,cancelType:"cancelled_reprog",rescheduledTo:targetDate,rescheduled:true,attendanceLog:updatedLog,applyToAll:false,_destTime:newTime},true);
       if(r&&r.status==="reprog-destination-conflict"){alert(fusedMessage(r.reason));return;}
       // Combo dates are NOT changed — the original date stays as the billing slot
       // The rescheduled class appears on the new date as a normal class instance
@@ -6576,7 +6582,8 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAb
               // BUG-AGENDA-05: days, time, court, title and students exist only for the whole series — "Solo esta clase"
               // refuses them (handleSaveClass re-checks on the latest state). Moving one date is "Reprogramar".
               const scopeSeries=(rawClasses||classes).find(c2=>c2.id===(editScopeData._seriesId||editScopeData.id));
-              const singleDateChanges=singleDateEditChanges(scopeSeries,editScopeData,students.map(s=>s.id));
+              // Stage 2.2: time and court are saved for this date only; days, title and students stay series-wide.
+              const singleDateChanges=singleDateRefusedChanges(scopeSeries,editScopeData,students.map(s=>s.id));
               const singleDateBlocked=singleDateChanges.length>0;
               // Stage 0 (BUG-AGENDA-05): "A Todas las Clases" is refused when it would leave future combo/individual dates
               // without a card, or remove a student with history (handleSaveClass re-checks on the latest state).
@@ -6589,7 +6596,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAb
                 📅 Solo esta clase ({editScopeData.date})
               </button>
               {singleDateBlocked&&<div role="alert" style={{fontSize:12,color:"#C62828",fontWeight:600}}>{singleDateEditMessage(singleDateChanges)}</div>}
-              <button disabled={allBlocked} onClick={()=>{const r=onSaveClass({...editScopeData,applyToAll:true},true);const msg=editRefusalMessage(r);if(msg){alert(msg);return;}setEditScopeData(null);setEditCls(null);}} style={{padding:"14px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:"#fff",cursor:allBlocked?"not-allowed":"pointer",opacity:allBlocked?0.5:1,fontSize:14,fontWeight:700,textAlign:"left"}}>
+              <button disabled={allBlocked} onClick={()=>{const r=onSaveClass({...seriesEditFromCard({series:scopeSeries,card:editCls,edited:editScopeData}),applyToAll:true},true);const msg=editRefusalMessage(r);if(msg){alert(msg);return;}setEditScopeData(null);setEditCls(null);}} style={{padding:"14px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:"#fff",cursor:allBlocked?"not-allowed":"pointer",opacity:allBlocked?0.5:1,fontSize:14,fontWeight:700,textAlign:"left"}}>
                 🔄 A Todas las Clases
               </button>
               {lostCards.length>0&&<div role="alert" style={{fontSize:12,color:"#C62828",fontWeight:600}}>{weekdayChangeMessage(lostCards)}</div>}
@@ -11822,7 +11829,7 @@ export default function App() {
   };
 
   // --- Extracted from handleSaveClass (A2: ApplyToAll) ---
-  const applyEditToClass=(cd,realId)=>{
+  const applyEditToClass=(cd,realId,singleDateOverride)=>{
     if(cd._occOnly){
       setClasses(p=>p.map(c=>c.id!==realId?c:{...c,occurrences:cd.occurrences||c.occurrences}));
       return;
@@ -11833,7 +11840,12 @@ export default function App() {
     if(cd._singleDate){
       // "Solo esta clase": the series fields were already checked unchanged in handleSaveClass; none of the card's
       // fields (date, cancelled, _virtualId…) are merged into the series row. Only the occurrences may change.
-      setClasses(p=>p.map(c=>c.id===realId?{...c,occurrences:occurrencesKeepingHistory(c)}:c));
+      // Stage 2.2: plus this date's own time/court when it changed (one write, class row only).
+      setClasses(p=>p.map(c=>{
+        if(c.id!==realId) return c;
+        const next={...c,occurrences:occurrencesKeepingHistory(c)};
+        return singleDateOverride?applyOverrideToClassRow(next,singleDateOverride):next;
+      }));
       return;
     }
     if(cd.applyToAll){
@@ -11947,9 +11959,20 @@ export default function App() {
       // "Solo esta clase" (BUG-AGENDA-05): refused when it changes a series field, checked against the LATEST row;
       // nothing is written. It never goes through the per-date branch below (the edited card may be paused or
       // cancelled): only the package changes and the occurrences are saved.
+      // Stage 2.2: time and court change for THIS date only (class.occurrenceOverrides), re-validated on the latest row
+      // (live date, valid times, start before end). Applied directly, as the owner decided (2026-11-21): no extra
+      // confirmation, also on a date with recorded attendance — time/court never touch attendance, students or combos.
+      let singleDateOverride=null;
       if(cd._singleDate){
-        const changes=singleDateEditChanges(latestClassesRef.current.find(c2=>c2.id===realId),cd,latestStudentsRef.current.map(s=>s.id));
+        const latestRow=latestClassesRef.current.find(c2=>c2.id===realId);
+        const changes=singleDateRefusedChanges(latestRow,cd,latestStudentsRef.current.map(s=>s.id));
         if(changes.length>0) return {status:"single-date-edit-refused",changes};
+        const values=latestRow?overrideValuesFrom(latestRow,cd):null;
+        if(values&&overrideChanges(latestRow,editDate,values)){
+          const why=overrideRefusal({row:latestRow,date:editDate,values,confirmedAttendance:true});
+          if(why) return {status:"override-refused",reason:why};
+          singleDateOverride={date:editDate,values,at:new Date().toISOString()};
+        }
       }
 
       // Handle per-date cancellation/pause for recurring classes. An edit (EditClassScreen sends no card state, and
@@ -12054,12 +12077,16 @@ export default function App() {
           } else {
             delete dc[editDate];
           }
+          // Stage 2.2: Reprogramar at another time -> that time (and the series duration) for the destination date only.
+          const destValues=cd.cancelled===true&&cd.cancelType==="cancelled_reprog"&&cd.rescheduledTo&&cd._destTime?reprogDestinationValues(c,cd._destTime):null;
+          const withDest=row=>destValues?applyOverrideToClassRow(row,{date:cd.rescheduledTo,values:destValues,at:new Date().toISOString()}):row;
           if(!c.occurrences||c.occurrences.length===0){
-            const {_plannedResumeDate:_prdate2,...cdClean}=cd;
-            return {...c,...cdClean,id:realId,dateCancellations:dc,plannedResume};
+            const {_plannedResumeDate:_prdate2,_destTime:_dt2,...cdClean}=cd;
+            return withDest({...c,...withoutCardOverride(cdClean,cd),id:realId,dateCancellations:dc,plannedResume});
           }
-          const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,_pauseResumeDate:_prd,_reactivating:_ra,_plannedResumeDate:_prdate3,_endOfPackage:_eop,...rest}=cd;
-          return {...c,...rest,id:realId,dateCancellations:dc,occurrences:occ,plannedResume};
+          const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,_pauseResumeDate:_prd,_reactivating:_ra,_plannedResumeDate:_prdate3,_endOfPackage:_eop,_destTime:_dt3,...rest}=cd;
+          // Stage 2.2: a card's own per-date time/court never reaches the series row.
+          return withDest({...c,...withoutCardOverride(rest,cd),id:realId,dateCancellations:dc,occurrences:occ,plannedResume});
         }));
 
         // Update student combo dates with pre-calculated replacement dates
@@ -12104,7 +12131,7 @@ export default function App() {
         const affected=comboDatesLeftWithoutCard({series:latestSeries,students:latestStudentsRef.current,nextOccurrences:cd.occurrences,todayDate:todayIso()});
         if(affected.length>0) return {status:"weekday-change-blocked",affected};
       }
-      applyEditToClass(cd, realId);
+      applyEditToClass(cd, realId, singleDateOverride);
       removeStudentsFromClass(cd, realId);
       updateStudentPacks(cd);
       return;

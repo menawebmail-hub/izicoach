@@ -1,6 +1,7 @@
 import { resolveComboDateStatus, traceRescheduleHistory } from "./rescheduleChain.js";
 import { countUsedForCombo, hasSlotMoves, planSlotMove, resolveComboMoves } from "./slotMoves.js";
 import { readAttendance, seriesIdOf, slotCardOn, slotClassId } from "./attendanceRead.js";
+import { effectiveTimeEnd } from "./occurrenceOverrides.js";
 
 /*
  * Per-slot reading of a student's combo (Cobros, Mis Clases, Agenda payment chips, "Por dar").
@@ -236,13 +237,13 @@ export function dueDadaNoticeCount({ combo, studentId, classes }) {
   const rows = (classes || []).filter((c) => sameSeries(c, combo.sourceClassId));
   if (rows.length === 0 || !rows.some((c) => c.attendanceNotices && Object.keys(c.attendanceNotices).length)) return 0;
   const dc = rows[0].dateCancellations || {};
-  const timeEnd = rows[0].timeEnd || "23:59";
   const seen = new Set();
   for (const d of new Set(combo.dates || [])) {
     const r = resolveComboDateStatus(dc, d);
     if (r.broken || !r.terminal || seen.has(r.terminal) || r.cancelInfo) continue;
     const reading = readAttendance({ classes: rows, classId: combo.sourceClassId, date: r.terminal, studentId });
-    if (reading.source === "notice" && reading.state === "ausente_dada" && isClassDone(r.terminal, timeEnd)) seen.add(r.terminal);
+    // stage 2.2: the end time of THAT date (its own override, else the series)
+    if (reading.source === "notice" && reading.state === "ausente_dada" && isClassDone(r.terminal, effectiveTimeEnd(rows[0], r.terminal))) seen.add(r.terminal);
   }
   return seen.size;
 }

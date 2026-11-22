@@ -1,6 +1,14 @@
 SESSION_STATE.md — IziCoach
 
-# Current task — BUG-AGENDA-05 stage 2.1: advance absence notices (branch `fix/agenda-edit-scope`)
+# Current task — BUG-AGENDA-05 stage 2.2: time and court of one occurrence (branch `fix/agenda-edit-scope`)
+
+- Committed locally (2026-11-22) on top of `98fe7c6`; not pushed, not merged, not deployed. Per-date time/court in
+  `class.occurrenceOverrides`, applied by `expandClasses` to that date's card only; "Solo esta clase" saves them for that
+  date and applies directly (prompt keeps its 3 original options; restore = series values back); Reprogramar saves the
+  chosen destination time keeping the duration; a card's own values never reach the series. Details: `docs/BUGS.md`.
+- NOT publishable until the student portal reads `occurrenceOverrides` and `attendanceNotices`.
+
+# Previous step — BUG-AGENDA-05 stage 2.1: advance absence notices (branch `fix/agenda-edit-scope`)
 
 - Committed as `8408d19` and pushed to `origin/fix/agenda-edit-scope` (2026-11-21), on top of `98b7778`; not merged, not deployed: "Avisar ausencia" (card menus + modal),
   `class.attendanceNotices` (class row only, history kept), reading priority attendance → notice → nothing, Dada notice

@@ -1,8 +1,11 @@
+import { overrideMessage } from "./occurrenceOverrides.js";
+
 /*
  * Editar clase — BUG-AGENDA-05, phase 1. Pure, no React.
  *
- * The class model has no per-date version of the weekdays, time, court, title or students: they belong to the
- * whole series. "📅 Solo esta clase" therefore refuses any change to them (singleDateEditChanges) and only
+ * The class model has no per-date version of the weekdays, title or students: they belong to the whole series.
+ * Stage 2.2: time and court DO have a per-date version (occurrenceOverrides.js) — singleDateRefusedChanges leaves them
+ * out. "📅 Solo esta clase" refuses days, title and students (singleDateEditChanges lists every series field) and only
  * "🔄 A Todas las Clases" applies them; moving one date is "Reprogramar". A package change for a student is not a
  * class field and keeps working from both choices.
  *
@@ -43,6 +46,11 @@ export function singleDateEditChanges(series, edited, knownStudentIds) {
   const before = (series.students || []).filter((id) => !known || known.has(String(id)));
   if (!sameSet(before, edited.students)) changes.push(STUDENTS);
   return changes;
+}
+
+/** Stage 2.2: the series fields "Solo esta clase" still refuses (time and court are saved for that date only). */
+export function singleDateRefusedChanges(series, edited, knownStudentIds) {
+  return singleDateEditChanges(series, edited, knownStudentIds).filter((x) => x !== TIME && x !== COURT);
 }
 
 export function singleDateEditMessage(changes) {
@@ -206,6 +214,7 @@ const CARD_STATE_KEYS = [
   "cancelled", "cancelType", "paused", "rescheduledTo", "rescheduled", "_isRescheduledInstance", "attendanceLog",
   "_resuming", "_reactivating", "_plannedResumeDate", "_pauseResumeDate", "_endOfPackage", "_revertReprog",
   "_compensatedPausedDates", "_resumeOperationId", "_newOccurrenceDates", "_occOnly",
+  "occurrenceOverride", "seriesValues", "_destTime", // stage 2.2: a card's per-date marker/series values, Reprogramar's destination time
 ];
 
 /** Stage 0: the editable data of an Agenda card; keeps id, _seriesId, _virtualId and date (which class / which date). */
@@ -218,7 +227,7 @@ export function editableFromCard(card) {
 /** Stage 0: what "A Todas las Clases" may merge into the series row (no card ids, state or scope flags). */
 export function seriesFieldsFromEdit(cd) {
   const out = editableFromCard(cd);
-  for (const k of ["_virtualId", "_seriesId", "applyToAll", "_singleDate"]) delete out[k];
+  for (const k of ["_virtualId", "_seriesId", "applyToAll", "_singleDate", "_confirmAttended"]) delete out[k];
   return out;
 }
 
@@ -230,6 +239,7 @@ export function editRefusalMessage(r) {
   if (r.status === "single-date-edit-refused") return singleDateEditMessage(r.changes);
   if (r.status === "weekday-change-blocked") return weekdayChangeMessage(r.affected);
   if (r.status === "student-removal-blocked") return studentRemovalMessage(r.blocked);
+  if (r.status === "override-refused") return overrideMessage(r.reason);
   return "";
 }
 
