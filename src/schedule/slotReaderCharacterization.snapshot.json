@@ -1,0 +1,869 @@
+[
+ {
+  "id": 1,
+  "rows": [
+   {
+    "date": "2026-10-05",
+    "isPaid": true,
+    "displayPaid": true,
+    "isDisplaced": false,
+    "isGiven": true,
+    "isPast": true,
+    "isPaused": false,
+    "isCompensated": false,
+    "isCancelledClass": false,
+    "isReprogWithDate": false,
+    "isReprogNoDate": false,
+    "rescheduledTo": null,
+    "terminalDate": "2026-10-05",
+    "reschedulePath": [
+     "2026-10-05"
+    ],
+    "terminalStatus": "normal",
+    "historyRows": [
+     {
+      "date": "2026-10-05",
+      "depth": 0,
+      "status": "done",
+      "isPaid": true,
+      "isTerminal": true
+     }
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
+   },
+   {
+    "date": "2026-10-07",
+    "isPaid": true,
+    "displayPaid": true,
+    "isDisplaced": false,
+    "isGiven": true,
+    "isPast": true,
+    "isPaused": false,
+    "isCompensated": false,
+    "isCancelledClass": false,
+    "isReprogWithDate": false,
+    "isReprogNoDate": false,
+    "rescheduledTo": null,
+    "terminalDate": "2026-10-07",
+    "reschedulePath": [
+     "2026-10-07"
+    ],
+    "terminalStatus": "normal",
+    "historyRows": [
+     {
+      "date": "2026-10-07",
+      "depth": 0,
+      "status": "done",
+      "isPaid": true,
+      "isTerminal": true
+     }
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
+   },
+   {
+    "date": "2026-10-12",
+    "isPaid": true,
+    "displayPaid": true,
+    "isDisplaced": false,
+    "isGiven": true,
+    "isPast": true,
+    "isPaused": false,
+    "isCompensated": false,
+    "isCancelledClass": false,
+    "isReprogWithDate": false,
+    "isReprogNoDate": false,
+    "rescheduledTo": null,
+    "terminalDate": "2026-10-12",
+    "reschedulePath": [
+     "2026-10-12"
+    ],
+    "terminalStatus": "normal",
+    "historyRows": [
+     {
+      "date": "2026-10-12",
+      "depth": 0,
+      "status": "done",
+      "isPaid": true,
+      "isTerminal": true
+     }
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
+   },
+   {
+    "date": "2026-10-14",
+    "isPaid": true,
+    "displayPaid": true,
+    "isDisplaced": false,
+    "isGiven": false,
+    "isPast": true,
+    "isPaused": false,
+    "isCompensated": false,
+    "isCancelledClass": false,
+    "isReprogWithDate": false,
+    "isReprogNoDate": false,
+    "rescheduledTo": null,
+    "terminalDate": "2026-10-14",
+    "reschedulePath": [
+     "2026-10-14"
+    ],
+    "terminalStatus": "normal",
+    "historyRows": [
+     {
+      "date": "2026-10-14",
+      "depth": 0,
+      "status": "scheduled",
+      "isPaid": true,
+      "isTerminal": true
+     }
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
+   },
+   {
+    "date": "2026-10-19",
+    "isPaid": true,
+    "displayPaid": true,
+    "isDisplaced": false,
+    "isGiven": true,
+    "isPast": true,
+    "isPaused": false,
+    "isCompensated": false,
+    "isCancelledClass": false,
+    "isReprogWithDate": false,
+    "isReprogNoDate": false,
+    "rescheduledTo": null,
+    "terminalDate": "2026-10-19",
+    "reschedulePath": [
+     "2026-10-19"
+    ],
+    "terminalStatus": "normal",
+    "historyRows": [
+     {
+      "date": "2026-10-19",
+      "depth": 0,
+      "status": "done",
+      "isPaid": true,
+      "isTerminal": true
+     }
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
+   },
+   {
+    "date": "2026-10-21",
+    "isPaid": false,
+    "displayPaid": false,
+    "isDisplaced": false,
+    "isGiven": true,
+    "isPast": true,
+    "isPaused": false,
+    "isCompensated": false,
+    "isCancelledClass": false,
+    "isReprogWithDate": false,
+    "isReprogNoDate": false,
+    "rescheduledTo": null,
+    "terminalDate": "2026-10-21",
+    "reschedulePath": [
+     "2026-10-21"
+    ],
+    "terminalStatus": "normal",
+    "historyRows": [
+     {
+      "date": "2026-10-21",
+      "depth": 0,
+      "status": "done",
+      "isPaid": false,
+      "isTerminal": true
+     }
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
+   },
+   {
+    "date": "2026-11-23",
+    "isPaid": false,
+    "displayPaid": false,
+    "isDisplaced": false,
+    "isGiven": false,
+    "isPast": false,
+    "isPaused": false,
+    "isCompensated": false,
+    "isCancelledClass": false,
+    "isReprogWithDate": false,
+    "isReprogNoDate": false,
+    "rescheduledTo": null,
+    "terminalDate": "2026-11-23",
+    "reschedulePath": [
+     "2026-11-23"
+    ],
+    "terminalStatus": "normal",
+    "historyRows": [
+     {
+      "date": "2026-11-23",
+      "depth": 0,
+      "status": "scheduled",
+      "isPaid": false,
+      "isTerminal": true
+     }
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
+   },
+   {
+    "date": "2026-12-07",
+    "isPaid": false,
+    "displayPaid": false,
+    "isDisplaced": false,
+    "isGiven": false,
+    "isPast": false,
+    "isPaused": false,
+    "isCompensated": false,
+    "isCancelledClass": false,
+    "isReprogWithDate": false,
+    "isReprogNoDate": false,
+    "rescheduledTo": null,
+    "terminalDate": "2026-12-07",
+    "reschedulePath": [
+     "2026-12-07"
+    ],
+    "terminalStatus": "normal",
+    "historyRows": [
+     {
+      "date": "2026-12-07",
+      "depth": 0,
+      "status": "scheduled",
+      "isPaid": false,
+      "isTerminal": true
+     }
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
+   }
+  ],
+  "counters": {
+   "noPagadas": 3,
+   "pagadas": 5,
+   "realizadas": 5,
+   "restantes": 3,
+   "canceladas": 0,
+   "reprogramadas": 0,
+   "aReprogramar": 0,
+   "pausadas": 0,
+   "pausadasBySource": {},
+   "totalEntitlement": 8,
+   "totalEntitlementCombo": 8,
+   "realizadasCombo": 5
+  },
+  "claseRem": -3
+ },
+ {
+  "id": 2,
+  "rows": [
+   {
+    "date": "2026-10-05",
+    "isPaid": true,
+    "displayPaid": true,
+    "isDisplaced": false,
+    "isGiven": true,
+    "isPast": true,
+    "isPaused": false,
+    "isCompensated": false,
+    "isCancelledClass": false,
+    "isReprogWithDate": false,
+    "isReprogNoDate": false,
+    "rescheduledTo": null,
+    "terminalDate": "2026-10-05",
+    "reschedulePath": [
+     "2026-10-05"
+    ],
+    "terminalStatus": "normal",
+    "historyRows": [
+     {
+      "date": "2026-10-05",
+      "depth": 0,
+      "status": "done",
+      "isPaid": true,
+      "isTerminal": true
+     }
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
+   },
+   {
+    "date": "2026-10-07",
+    "isPaid": true,
+    "displayPaid": true,
+    "isDisplaced": false,
+    "isGiven": true,
+    "isPast": true,
+    "isPaused": false,
+    "isCompensated": false,
+    "isCancelledClass": false,
+    "isReprogWithDate": false,
+    "isReprogNoDate": false,
+    "rescheduledTo": null,
+    "terminalDate": "2026-10-07",
+    "reschedulePath": [
+     "2026-10-07"
+    ],
+    "terminalStatus": "normal",
+    "historyRows": [
+     {
+      "date": "2026-10-07",
+      "depth": 0,
+      "status": "done",
+      "isPaid": true,
+      "isTerminal": true
+     }
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
+   },
+   {
+    "date": "2026-10-12",
+    "isPaid": true,
+    "displayPaid": true,
+    "isDisplaced": false,
+    "isGiven": true,
+    "isPast": true,
+    "isPaused": false,
+    "isCompensated": false,
+    "isCancelledClass": false,
+    "isReprogWithDate": false,
+    "isReprogNoDate": false,
+    "rescheduledTo": null,
+    "terminalDate": "2026-10-12",
+    "reschedulePath": [
+     "2026-10-12"
+    ],
+    "terminalStatus": "normal",
+    "historyRows": [
+     {
+      "date": "2026-10-12",
+      "depth": 0,
+      "status": "done",
+      "isPaid": true,
+      "isTerminal": true
+     }
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
+   },
+   {
+    "date": "2026-10-26",
+    "isPaid": true,
+    "displayPaid": true,
+    "isDisplaced": false,
+    "isGiven": true,
+    "isPast": true,
+    "isPaused": false,
+    "isCompensated": false,
+    "isCancelledClass": false,
+    "isReprogWithDate": true,
+    "isReprogNoDate": false,
+    "rescheduledTo": "2026-11-06",
+    "terminalDate": "2026-11-06",
+    "reschedulePath": [
+     "2026-10-26",
+     "2026-11-06"
+    ],
+    "terminalStatus": "reprogrammed",
+    "historyRows": [
+     {
+      "date": "2026-10-26",
+      "depth": 0,
+      "status": "reprogrammed",
+      "isPaid": true,
+      "isTerminal": false
+     },
+     {
+      "date": "2026-11-06",
+      "depth": 1,
+      "status": "done",
+      "isPaid": true,
+      "isTerminal": true
+     }
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
+   },
+   {
+    "date": "2026-11-02",
+    "isPaid": false,
+    "displayPaid": true,
+    "isDisplaced": true,
+    "isGiven": false,
+    "isPast": true,
+    "isPaused": true,
+    "isCompensated": true,
+    "isCancelledClass": false,
+    "isReprogWithDate": false,
+    "isReprogNoDate": false,
+    "rescheduledTo": null,
+    "terminalDate": "2026-11-02",
+    "reschedulePath": [
+     "2026-11-02"
+    ],
+    "terminalStatus": "paused",
+    "historyRows": [
+     {
+      "date": "2026-11-02",
+      "depth": 0,
+      "status": "paused",
+      "isPaid": true,
+      "isTerminal": true
+     }
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
+   },
+   {
+    "date": "2026-11-09",
+    "isPaid": true,
+    "displayPaid": true,
+    "isDisplaced": false,
+    "isGiven": true,
+    "isPast": true,
+    "isPaused": false,
+    "isCompensated": false,
+    "isCancelledClass": true,
+    "isReprogWithDate": false,
+    "isReprogNoDate": false,
+    "rescheduledTo": null,
+    "terminalDate": "2026-11-09",
+    "reschedulePath": [
+     "2026-11-09"
+    ],
+    "terminalStatus": "cancelled",
+    "historyRows": [
+     {
+      "date": "2026-11-09",
+      "depth": 0,
+      "status": "cancelled",
+      "isPaid": true,
+      "isTerminal": true
+     }
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
+   },
+   {
+    "date": "2026-11-11",
+    "isPaid": true,
+    "displayPaid": true,
+    "isDisplaced": false,
+    "isGiven": false,
+    "isPast": true,
+    "isPaused": false,
+    "isCompensated": false,
+    "isCancelledClass": false,
+    "isReprogWithDate": false,
+    "isReprogNoDate": true,
+    "rescheduledTo": null,
+    "terminalDate": "2026-11-11",
+    "reschedulePath": [
+     "2026-11-11"
+    ],
+    "terminalStatus": "pending",
+    "historyRows": [
+     {
+      "date": "2026-11-11",
+      "depth": 0,
+      "status": "pending",
+      "isPaid": true,
+      "isTerminal": true
+     }
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
+   },
+   {
+    "date": "2026-11-25",
+    "isPaid": true,
+    "displayPaid": true,
+    "isDisplaced": false,
+    "isGiven": false,
+    "isPast": false,
+    "isPaused": false,
+    "isCompensated": false,
+    "isCancelledClass": false,
+    "isReprogWithDate": false,
+    "isReprogNoDate": false,
+    "rescheduledTo": null,
+    "terminalDate": "2026-11-25",
+    "reschedulePath": [
+     "2026-11-25"
+    ],
+    "terminalStatus": "normal",
+    "historyRows": [
+     {
+      "date": "2026-11-25",
+      "depth": 0,
+      "status": "scheduled",
+      "isPaid": true,
+      "isTerminal": true
+     }
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
+   },
+   {
+    "date": "2026-11-30",
+    "isPaid": true,
+    "displayPaid": true,
+    "isDisplaced": false,
+    "isGiven": false,
+    "isPast": false,
+    "isPaused": true,
+    "isCompensated": false,
+    "isCancelledClass": false,
+    "isReprogWithDate": false,
+    "isReprogNoDate": false,
+    "rescheduledTo": null,
+    "terminalDate": "2026-11-30",
+    "reschedulePath": [
+     "2026-11-30"
+    ],
+    "terminalStatus": "paused",
+    "historyRows": [
+     {
+      "date": "2026-11-30",
+      "depth": 0,
+      "status": "paused",
+      "isPaid": true,
+      "isTerminal": true
+     }
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
+   }
+  ],
+  "counters": {
+   "noPagadas": 1,
+   "pagadas": 8,
+   "realizadas": 5,
+   "restantes": 3,
+   "canceladas": 1,
+   "reprogramadas": 1,
+   "aReprogramar": 1,
+   "pausadas": 1,
+   "pausadasBySource": {
+    "200": 1
+   },
+   "totalEntitlement": 8,
+   "totalEntitlementCombo": 8,
+   "realizadasCombo": 5
+  },
+  "claseRem": 3
+ },
+ {
+  "id": 3,
+  "rows": [
+   {
+    "date": "2026-11-16",
+    "isPaid": true,
+    "displayPaid": true,
+    "isDisplaced": false,
+    "isGiven": true,
+    "isPast": true,
+    "isPaused": false,
+    "isCompensated": false,
+    "isCancelledClass": false,
+    "isReprogWithDate": false,
+    "isReprogNoDate": false,
+    "rescheduledTo": null,
+    "terminalDate": "2026-11-16",
+    "reschedulePath": [
+     "2026-11-16"
+    ],
+    "terminalStatus": "normal",
+    "historyRows": [
+     {
+      "date": "2026-11-16",
+      "depth": 0,
+      "status": "done",
+      "isPaid": true,
+      "isTerminal": true
+     }
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
+   },
+   {
+    "date": "2026-11-18",
+    "isPaid": false,
+    "displayPaid": false,
+    "isDisplaced": false,
+    "isGiven": false,
+    "isPast": true,
+    "isPaused": false,
+    "isCompensated": false,
+    "isCancelledClass": false,
+    "isReprogWithDate": false,
+    "isReprogNoDate": false,
+    "rescheduledTo": null,
+    "terminalDate": "2026-11-18",
+    "reschedulePath": [
+     "2026-11-18"
+    ],
+    "terminalStatus": "normal",
+    "historyRows": [
+     {
+      "date": "2026-11-18",
+      "depth": 0,
+      "status": "scheduled",
+      "isPaid": false,
+      "isTerminal": true
+     }
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
+   },
+   {
+    "date": "2026-11-23",
+    "isPaid": false,
+    "displayPaid": false,
+    "isDisplaced": false,
+    "isGiven": false,
+    "isPast": false,
+    "isPaused": false,
+    "isCompensated": false,
+    "isCancelledClass": false,
+    "isReprogWithDate": false,
+    "isReprogNoDate": false,
+    "rescheduledTo": null,
+    "terminalDate": "2026-11-23",
+    "reschedulePath": [
+     "2026-11-23"
+    ],
+    "terminalStatus": "normal",
+    "historyRows": [
+     {
+      "date": "2026-11-23",
+      "depth": 0,
+      "status": "scheduled",
+      "isPaid": false,
+      "isTerminal": true
+     }
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
+   }
+  ],
+  "counters": {
+   "noPagadas": 2,
+   "pagadas": 1,
+   "realizadas": 1,
+   "restantes": 0,
+   "canceladas": 0,
+   "reprogramadas": 0,
+   "aReprogramar": 0,
+   "pausadas": 0,
+   "pausadasBySource": {},
+   "totalEntitlement": 3,
+   "totalEntitlementCombo": 0,
+   "realizadasCombo": 0
+  },
+  "claseRem": -2
+ },
+ {
+  "id": 4,
+  "rows": [
+   {
+    "date": "2026-10-05",
+    "isPaid": false,
+    "displayPaid": false,
+    "isDisplaced": false,
+    "isGiven": true,
+    "isPast": true,
+    "isPaused": false,
+    "isCompensated": false,
+    "isCancelledClass": false,
+    "isReprogWithDate": false,
+    "isReprogNoDate": false,
+    "rescheduledTo": null,
+    "terminalDate": "2026-10-05",
+    "reschedulePath": [
+     "2026-10-05"
+    ],
+    "terminalStatus": "normal",
+    "historyRows": [
+     {
+      "date": "2026-10-05",
+      "depth": 0,
+      "status": "done",
+      "isPaid": false,
+      "isTerminal": true
+     }
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
+   },
+   {
+    "date": "2026-10-07",
+    "isPaid": false,
+    "displayPaid": false,
+    "isDisplaced": false,
+    "isGiven": false,
+    "isPast": true,
+    "isPaused": false,
+    "isCompensated": false,
+    "isCancelledClass": false,
+    "isReprogWithDate": false,
+    "isReprogNoDate": false,
+    "rescheduledTo": null,
+    "terminalDate": "2026-10-07",
+    "reschedulePath": [
+     "2026-10-07"
+    ],
+    "terminalStatus": "normal",
+    "historyRows": [
+     {
+      "date": "2026-10-07",
+      "depth": 0,
+      "status": "scheduled",
+      "isPaid": false,
+      "isTerminal": true
+     }
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
+   },
+   {
+    "date": "2026-10-30",
+    "isPaid": false,
+    "displayPaid": false,
+    "isDisplaced": false,
+    "isGiven": true,
+    "isPast": true,
+    "isPaused": false,
+    "isCompensated": false,
+    "isCancelledClass": false,
+    "isReprogWithDate": false,
+    "isReprogNoDate": false,
+    "rescheduledTo": null,
+    "terminalDate": "2026-10-30",
+    "reschedulePath": [
+     "2026-10-30"
+    ],
+    "terminalStatus": "normal",
+    "historyRows": [
+     {
+      "date": "2026-10-30",
+      "depth": 0,
+      "status": "done",
+      "isPaid": false,
+      "isTerminal": true
+     }
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
+   },
+   {
+    "date": "2026-12-02",
+    "isPaid": false,
+    "displayPaid": false,
+    "isDisplaced": false,
+    "isGiven": false,
+    "isPast": false,
+    "isPaused": false,
+    "isCompensated": false,
+    "isCancelledClass": false,
+    "isReprogWithDate": false,
+    "isReprogNoDate": false,
+    "rescheduledTo": null,
+    "terminalDate": "2026-12-02",
+    "reschedulePath": [
+     "2026-12-02"
+    ],
+    "terminalStatus": "normal",
+    "historyRows": [
+     {
+      "date": "2026-12-02",
+      "depth": 0,
+      "status": "scheduled",
+      "isPaid": false,
+      "isTerminal": true
+     }
+    ],
+    "comboIndex": 0,
+    "sourceClassId": 200
+   }
+  ],
+  "counters": {
+   "noPagadas": 4,
+   "pagadas": 0,
+   "realizadas": 2,
+   "restantes": 2,
+   "canceladas": 0,
+   "reprogramadas": 0,
+   "aReprogramar": 0,
+   "pausadas": 0,
+   "pausadasBySource": {},
+   "totalEntitlement": 4,
+   "totalEntitlementCombo": 4,
+   "realizadasCombo": 2
+  },
+  "claseRem": -4
+ },
+ {
+  "id": 5,
+  "rows": [
+   {
+    "date": "2026-11-10",
+    "isPaid": true,
+    "displayPaid": true,
+    "isDisplaced": false,
+    "isGiven": true,
+    "isPast": true,
+    "isPaused": false,
+    "isCompensated": false,
+    "isCancelledClass": false,
+    "isReprogWithDate": true,
+    "isReprogNoDate": false,
+    "rescheduledTo": "2026-11-12",
+    "terminalDate": "2026-11-12",
+    "reschedulePath": [
+     "2026-11-10",
+     "2026-11-12"
+    ],
+    "terminalStatus": "reprogrammed",
+    "historyRows": [
+     {
+      "date": "2026-11-10",
+      "depth": 0,
+      "status": "reprogrammed",
+      "isPaid": true,
+      "isTerminal": false
+     },
+     {
+      "date": "2026-11-12",
+      "depth": 1,
+      "status": "done",
+      "isPaid": true,
+      "isTerminal": true
+     }
+    ],
+    "comboIndex": 0
+   }
+  ],
+  "counters": {
+   "noPagadas": 0,
+   "pagadas": 0,
+   "realizadas": 0,
+   "restantes": 0,
+   "canceladas": 0,
+   "reprogramadas": 0,
+   "aReprogramar": 0,
+   "pausadas": 0,
+   "pausadasBySource": {},
+   "totalEntitlement": 0,
+   "totalEntitlementCombo": 0,
+   "realizadasCombo": 0
+  },
+  "claseRem": 0
+ }
+]

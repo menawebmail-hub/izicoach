@@ -48,7 +48,7 @@ test("Agenda: the action shows only for a class with a current combo; the modal 
 });
 
 test("Editar clase keeps added dates when it regenerates the occurrences", () => {
-  const regen = slice("const preserved=(cls.occurrences||[]).filter(d=>d<sd);", "// Only send studentPacks");
-  assert.match(regen, /const addedKeep=\(cls\.addedDates\|\|\[\]\)\.map\(a=>a&&a\.date\)/);
-  assert.match(regen, /newOccurrences=\[\.\.\.new Set\(\[\.\.\.preserved,\.\.\.result,\.\.\.addedKeep\]\)\]\.sort\(\);/);
+  // The regeneration itself (added dates always kept) is unit-tested in classEditScope.test.js.
+  const regen = slice("if((daysChanged||tooFewOccurrences)&&hasValidClassDays(days)){", "// Only send studentPacks");
+  assert.match(regen, /newOccurrences=regenerateOccurrences\(\{previous:cls\.occurrences\|\|\[\],dowSet:classDowSetFrom\(days\),fromDate:cls\.date,todayDate:todayIso\(\),endDate:cls\.endDate,addedDates:cls\.addedDates,dateCancellations:cls\.dateCancellations\}\);/);
 });

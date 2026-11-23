@@ -13,7 +13,7 @@ const slice = (from, to) => {
 };
 
 test("prevention at write time: a dated reprogramming onto a conflicting date returns before any write", () => {
-  const inter = slice('if((cd.cancelled===true||cd.cancelType==="paused"||cd._resuming||cd._reactivating)&&editDate){', "const classesWritePromise=setClasses(");
+  const inter = slice('if(!cd._singleDate&&!cd.applyToAll&&(cd.cancelled===true||cd.cancelType==="paused"||cd._resuming||cd._reactivating)&&editDate){', "const classesWritePromise=setClasses(");
   const check = inter.indexOf("rescheduleDestinationConflict({series:latestClassesRef.current.find(c2=>c2.id===realId),students:latestStudentsRef.current,fromDate:editDate,destination:cd.rescheduledTo");
   const ret = inter.indexOf('if(conflict) return {status:"reprog-destination-conflict",reason:conflict};');
   assert.ok(check > 0 && ret > check, "checked on the latest state, returned before writing");

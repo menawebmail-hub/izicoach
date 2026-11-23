@@ -20,6 +20,12 @@ import { resolveRescheduleChain, resolveComboDateStatus, traceRescheduleHistory 
 import { applyReleaseToClassRow, applyReleaseToCombo, countAttendedSlots, findPendingReleaseCompletions, releaseMessage, releaseStateOf, resolveReleasableDate } from "./schedule/releaseReprogrammedDate.js";
 import { applyFusedRepairToClassRow, findFusedGroups, fusedMessage, planFusedRepair, rescheduleDestinationConflict, shortDate } from "./schedule/fusedChains.js";
 import { additionMessage, applyAdditionToClassRow, applyAdditionToStudents, findPendingAdditionCompletions, hasCurrentComboForDayAddition, resolveComboDayAddition } from "./schedule/comboDayAddition.js";
+import { cleanCombosAfterClassRemoval, comboDatesLeftWithoutCard, editableFromCard, editRefusalMessage, keepDatesWithHistory, regenerateOccurrences, seriesFieldsFromEdit, singleDateEditMessage, singleDateRefusedChanges, studentRemovalBlock, studentRemovalMessage, weekdayChangeMessage } from "./schedule/classEditScope.js";
+import { createSlotReader, dueDadaNoticeCount, effectiveComboUsed, getSlotFulfillmentDate, givenByReading, interpretContractDate, isClassDone } from "./schedule/slotStatus.js";
+import { comboIndexWithMoveInto, countUsedForCombo, hasSlotMoves } from "./schedule/slotMoves.js";
+import { noticeOf, readAttendance, slotCardOn, slotClassId } from "./schedule/attendanceRead.js";
+import { applyOverrideToClassRow, withoutCardOverride, overrideCardFields, overrideChanges, overrideRefusal, overrideValuesFrom, reprogDestinationValues, seriesEditFromCard } from "./schedule/occurrenceOverrides.js";
+import { applyNoticesToClassRow, individualRecoveryMessage, isWholeClassAbsence, noticeMessage, noticeWriteRefusal, pendingNoticeStudentIds } from "./schedule/absenceNotices.js";
 import { GROUP_SEND_UNAVAILABLE_TEXT, groupMemberCount, groupMemberNames, groupMembersLabel, isGroupChat } from "./chat/groupMembers.js";
 
 // Inject Inter font
@@ -639,18 +645,7 @@ const mensualPaymentMessage=(reason,detail)=>reason==="skip-month"&&detail&&deta
 
 const WEEK_AGO=(()=>{const d=new Date();d.setDate(d.getDate()-7);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
 
-// Check if a class date+timeEnd has passed (dynamic - called at render time)
-const CLASS_DONE_MARGIN=30; // minutes after class ends before auto-realizing
-const isClassDone=(date,timeEnd)=>{
-  if(!date) return false;
-  const now=new Date();
-  const todayStr=now.getFullYear()+"-"+String(now.getMonth()+1).padStart(2,"0")+"-"+String(now.getDate()).padStart(2,"0");
-  if(date<todayStr) return true;
-  if(date>todayStr) return false;
-  const [eh,em]=(timeEnd||"23:59").split(":").map(Number);
-  const endWithMargin=new Date(now.getFullYear(),now.getMonth(),now.getDate(),eh,em+CLASS_DONE_MARGIN);
-  return now>=endWithMargin;
-};
+// isClassDone: src/schedule/slotStatus.js
 
 // Attendance status for a student chip on an Agenda class card, for the occurrence c.date.
 // Paused/cancelled/reprogramming states always win — never assume Present for those.
@@ -666,6 +661,12 @@ const getAttendanceChipStatus=(c,sid)=>{
     if((log.present||[]).includes(sid)) return "presente";
     if((log.ausente_dada||[]).includes(sid)) return "ausente_dada";
     if((log.ausente_reprog||[]).includes(sid)) return "ausente_reprog";
+  }
+  // Stage 2.1: an advance absence notice of THIS card (class and real date) shows its status, also before the class;
+  // the day's attendance listing the student always wins (above).
+  const notice=noticeOf(c,c.date,sid);
+  if(notice) return notice.status;
+  if(log){
     // An explicit absence always wins (checked above); a student who isn't in ANY of the three
     // arrays for a day that already has a log — e.g. added to the class after attendance was
     // taken — is unmarked, not absent: defaults to presente, same as AttModal's own initializer
@@ -766,61 +767,9 @@ const fmtDate=(ds)=>{const d=new Date(ds+"T12:00:00");return _wDFull[d.getDay()]
 
 // resolveRescheduleChain / resolveComboDateStatus / traceRescheduleHistory: src/schedule/rescheduleChain.js
 
-// Single interpretation of one ORIGINAL contracted date (combo.dates entry) for
-// Cobros, resolved to the terminal of its reschedule chain. The row's economic
-// identity stays originalDate; terminalDate/reschedulePath are information only.
-// A terminal that is paused reads as Pausada (expandClasses deliberately hides
-// non-live terminals from its cards, which is right for Agenda but made Cobros
-// read such a chain as "A Reprogramar"). Never mutates its input.
-const interpretContractDate=(dateCancellations,originalDate)=>{
-  const {terminal,cancelInfo,broken}=resolveComboDateStatus(dateCancellations,originalDate);
-  const {path}=traceRescheduleHistory(dateCancellations,originalDate);
-  const wasRescheduled=path.length>1;
-  if(broken){
-    return {originalDate,terminalDate:null,cancelInfo:null,reschedulePath:path,terminalStatus:"inconsistent",isPaused:false,isCompensated:false,isCancelled:false,isReprogrammed:false,isReprogramPending:true,wasRescheduled};
-  }
-  const t=cancelInfo?cancelInfo.cancelType:null;
-  const isPaused=t==="paused";
-  const isCancelled=t==="cancelled";
-  const isReprogrammed=wasRescheduled&&cancelInfo===null;
-  const isReprogramPending=t==="cancelled_reprog"||(wasRescheduled&&cancelInfo!==null&&!isPaused&&!isCancelled);
-  const terminalStatus=isPaused?"paused":isCancelled?"cancelled":isReprogramPending?"pending":isReprogrammed?"reprogrammed":"normal";
-  const isCompensated=isPaused&&!!(cancelInfo&&cancelInfo.compensated);
-  return {originalDate,terminalDate:terminal,cancelInfo,reschedulePath:path,terminalStatus,isPaused,isCompensated,isCancelled,isReprogrammed,isReprogramPending,wasRescheduled};
-};
+// interpretContractDate: src/schedule/slotStatus.js
 
-// Shared by getAccountCounters and PagoModal.buildAllDates so list and counters
-// can never disagree. The series row is found via combo.sourceClassId (expanded
-// cards keep the series id in `id`, plus `_seriesId`); a card without
-// dateCancellations (legacy/single class) keeps the previous top-level-flags
-// reading, and so does any date the series has no entry for.
-const resolveContractSlotStatus=(myClasses,combo,originalDate,clsForDate)=>{
-  const series=(combo&&combo.sourceClassId!==undefined)?myClasses.find(cl=>cl.id===combo.sourceClassId||cl._seriesId===combo.sourceClassId):undefined;
-  const dc=(series&&series.dateCancellations)||(clsForDate&&clsForDate.dateCancellations)||null;
-  if(dc){
-    const r=interpretContractDate(dc,originalDate);
-    if(r.terminalStatus!=="normal"){
-      // A paused terminal is "compensated" once a resume replaced it: its dateCancellations
-      // entry says so (compensated), and so does the combo's resumeOperations[].pausedDates —
-      // either is enough, so a lost compensatedBy never hides the fact.
-      const compensatedByOps=r.isPaused&&(combo&&combo.resumeOperations||[]).some(op=>(op.pausedDates||[]).includes(r.terminalDate));
-      return {...r,isCompensated:r.isCompensated||!!compensatedByOps,isReprogWithDate:r.isReprogrammed,isReprogNoDate:r.isReprogramPending,rescheduledTo:r.isReprogrammed?r.terminalDate:null,
-        fulfillCancelled:r.isCancelled||r.isReprogrammed||r.isReprogramPending,
-        fulfillCancelType:r.isCancelled?"cancelled":(r.isReprogrammed||r.isReprogramPending)?"cancelled_reprog":null};
-    }
-  }
-  const cancelled=clsForDate?clsForDate.cancelled:undefined;
-  const cancelType=clsForDate?clsForDate.cancelType:undefined;
-  const rescheduledTo=clsForDate?clsForDate.rescheduledTo:undefined;
-  const isCancelled=!!(cancelled&&cancelType==="cancelled");
-  const isReprogWithDate=!!(cancelled&&cancelType==="cancelled_reprog"&&rescheduledTo);
-  const isReprogNoDate=!!(cancelled&&cancelType==="cancelled_reprog"&&!rescheduledTo);
-  const isPaused=!!((clsForDate&&clsForDate.paused)||cancelType==="paused");
-  return {originalDate,terminalDate:isReprogWithDate?rescheduledTo:originalDate,cancelInfo:null,reschedulePath:isReprogWithDate?[originalDate,rescheduledTo]:[originalDate],
-    terminalStatus:isPaused?"paused":isCancelled?"cancelled":isReprogNoDate?"pending":isReprogWithDate?"reprogrammed":"normal",
-    isPaused,isCompensated:false,isCancelled,isReprogrammed:isReprogWithDate,isReprogramPending:isReprogNoDate,wasRescheduled:isReprogWithDate,
-    isReprogWithDate,isReprogNoDate,rescheduledTo:rescheduledTo||null,fulfillCancelled:cancelled,fulfillCancelType:cancelType};
-};
+// resolveContractSlotStatus: src/schedule/slotStatus.js (read through createSlotReader)
 
 // Shared paid-status assignment for the slots of ONE combo (Cobros counters, Cobros
 // list and the student/family "Mis Clases" cards all use it). Payment and pause are
@@ -855,26 +804,15 @@ const resolveSlotPayments=(dates,combo,paidCount,slotFor)=>{
   };
 };
 
-// Shared "was this contractual slot delivered" rule (Cobros counters and getClaseRem):
-// evaluated on the effective fulfillment date, never on both original and destination.
-// A paused slot is never delivered; a definitively-cancelled Combo slot is billed and
-// consumed like a delivered one (Individual is deliberately not extended).
-const resolveSlotGiven=(slot,packType,originalDate,timeEnd,myClasses,studentId)=>{
-  if(slot.isPaused) return false;
-  if(slot.isCancelled) return packType==="combo";
-  const fulfillmentDate=getSlotFulfillmentDate(originalDate,slot.fulfillCancelled,slot.fulfillCancelType,slot.rescheduledTo);
-  if(!fulfillmentDate) return false;
-  const att=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===fulfillmentDate);
-  if(att) return (att.present||[]).includes(studentId)||(att.ausente_dada||[]).includes(studentId);
-  return isClassDone(fulfillmentDate,timeEnd);
-};
+// resolveSlotGiven: src/schedule/slotStatus.js (read through createSlotReader)
 
 // Visual history of ONE contractual slot: [original, ...every reschedule destination],
 // depth 0..n. Presentation only — these are never economic rows (no number, no payment,
 // no counter); the slot's display-paid status is simply repeated on every step. Intermediate steps are
 // "reprogrammed"; the terminal carries its real state: paused, cancelled, pending
 // ("A Reprogramar", also an inconsistent chain) or, for a live destination, done/scheduled.
-const buildSlotHistoryRows=(slot,displayPaid,isGiven,myClasses,studentId,timeEnd)=>{
+// classId (stage 2.0): the slot's own class — a reprogrammed step's attendance is read only there.
+const buildSlotHistoryRows=(slot,displayPaid,isGiven,myClasses,studentId,timeEnd,classId)=>{
   const path=slot.reschedulePath&&slot.reschedulePath.length?slot.reschedulePath:[slot.originalDate];
   return path.map((date,depth)=>{
     const isTerminal=depth===path.length-1;
@@ -883,10 +821,18 @@ const buildSlotHistoryRows=(slot,displayPaid,isGiven,myClasses,studentId,timeEnd
     else if(slot.terminalStatus==="paused") status="paused";
     else if(slot.terminalStatus==="cancelled") status="cancelled";
     else if(slot.terminalStatus==="pending"||slot.terminalStatus==="inconsistent") status="pending";
+    // Stage 1d: a slot moved for this student (recovery/extension) is done only by explicit attendance there (isGiven).
+    else if(slot.studentMoves) status=isGiven?"done":"scheduled";
     else if(depth===0) status=isGiven?"done":"scheduled";
     else {
-      const att=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===date);
-      const done=att?((att.present||[]).includes(studentId)||(att.ausente_dada||[]).includes(studentId)):isClassDone(date,timeEnd);
+      let done;
+      if(classId!==undefined&&classId!==null){
+        const given=givenByReading(readAttendance({classes:myClasses,classId,date,studentId}),date,timeEnd);
+        done=given!==null?given:isClassDone(date,timeEnd);
+      } else {
+        const att=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===date);
+        done=att?((att.present||[]).includes(studentId)||(att.ausente_dada||[]).includes(studentId)):isClassDone(date,timeEnd);
+      }
       status=done?"done":"scheduled";
     }
     return {date,depth,status,isPaid:!!displayPaid,isTerminal};
@@ -896,27 +842,31 @@ const buildSlotHistoryRows=(slot,displayPaid,isGiven,myClasses,studentId,timeEnd
 // Rows of the student/family "Mis Clases" cards: one row per ORIGINAL contractual date
 // (combo.dates), built with the same shared helpers as Cobros so both views agree.
 // The reschedule path/terminal are information only — never extra economic rows.
-const buildPersonSlotRows=(person,personClasses,todayDate)=>{
-  const rows=(person.combos||[]).filter(c=>c.total>0&&c.packType!=="mensual").flatMap(c=>{
+// allClasses (optional): every class, so a slot moved to another group (slotMoves) is read at its destination.
+const buildPersonSlotRows=(person,personClasses,todayDate,allClasses)=>{
+  // comboIndex/sourceClassId: which combo a row belongs to (two combos can share a date). Stage 2.0 follow-up.
+  const rows=(person.combos||[]).map((c,comboIndex)=>({c,comboIndex})).filter(({c})=>c.total>0&&c.packType!=="mensual").flatMap(({c,comboIndex})=>{
     const seen=new Set();
     const dates=(c.dates||[]).filter(d=>{if(seen.has(d))return false;seen.add(d);return true;});
     const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
-    const slotFor=dd=>resolveContractSlotStatus(personClasses,c,dd,personClasses.find(cl=>cl.date===dd));
+    // Shared slot reader (src/schedule/slotStatus.js): the same status + given rule as before, in one place.
+    const reader=createSlotReader({classes:personClasses,combo:c,studentId:person.id,allClasses});
+    const slotFor=reader.status;
     const paymentAt=resolveSlotPayments(dates,c,paidCount,slotFor);
     return dates.map((d,i)=>{
       const slot=slotFor(d);
-      const clsForDate=personClasses.find(cl=>cl.date===d);
       const {isPaid:paidByPosition,isDisplaced,displayPaid:displayByPosition}=paymentAt(i);
       // Individual is deliberately not extended: its cancelled slots are never paid here.
       const isPaid=slot.isCancelled?(c.packType==="combo"&&paidByPosition):paidByPosition;
       const displayPaid=slot.isCancelled?isPaid:displayByPosition;
-      const isGiven=resolveSlotGiven(slot,c.packType,d,(clsForDate&&clsForDate.timeEnd)||"23:59",personClasses,person.id);
-      const timeEnd=(clsForDate&&clsForDate.timeEnd)||"23:59";
-      return {date:d,isPaid,displayPaid,isDisplaced,isGiven,isPast:d<=todayDate,isPaused:slot.isPaused,isCompensated:slot.isCompensated,isCancelledClass:slot.isCancelled,isReprogWithDate:slot.isReprogWithDate,isReprogNoDate:slot.isReprogNoDate,rescheduledTo:slot.rescheduledTo||null,terminalDate:slot.terminalDate,reschedulePath:slot.reschedulePath,terminalStatus:slot.terminalStatus,historyRows:buildSlotHistoryRows(slot,displayPaid,isGiven,personClasses,person.id,timeEnd)};
+      const isGiven=reader.isGiven(d);
+      const timeEnd=reader.timeEndFor(d);
+      return {date:d,isPaid,displayPaid,isDisplaced,isGiven,isPast:d<=todayDate,isPaused:slot.isPaused,isCompensated:slot.isCompensated,isCancelledClass:slot.isCancelled,isReprogWithDate:slot.isReprogWithDate,isReprogNoDate:slot.isReprogNoDate,rescheduledTo:slot.rescheduledTo||null,terminalDate:slot.terminalDate,reschedulePath:slot.reschedulePath,terminalStatus:slot.terminalStatus,historyRows:buildSlotHistoryRows(slot,displayPaid,isGiven,personClasses,person.id,timeEnd,slotClassId(personClasses,c,d)),comboIndex,sourceClassId:c.sourceClassId};
     });
   }).sort((a,b)=>a.date.localeCompare(b.date));
+  // One row per combo and date (previously one per DATE across combos, which hid the second combo's slot on a shared date).
   const seen2=new Set();
-  return rows.filter(d=>{if(seen2.has(d.date))return false;seen2.add(d.date);return true;});
+  return rows.filter(d=>{const k=d.comboIndex+"|"+d.date;if(seen2.has(k))return false;seen2.add(k);return true;});
 };
 
 // Agenda-only reading of ONE expanded occurrence card, layered on the shared Cobros helpers
@@ -942,13 +892,16 @@ const resolveAgendaCardStatus=(card,students,classes,todayDate)=>{
   // A paused date already replaced by a resume is history (its contractual slot lives on the
   // replacement). The slot reading also honours resumeOperations when compensatedBy was lost.
   let isCompensated=isPausedCard&&!!(own&&own.compensated);
+  // Only combos and rows of THIS card's class (a legacy combo without sourceClassId keeps matching by date).
+  const cardSeries=card._seriesId!==undefined?card._seriesId:card.id;
+  const ofCard=r=>r.sourceClassId===undefined||String(r.sourceClassId)===String(cardSeries);
   for(const sid of card.students||[]){
     const st=students.find(s=>s.id===sid);
     if(!st) continue;
-    const isReplacement=isLiveCard&&(st.combos||[]).some(c=>(c.resumeOperations||[]).some(op=>(op.replacementDates||[]).includes(card.date)));
+    const isReplacement=isLiveCard&&(st.combos||[]).some(c=>ofCard(c)&&(c.resumeOperations||[]).some(op=>(op.replacementDates||[]).includes(card.date)));
     if(!isPausedCard&&!isReplacement) continue;
-    const rows=buildPersonSlotRows(st,classes.filter(c=>c.students&&c.students.includes(sid)),todayDate);
-    const row=isPausedCard?rows.find(r=>r.terminalStatus==="paused"&&r.terminalDate===card.date):rows.find(r=>r.date===card.date);
+    const rows=buildPersonSlotRows(st,classes.filter(c=>c.students&&c.students.includes(sid)),todayDate,classes);
+    const row=isPausedCard?rows.find(r=>ofCard(r)&&r.terminalStatus==="paused"&&r.terminalDate===card.date):rows.find(r=>ofCard(r)&&r.date===card.date);
     if(!row) continue;
     payment=row.displayPaid?"paid":null;
     if(isPausedCard) isCompensated=isCompensated||!!row.isCompensated;
@@ -1475,6 +1428,8 @@ const expandClasses=(classes)=>{
           paused:!!(cancelInfo&&cancelInfo.cancelType==="paused"),
           _isRescheduledInstance:rescheduledIntoOccurrence.has(date),
           attendanceLog:log?[log]:[],
+          // Stage 2.2: this date's own time/court (class.occurrenceOverrides), never another date's.
+          ...overrideCardFields(c,date),
         });
       }
       // Expand rescheduled-to dates (new class instances on the new day) —
@@ -1492,6 +1447,7 @@ const expandClasses=(classes)=>{
           rescheduled:false,
           _isRescheduledInstance:true,
           attendanceLog:log?[log]:[],
+          ...overrideCardFields(c,date),
         });
       }
     } else {
@@ -1507,15 +1463,16 @@ const expandClasses=(classes)=>{
 const slotReadingsOf=(student,rawClasses,todayDate)=>{
   if(!student) return [];
   const mine=expandClasses((rawClasses||[]).filter(c=>(c.students||[]).includes(student.id)));
-  return buildPersonSlotRows(student,mine,todayDate).map(r=>({date:r.date,isPaid:r.isPaid,displayPaid:r.displayPaid,isDisplaced:r.isDisplaced,isGiven:r.isGiven,isPaused:r.isPaused,isCancelledClass:r.isCancelledClass}));
+  return buildPersonSlotRows(student,mine,todayDate,(student.combos||[]).some(hasSlotMoves)?expandClasses(rawClasses||[]):mine).map(r=>({date:r.date,comboIndex:r.comboIndex,isPaid:r.isPaid,displayPaid:r.displayPaid,isDisplaced:r.isDisplaced,isGiven:r.isGiven,isPaused:r.isPaused,isCancelledClass:r.isCancelledClass}));
 };
 // True when every slot reads exactly as before: same paid/displayed/given/paused/cancelled state, the released slot
 // on its destination. Checked for the final state AND for the half-written one (students saved, class not yet).
 const sameSlotReadings=(before,after,date,destination)=>{
   if(before.length!==after.length) return false;
   const key=r=>JSON.stringify([r.isPaid,r.displayPaid,r.isDisplaced,r.isGiven,r.isPaused,r.isCancelledClass]);
-  const expected=new Map(before.map(r=>[r.date===date?destination:r.date,key(r)]));
-  return after.every(r=>expected.get(r.date)===key(r));
+  // keyed by combo and date: two combos of the student may share a date
+  const expected=new Map(before.map(r=>[r.comboIndex+"|"+(r.date===date?destination:r.date),key(r)]));
+  return after.every(r=>expected.get(r.comboIndex+"|"+r.date)===key(r));
 };
 // Full plan of a release, never written here. ok -> {release, nextStudents, nextClasses, record}.
 const planRelease=({classes,students,seriesId,date,todayDate,opId,at})=>{
@@ -1776,16 +1733,7 @@ function getRem(s, classes=[]) {
   return getClaseRem(s, classes);
 }
 
-// Single source of truth for "which date decides whether a combo slot is fulfilled" —
-// shared by getAccountCounters, isComboClosed and the renewal checks (PaymentCard,
-// Dashboard) so none of them re-implement a different rule for the same slot. A slot
-// reprogrammed with a rescheduledTo is fulfilled by that new date, never by its
-// original one; a slot still pending reprogramming (no rescheduledTo yet) is never
-// fulfilled.
-function getSlotFulfillmentDate(originalDate, cancelled, cancelType, rescheduledTo) {
-  if(cancelled&&cancelType==="cancelled_reprog") return rescheduledTo||null;
-  return originalDate;
-}
+// getSlotFulfillmentDate: src/schedule/slotStatus.js
 // Shared by getAccountCounters and PagoModal.buildAllDates: a combo with total>0 is
 // "closed" once fully paid AND every non-paused slot is RESOLVED — present, ausente_dada,
 // or definitively cancelled (owes no makeup) all resolve regardless of time; with no
@@ -1796,21 +1744,31 @@ function getSlotFulfillmentDate(originalDate, cancelled, cancelType, rescheduled
 function isComboClosed(c, myClasses, studentId) {
   const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
   if(!(c.paid&&paidCount>=(c.total||1))) return false;
+  // Stage 2.0: each slot is read in its own class (card and attendance), never another class on the same date.
   const nonPausedDates=(c.dates||[]).filter(d=>{
-    const cl=myClasses.find(cls=>cls.date===d);
+    const cl=slotCardOn(myClasses,c,d);
     return !(cl&&(cl.paused||cl.cancelType==="paused"));
   });
   const hasPausedDates=(c.dates||[]).some(d=>{
-    const cl=myClasses.find(cls=>cls.date===d);
+    const cl=slotCardOn(myClasses,c,d);
     return cl&&(cl.paused||cl.cancelType==="paused");
   });
   const allDone=nonPausedDates.length>0&&nonPausedDates.every(d=>{
-    const cl=myClasses.find(cls=>cls.date===d);
+    const cl=slotCardOn(myClasses,c,d);
     const fulfillmentDate=getSlotFulfillmentDate(d,cl?.cancelled,cl?.cancelType,cl?.rescheduledTo);
     if(!fulfillmentDate) return false;
     // Definitively cancelled never counts as Realizada (getAccountCounters), but it
     // owes no makeup — the slot is resolved.
     if(cl?.cancelled&&cl?.cancelType==="cancelled") return true;
+    const slotCls=slotClassId(myClasses,c,d);
+    if(slotCls!==undefined){
+      // Stage 2.1: explicit attendance of its own class first, then an advance notice (Ausente – Dada resolves once
+      // the class has happened; Ausente – No dada owes a makeup), then the time-based fallback — as before.
+      const r=readAttendance({classes:myClasses,classId:slotCls,date:fulfillmentDate,studentId});
+      if(r.state==="present"||(r.source==="attendance"&&r.state==="ausente_dada")) return true;
+      if(r.state==="ausente_reprog") return false;
+      return isClassDone(fulfillmentDate,"23:59");
+    }
     const attEntry=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===fulfillmentDate);
     const wasPresent=attEntry?(attEntry.present||[]).includes(studentId):false;
     const wasAusenteDada=attEntry?(attEntry.ausente_dada||[]).includes(studentId):false;
@@ -1929,7 +1887,8 @@ const buildMensualLegacyExportRow=(student,combo,classesList)=>{
 // date/método is invented) or a single Pendiente row for the full amount.
 const buildComboExportRows=(student,combo,classesList)=>{
   const claseName=resolveComboClassName(combo,classesList);
-  const counters=getComboExportCounters(combo);
+  // Stage 2.1: `used` read with due Ausente – Dada notices (= combo.used without them).
+  const counters=getComboExportCounters({...combo,used:effectiveComboUsed({combo,studentId:student.id,classes:classesList})});
   const tipo=combo.packType==="individual"?"Individual":"Combo";
   const baseRow={Alumno:student.name,Clase:claseName,Tipo:tipo,"Mes correspondiente":"","Día de cobro":"","Total de clases":counters.total,"No pagadas":counters.noPagadas,Restantes:counters.restantes};
   const payments=combo.payments||[];
@@ -2097,12 +2056,8 @@ function getClaseRem(s, classes=[]) {
     // Realizadas uses (resolveContractSlotStatus + resolveSlotGiven, terminal-aware):
     // a paused, undelivered slot stays remaining, a reprogramación is delivered once
     // (on its fulfillment date), a definitive Combo cancellation consumes the slot.
-    const pastGiven=(c.dates||[c.date]).filter(d=>{
-      if(!d) return false;
-      const clsForDate=studentClasses.find(cls=>cls.date===d);
-      const slot=resolveContractSlotStatus(studentClasses,c,d,clsForDate);
-      return resolveSlotGiven(slot,c.packType,d,(clsForDate&&clsForDate.timeEnd)||"23:59",studentClasses,s.id);
-    }).length;
+    const reader=createSlotReader({classes:studentClasses,combo:c,studentId:s.id,allClasses:classes});
+    const pastGiven=(c.dates||[c.date]).filter(d=>!!d&&reader.isGiven(d)).length;
     const effectiveUsed=Math.max(c.used||0,pastGiven);
     const porDar=Math.max(0,paidCount-effectiveUsed);
     const lastDate=c.dates&&c.dates.length>0?c.dates[c.dates.length-1]:"";
@@ -2160,14 +2115,15 @@ function getAccountCounters(s, classes=[]) {
     let dates=[...(c.dates||[])];
     const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
     // Dynamic extension for paused dates
-    const _pi2=dates.map(d=>{const cl=myClasses.find(x=>x.date===d);return{date:d,paused:!!(cl&&(cl.paused||cl.cancelType==="paused"))};});
+    // Stage 2.0 follow-up: the pause flag of THIS combo's class on each date (never another class on the same date).
+    const _pi2=dates.map(d=>{const cl=slotCardOn(myClasses,c,d);return{date:d,paused:!!(cl&&(cl.paused||cl.cancelType==="paused"))};});
     const _pC2=_pi2.filter(x=>x.paused).length;
     const _npC2=_pi2.filter(x=>!x.paused).length;
     const _fpi2=_pi2.findIndex(x=>x.paused);const _afp2=_fpi2>=0&&_pi2.slice(_fpi2).every(x=>x.paused);
     const _ae2=dates.length>=(c.total||8)+_pC2;
     if(_pC2>0&&_npC2>0&&!_afp2&&!_ae2){
       const _ld2=dates[dates.length-1];
-      const _pc2=myClasses.find(cl=>(cl.occurrences||[]).some(od=>dates.includes(od)));
+      const _pc2=c.sourceClassId!==undefined?myClasses.find(cl=>String(cl._seriesId!==undefined?cl._seriesId:cl.id)===String(c.sourceClassId)):myClasses.find(cl=>(cl.occurrences||[]).some(od=>dates.includes(od)));
       if(_pc2&&_pc2.occurrences){
         const _ex2=_pc2.occurrences.filter(d=>d>_ld2&&!dates.includes(d)).slice(0,_pC2);
         dates=[...dates,..._ex2];
@@ -2178,20 +2134,20 @@ function getAccountCounters(s, classes=[]) {
     // in resolveSlotPayments. Every slot is read through the shared terminal-aware interpretation (the same
     // one PagoModal.buildAllDates uses): a chain ending on a paused date counts as
     // paused here too, never as a pending reprogramación.
-    const slotFor=dd=>resolveContractSlotStatus(myClasses,c,dd,myClasses.find(cls=>cls.date===dd));
+    const reader=createSlotReader({classes:myClasses,combo:c,studentId:s.id,allClasses:classes});
+    const slotFor=reader.status;
     const paymentAt=resolveSlotPayments(dates,c,paidCount,slotFor);
     return dates.map((d,idx)=>{
-      const clsForDate=myClasses.find(cls=>cls.date===d);
       const slot=slotFor(d);
       const {isCancelled,isReprogWithDate,isReprogNoDate,isPaused}=slot;
-      const timeEnd=clsForDate?.timeEnd||"23:59";
+      const timeEnd=reader.timeEndFor(d);
       const {isPaid,isDisplaced}=paymentAt(idx);
       const isDone=isClassDone(d,timeEnd);
       // Fulfillment (isGiven) is evaluated on the effective date — rescheduledTo for a
       // reprogrammed slot, the original date otherwise — never on both, so a slot always
       // contributes 0 or 1 to realizadas, never 2. A definitively-cancelled Combo slot is
       // billed and consumed like a given one (Individual is deliberately not extended).
-      const isGiven=resolveSlotGiven(slot,c.packType,d,timeEnd,myClasses,s.id);
+      const isGiven=reader.isGiven(d);
       return {date:d,isPaid,isGiven,isPast:isDone,isCancelled,isReprogWithDate,isReprogNoDate,isPaused,isCompensated:slot.isCompensated,isDisplaced,packType:c.packType,sourceComboIndex,comboId:c.id,sourceClassId:c.sourceClassId,terminalDate:slot.terminalDate,reschedulePath:slot.reschedulePath,terminalStatus:slot.terminalStatus};
     });
   });
@@ -2264,7 +2220,7 @@ const applyResumeToClassRow=({c,cd,realId,editDate,dc,occ,plannedResume})=>{
   if(cd._newOccurrenceDates&&cd._newOccurrenceDates.length>0) nextOcc.sort();
   const nextPlanned=plannedResume&&!plannedResume.completed?{...plannedResume,completed:true}:plannedResume;
   const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,dateCancellations:_dc2,_compensatedPausedDates:_cpd,_resumeOperationId:_roid,_newOccurrenceDates:_nod,_plannedResumeDate:_prdate,...rest}=cd;
-  return {...c,...rest,id:realId,dateCancellations:nextDc,occurrences:nextOcc,plannedResume:nextPlanned};
+  return {...c,...withoutCardOverride(rest,cd),id:realId,dateCancellations:nextDc,occurrences:nextOcc,plannedResume:nextPlanned};
 };
 
 // One contractual slot as a group: the single numbered row (original date) followed by one
@@ -3599,6 +3555,13 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
       const nonMensualIds=(log?.ausente_reprog||[]).filter(sid=>!isMensualForClass(sid,c));
       return {cls:c,reason:"reprog",students:nonMensualIds.map(id=>students.find(s=>s.id===id)).filter(Boolean)};
     }).filter(x=>x.students.length>0),
+    // Stage 2.1: an advance notice Ausente – No dada shows here only once that class has happened (never before), unless
+    // the day's attendance already decides the student (then the entry above does); paused, cancelled or reprogrammed
+    // dates and mensual students excluded.
+    ...classes.filter(c=>!c.cancelled&&!(c.paused||c.cancelType==="paused")&&isClassDone(c.date,c.timeEnd||"23:59")).map(c=>{
+      const ids=pendingNoticeStudentIds(c).filter(sid=>!isMensualForClass(sid,c));
+      return {cls:c,reason:"reprog",students:ids.map(id=>students.find(s=>s.id===id)).filter(Boolean)};
+    }).filter(x=>x.students.length>0),
   ];
   // Paused packages alert
   // The count is the ACTIVE pauses of the student's contractual slots (the same figure Cobros
@@ -3751,17 +3714,23 @@ function Dashboard({ students, classes, onNavigate, onNewClass, onNewStudent, on
               <div style={{fontSize:13,fontWeight:800,color:C.text}}>⛔↩ Clases a reprogramar</div>
               <button onClick={()=>onNavigate("agenda")} style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:C.blue2,fontWeight:700}}>Ver agenda →</button>
             </div>
-            {reprogAlerts.slice(0,4).map(({cls,reason,students:sts},i)=>(
-              <div key={i} onClick={()=>onNavigate("agenda",{reprog:cls})} style={{background:reason==="a_reprogramar"?"#E3F2FD":"#E8EAF6",border:"1.5px solid "+(reason==="a_reprogramar"?"#90CAF9":"#9FA8DA"),borderRadius:12,padding:"10px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
+            {reprogAlerts.slice(0,4).map(({cls,reason,students:sts},i)=>{
+              // Stage 2.1 review: an INDIVIDUAL absence (someone else took that class) stays visible but never opens the
+              // class-level Reprogramar flow (it would move everyone's class); only a whole-class absence or a class "A
+              // reprogramar" does, as before.
+              const individual=reason==="reprog"&&!isWholeClassAbsence(cls,students.map(x=>x.id));
+              return (
+              <div key={i} onClick={()=>{if(individual){alert(individualRecoveryMessage(sts.map(x=>x.name.split(" ")[0])));return;}onNavigate("agenda",{reprog:cls});}} style={{background:reason==="a_reprogramar"?"#E3F2FD":"#E8EAF6",border:"1.5px solid "+(reason==="a_reprogramar"?"#90CAF9":"#9FA8DA"),borderRadius:12,padding:"10px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
                 <div style={{width:36,height:36,borderRadius:12,background:reason==="a_reprogramar"?"linear-gradient(135deg,#1565C0,#42A5F5)":"linear-gradient(135deg,#3949AB,#5C6BC0)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,color:"#fff",flexShrink:0}}>{reason==="a_reprogramar"?"🕐":"↩"}</div>
                 <div style={{flex:1}}>
                   <div style={{fontSize:13,fontWeight:700,color:C.text}}>{cls.title}</div>
                   <div style={{fontSize:11,color:reason==="a_reprogramar"?"#1565C0":"#3949AB",fontWeight:600}}>
-                    {reason==="a_reprogramar"?"A reprogramar":"A reprogramar (asistencia)"} · {sts.map(s=>s.name.split(" ")[0]).join(", ")} · {fmtDate(cls.date)}
+                    {reason==="a_reprogramar"?"A reprogramar":individual?"Recuperación individual pendiente":"A reprogramar (asistencia)"} · {sts.map(s=>s.name.split(" ")[0]).join(", ")} · {fmtDate(cls.date)}
                   </div>
                 </div>
               </div>
-            ))}
+              );
+            })}
             {reprogAlerts.length>4&&<div style={{fontSize:12,color:C.mutedDark,textAlign:"center",marginBottom:4}}>+{reprogAlerts.length-4} más</div>}
           </div>
         )}
@@ -4604,28 +4573,16 @@ function EditClassScreen({ cls, students: initialStudents, onClose, onSave, onCr
           const daysChanged=JSON.stringify(days)!==JSON.stringify(cls.days);
           const tooFewOccurrences=days.length>0&&newOccurrences.length<days.length*4; // less than ~1 month of classes
           if((daysChanged||tooFewOccurrences)&&hasValidClassDays(days)){
-            const dowSet=classDowSetFrom(days);
-            const result=[];
-            const sd=cls.startDate||cls.date;
-            const ed=cls.endDate;
-            let cur=new Date(sd+"T12:00:00");
-            const end=ed?new Date(ed+"T12:00:00"):new Date(new Date(sd+"T12:00:00").setMonth(new Date(sd+"T12:00:00").getMonth()+6));
-            while(cur<=end&&result.length<200){
-              if(dowSet.has(cur.getDay())){
-                result.push(cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0"));
-              }
-              cur.setDate(cur.getDate()+1);
-            }
-            // Preserve existing occurrences that have attendance/cancellation data
-            const preserved=(cls.occurrences||[]).filter(d=>d<sd);
+            // BUG-AGENDA-05 stage 0: regenerated from the selected date (or today, if later) only; every earlier date is
+            // kept exactly, no past date is invented; horizon = the class end date or 6 months after the change point.
             // "Agregar día al combo": dates added to combos are not weekly days; never drop them (class.addedDates).
-            const addedKeep=(cls.addedDates||[]).map(a=>a&&a.date).filter(d=>typeof d==="string");
-            newOccurrences=[...new Set([...preserved,...result,...addedKeep])].sort();
+            newOccurrences=regenerateOccurrences({previous:cls.occurrences||[],dowSet:classDowSetFrom(days),fromDate:cls.date,todayDate:todayIso(),endDate:cls.endDate,addedDates:cls.addedDates,dateCancellations:cls.dateCancellations});
           }
           // Only send studentPacks for students the professor explicitly changed
           const filteredPacks={};
           changedPacks.forEach(sid=>{if(studentPacks[sid])filteredPacks[sid]=studentPacks[sid];});
-          onSave({...cls,title,court,days,time:t1,timeEnd:t2,students:clsSt,studentPacks:Object.keys(filteredPacks).length>0?filteredPacks:undefined,occurrences:newOccurrences});
+          // The card's own state (paused, cancelled, reprogrammed, per-date flags) never travels with an edit.
+          onSave({...editableFromCard(cls),title,court,days,time:t1,timeEnd:t2,students:clsSt,studentPacks:Object.keys(filteredPacks).length>0?filteredPacks:undefined,occurrences:newOccurrences});
         }} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,fontSize:15,cursor:"pointer",fontWeight:800,marginBottom:10}}>Actualizar Clase</button>
         {confirmDeleteClass?(
           <div style={{padding:12,borderRadius:14,background:"#FFEBEE",border:"1px solid #FFCDD2",marginBottom:20}}>
@@ -4927,7 +4884,8 @@ function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent,
   const [stage,setStage]=useState(isAssigningDate0?"reprog":"choose"); // "choose" | "reprog"
   const [selected,setSelected]=useState(isAssigningDate0?"reprog":null); // null, "cancel", "reprog"
   const [newDate,setNewDate]=useState("");
-  const [newTime,setNewTime]=useState(cls.time||"08:00");
+  // Stage 2.2: starts from the SERIES time — an origin date's own time is never carried to the destination automatically.
+  const [newTime,setNewTime]=useState((series&&series.time)||cls.time||"08:00");
 
   const clsStudents=(cls.students||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean);
   // Same recurrence signal used elsewhere (EditClassScreen's hasRecurringObligation): any
@@ -5010,7 +4968,8 @@ function CancelReprogModal({ cls, onClose, onSave, students=[], onUpdateStudent,
       if(destConflict){alert(fusedMessage(destConflict));return;}
       const oldDate=cls.date;
       const updatedLog=(cls.attendanceLog||[]).map(e=>e.date===oldDate?{...e,ausente_reprog:[],rescheduled_to:targetDate}:e);
-      const r=onSave({...cls,cancelled:true,cancelType:"cancelled_reprog",rescheduledTo:targetDate,rescheduled:true,attendanceLog:updatedLog,applyToAll:false},true);
+      // Stage 2.2: the chosen time is saved for the destination date (class.occurrenceOverrides) when it is not the series one.
+      const r=onSave({...cls,cancelled:true,cancelType:"cancelled_reprog",rescheduledTo:targetDate,rescheduled:true,attendanceLog:updatedLog,applyToAll:false,_destTime:newTime},true);
       if(r&&r.status==="reprog-destination-conflict"){alert(fusedMessage(r.reason));return;}
       // Combo dates are NOT changed — the original date stays as the billing slot
       // The rescheduled class appears on the new date as a normal class instance
@@ -5583,7 +5542,7 @@ const resolveClassAttendanceBadgeCounts=(students,classRealId,classDate,log)=>{
   (log?.ausente_reprog||[]).forEach(sid=>{if(!isMensual(sid))aReprogramar++;});
   return {ausenteDada,aReprogramar};
 };
-function AttModal({ att, students, onAttendance, onClose }) {
+function AttModal({ att, students, onAttendance, onAbsenceNotice, onClose }) {
   const classRealId=att._seriesId||att.id;
   const [attStatus,setAttStatus]=useState(()=>{
     const init={};
@@ -5591,21 +5550,42 @@ function AttModal({ att, students, onAttendance, onClose }) {
     const existingLog=(att.attendanceLog||[]).find(e=>e.date===att.date);
     att.students.forEach(sid=>{
       const isMensual=attendanceCycleFor(students,classRealId,att.date,sid).length===2;
+      // Stage 2.1: a student with an advance notice (and no attendance of their own yet) starts from that notice,
+      // so the coach confirms it or corrects it (e.g. Presente if they came after all).
+      const notice=noticeOf(att,att.date,sid);
+      const fromNotice=notice?(notice.status==="ausente_reprog"&&isMensual?"ausente_dada":notice.status):null;
       if(existingLog){
         if((existingLog.ausente_dada||[]).includes(sid)) init[sid]="ausente_dada";
         // A mensual student's historical ausente_reprog (from before this change, or from a legacy
         // combo shape) reads back simply as Ausente — no mass migration; re-saving normalizes it below.
         else if((existingLog.ausente_reprog||[]).includes(sid)) init[sid]=isMensual?"ausente_dada":"ausente_reprog";
         else if((existingLog.present||[]).includes(sid)) init[sid]="presente";
-        else init[sid]="presente";
+        else init[sid]=fromNotice||"presente";
       } else {
-        init[sid]="presente";
+        init[sid]=fromNotice||"presente";
       }
     });
     return init;
   });
 
+  // Stage 2.1: definitive attendance is never saved for a future date. There the same screen saves only the absences,
+  // as advance notices (class.attendanceNotices, re-validated in saveAbsenceNotices); a student left on Presente is not
+  // recorded, and setting back Presente withdraws an existing notice (its history is kept).
+  const isFutureDate=att.date>todayIso();
   const handleSave=()=>{
+    if(isFutureDate){
+      if(!onAbsenceNotice) return;
+      const changes=att.students.filter(sid=>students.some(s=>s.id===sid)).map(sid=>{
+        const want=attStatus[sid]==="presente"?null:attStatus[sid];
+        const cur=noticeOf(att,att.date,sid)?.status||null;
+        return want!==cur?{studentId:sid,status:want}:null;
+      }).filter(Boolean);
+      if(changes.length===0){onClose();return;}
+      const r=onAbsenceNotice({seriesId:classRealId,date:att.date,changes});
+      if(r&&r.status==="refused"){alert(noticeMessage(r.reason));return;}
+      onClose();
+      return;
+    }
     const presentStudents=att.students.filter(sid=>attStatus[sid]==="presente");
     const ausente_dada=att.students.filter(sid=>attStatus[sid]==="ausente_dada");
     // A mensual student's attStatus is only ever "presente"/"ausente_dada" (attendanceCycleFor never
@@ -5666,6 +5646,7 @@ function AttModal({ att, students, onAttendance, onClose }) {
                   }
                   <div style={{flex:1}}>
                     <div style={{fontWeight:700,fontSize:14,color:C.text}}>{st.name}</div>
+                    {(()=>{const n=noticeOf(att,att.date,sid);if(!n)return null;const mensualSt=attendanceCycleFor(students,classRealId,att.date,sid).length===2;return <div style={{fontSize:11,color:C.mutedDark,marginTop:2}}>📣 Avisó: {n.status==="ausente_reprog"?"Ausente — No Dada":mensualSt?"Ausente":"Ausente — Dada"}</div>;})()}
                   </div>
                   <button onClick={()=>cycleStatus(sid)} style={{padding:"8px 16px",borderRadius:20,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:curLabel.bg,color:curLabel.color,minWidth:160,textAlign:"center"}}>
                     {curLabel.label}
@@ -5675,17 +5656,20 @@ function AttModal({ att, students, onAttendance, onClose }) {
             );
           })}
         </div>
+        {isFutureDate&&<div role="alert" style={{margin:"0 16px 8px",fontSize:12,color:"#E65100",background:"#FFF3E0",borderRadius:10,padding:"10px 12px"}}>Fecha futura: se guardan solo las ausencias, como avisos. Quien queda en Presente no se registra.</div>}
         {/* Footer */}
         <div style={{padding:"12px 16px",paddingBottom:"calc(28px + env(safe-area-inset-bottom, 34px))",borderTop:"1px solid "+C.border,display:"flex",gap:10}}>
           <button onClick={onClose} style={{flex:1,padding:"12px",borderRadius:12,border:"1.5px solid "+C.border,background:C.white,cursor:"pointer",fontSize:14,color:C.mutedDark,fontWeight:700}}>Cancelar</button>
-          <button onClick={handleSave} style={{flex:2,padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:"pointer",fontSize:14,fontWeight:800}}>Guardar asistencia</button>
+          <button onClick={handleSave} disabled={isFutureDate&&!onAbsenceNotice} style={{flex:2,padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:C.white,cursor:isFutureDate&&!onAbsenceNotice?"not-allowed":"pointer",opacity:isFutureDate&&!onAbsenceNotice?0.5:1,fontSize:14,fontWeight:800}}>{isFutureDate?"Guardar avisos":"Guardar asistencia"}</button>
         </div>
       </div>
     </div>
   );
 }
 
-function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAddStudent, courts=[], packages=[], onUpdateStudent, onUpdateStudentsBatch, isClassesWriteSettled, onDeleteClass, pendingReprog, onClearPendingReprog, onAddPackage, onRefresh, onReleaseAndRenew, onAddComboDay }) {
+
+
+function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAbsenceNotice, onAddStudent, courts=[], packages=[], onUpdateStudent, onUpdateStudentsBatch, isClassesWriteSettled, onDeleteClass, pendingReprog, onClearPendingReprog, onAddPackage, onRefresh, onReleaseAndRenew, onAddComboDay }) {
   const [selDay,setSelDay]=useState(TODAY_DATE);
   const [viewYear,setViewYear]=useState(new Date().getFullYear());
   const [viewMonth,setViewMonth]=useState(new Date().getMonth());
@@ -6543,15 +6527,33 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
           <div style={{background:"#fff",borderRadius:20,padding:24,width:"100%",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
             <div style={{fontSize:17,fontWeight:800,color:C.text,marginBottom:6}}>¿Aplicar cambios a?</div>
             <div style={{fontSize:13,color:C.mutedDark,marginBottom:20}}>Esta es una clase recurrente. ¿El cambio aplica solo a esta fecha o a toda la serie?</div>
+            {(()=>{
+              // BUG-AGENDA-05: days, time, court, title and students exist only for the whole series — "Solo esta clase"
+              // refuses them (handleSaveClass re-checks on the latest state). Moving one date is "Reprogramar".
+              const scopeSeries=(rawClasses||classes).find(c2=>c2.id===(editScopeData._seriesId||editScopeData.id));
+              // Stage 2.2: time and court are saved for this date only; days, title and students stay series-wide.
+              const singleDateChanges=singleDateRefusedChanges(scopeSeries,editScopeData,students.map(s=>s.id));
+              const singleDateBlocked=singleDateChanges.length>0;
+              // Stage 0 (BUG-AGENDA-05): "A Todas las Clases" is refused when it would leave future combo/individual dates
+              // without a card, or remove a student with history (handleSaveClass re-checks on the latest state).
+              const lostCards=comboDatesLeftWithoutCard({series:scopeSeries,students,nextOccurrences:editScopeData.occurrences,todayDate:todayIso()});
+              const removalBlocked=studentRemovalBlock({series:scopeSeries,students,nextStudentIds:editScopeData.students});
+              const allBlocked=lostCards.length>0||removalBlocked.length>0;
+              return (
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
-              <button onClick={()=>{onSaveClass(editScopeData,true);setEditScopeData(null);setEditCls(null);}} style={{padding:"14px",borderRadius:12,border:"1.5px solid "+C.border,background:C.blueL,color:C.blue2,cursor:"pointer",fontSize:14,fontWeight:700,textAlign:"left"}}>
+              <button disabled={singleDateBlocked} onClick={()=>{const r=onSaveClass({...editScopeData,_singleDate:true},true);const msg=editRefusalMessage(r);if(msg){alert(msg);return;}setEditScopeData(null);setEditCls(null);}} style={{padding:"14px",borderRadius:12,border:"1.5px solid "+C.border,background:C.blueL,color:C.blue2,cursor:singleDateBlocked?"not-allowed":"pointer",opacity:singleDateBlocked?0.5:1,fontSize:14,fontWeight:700,textAlign:"left"}}>
                 📅 Solo esta clase ({editScopeData.date})
               </button>
-              <button onClick={()=>{onSaveClass({...editScopeData,applyToAll:true},true);setEditScopeData(null);setEditCls(null);}} style={{padding:"14px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:"#fff",cursor:"pointer",fontSize:14,fontWeight:700,textAlign:"left"}}>
+              {singleDateBlocked&&<div role="alert" style={{fontSize:12,color:"#C62828",fontWeight:600}}>{singleDateEditMessage(singleDateChanges)}</div>}
+              <button disabled={allBlocked} onClick={()=>{const r=onSaveClass({...seriesEditFromCard({series:scopeSeries,card:editCls,edited:editScopeData}),applyToAll:true},true);const msg=editRefusalMessage(r);if(msg){alert(msg);return;}setEditScopeData(null);setEditCls(null);}} style={{padding:"14px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0D1B4B,#1A3DB5)",color:"#fff",cursor:allBlocked?"not-allowed":"pointer",opacity:allBlocked?0.5:1,fontSize:14,fontWeight:700,textAlign:"left"}}>
                 🔄 A Todas las Clases
               </button>
+              {lostCards.length>0&&<div role="alert" style={{fontSize:12,color:"#C62828",fontWeight:600}}>{weekdayChangeMessage(lostCards)}</div>}
+              {removalBlocked.length>0&&<div role="alert" style={{fontSize:12,color:"#C62828",fontWeight:600}}>{studentRemovalMessage(removalBlocked)}</div>}
               <button onClick={()=>setEditScopeData(null)} style={{padding:"12px",borderRadius:12,border:"1.5px solid "+C.border,background:"#fff",color:C.mutedDark,cursor:"pointer",fontSize:13,fontWeight:600}}>Cancelar</button>
             </div>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -6562,7 +6564,8 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
         if(isRecurring){
           setEditScopeData(u);
         } else {
-          onSaveClass(u,true);
+          const msg=editRefusalMessage(onSaveClass(u,true));
+          if(msg){alert(msg);return;}
           setEditCls(null);
         }
       }} onCreateStudent={onAddStudent} packages={packages} onDelete={(id)=>{const realId=editCls?._seriesId||id;onDeleteClass&&onDeleteClass(realId);setEditCls(null);}}/>}
@@ -6594,7 +6597,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAd
       {addDayFor&&(rawClasses||classes).find(cl=>cl.id===addDayFor)&&<AddComboDayModal series={(rawClasses||classes).find(cl=>cl.id===addDayFor)} classes={rawClasses||classes} students={students} onConfirm={onAddComboDay} onClose={()=>setAddDayFor(null)}/>}
       {showCancel&&<CancelReprogModal cls={showCancel} series={(rawClasses||classes).find(c2=>c2.id===(showCancel._seriesId||showCancel.id))} knownSeriesIds={new Set((rawClasses||classes).map(c2=>c2.id))} onClose={()=>setShowCancel(null)} onSave={(u)=>{const r=onSaveClass(u,true);if(u._endOfPackage&&r&&r.status==="end-of-package-unavailable") return r;setShowCancel(null);return r;}} students={students} onUpdateStudent={onUpdateStudent}/>}
       {showNew&&<NewClassModal onClose={()=>{setShowNew(false);setGridNewTime(null);setWeekOffset(0);}} onSave={onSaveClass} existingClasses={classes} students={students} dateLabel={viewMode==="month"?selLabel:weekLabel()} onCreateStudent={onAddStudent} prefill={gridNewTime||(viewMode==="month"?{date:selDay}:null)} courts={courts} packages={packages} onAddPackage={(pkg)=>{if(typeof onAddPackage==="function")onAddPackage(pkg);}}/>}
-      {att&&<AttModal att={att} students={students} onAttendance={onAttendance} onClose={()=>setAtt(null)}/>}
+      {att&&<AttModal att={att} students={students} onAttendance={onAttendance} onAbsenceNotice={onAbsenceNotice} onClose={()=>setAtt(null)}/>}
     </div>
   );
 }
@@ -7058,7 +7061,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
   // (never just "the student's last combo", which may be a class combo); legacy keeps lastCombo.
   const mensualInfoCombo=mensualCombo||lastCombo;
   const totalPaid=lastCombo?.total||0;
-  const totalUsed=lastCombo?.used||0;
+  const totalUsed=lastCombo?effectiveComboUsed({combo:lastCombo,studentId:s.id,classes}):0; // = lastCombo.used without due notices
   // moraCount only applies when the last combo was paid and exceeded
   // If unpaid, there's no mora — just unpaid classes
   const moraCount=lastCombo?.paid?Math.max(0,totalUsed-totalPaid):0;
@@ -7096,35 +7099,46 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         dates=[matchingCls?matchingCls.date:c.date];
       }
       // Dynamic extension for paused dates - visual only, never modifies combo.dates
-      const _pi=dates.map(d=>{const cl=myClasses.find(x=>x.date===d);return{date:d,paused:!!(cl&&(cl.paused||cl.cancelType==="paused"))};});
+      const _pi=dates.map(d=>{const cl=slotCardOn(myClasses,c,d);return{date:d,paused:!!(cl&&(cl.paused||cl.cancelType==="paused"))};});
       const _pCount=_pi.filter(x=>x.paused).length;
       const _npCount=_pi.filter(x=>!x.paused).length;
       // Same terminal-aware interpretation and paid-status assignment getAccountCounters
       // uses (shared helpers) — list and counters agree; pause never removes a payment.
-      const slotFor=dd=>resolveContractSlotStatus(myClasses,c,dd,myClasses.find(cls=>cls.date===dd));
+      // Its own isGiven rule below is NOT the shared one (stage 1 keeps it as it was; see BUG-AGENDA-05 notes).
+      const reader=createSlotReader({classes:myClasses,combo:c,studentId:s.id,allClasses:classes});
+      const slotFor=reader.status;
       const paymentAt=resolveSlotPayments(dates,c,paidCount,slotFor);
       // Show all dates in the combo, no dynamic extension needed
       // The ResumeModal already adds the replacement dates to combo.dates
       dates.forEach((ds,i)=>{
-        const classOnDate=myClasses.find(cl=>cl.date===ds);
+        const classOnDate=reader.cardFor(ds);
         const slot=slotFor(ds);
         const {isCancelled,isReprogWithDate,isReprogNoDate,isPaused}=slot;
         const isAnyCancelled=isCancelled||isReprogWithDate||isReprogNoDate;
         const {isPaid:isPaidDate,displayPaid:displayPaidDate}=paymentAt(i);
-        const attEntry=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===ds);
-        const wasAusenteDada=attEntry?(attEntry.ausente_dada||[]).includes(s.id):false;
-        const wasAusenteReprog=attEntry?(attEntry.ausente_reprog||[]).includes(s.id):false;
-        const wasPresent=attEntry?(attEntry.present||[]).includes(s.id):false;
-        const wasAbsent=attEntry?(!wasPresent&&!wasAusenteDada&&!wasAusenteReprog):false;
+        // Stage 2.0: attendance of this slot's own class on that date only.
+        const slotCls=slotClassId(myClasses,c,ds);
+        const rd=slotCls!==undefined?readAttendance({classes:myClasses,classId:slotCls,date:ds,studentId:s.id}):null;
+        const attEntry=rd?rd.entry:myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===ds);
+        // Stage 2.1: an advance notice reads like that attendance only once the class has happened; before, the row
+        // says the student gave notice (noticeLabel).
+        const fromNotice=!!(rd&&rd.source==="notice");
+        const noticeDue=fromNotice&&isClassDone(ds,classOnDate?.timeEnd);
+        const wasAusenteDada=rd?((rd.source==="attendance"||noticeDue)&&rd.state==="ausente_dada"):(attEntry?(attEntry.ausente_dada||[]).includes(s.id):false);
+        const wasAusenteReprog=rd?((rd.source==="attendance"||noticeDue)&&rd.state==="ausente_reprog"):(attEntry?(attEntry.ausente_reprog||[]).includes(s.id):false);
+        const wasPresent=rd?(rd.source==="attendance"&&rd.state==="present"):(attEntry?(attEntry.present||[]).includes(s.id):false);
+        const wasAbsent=rd?(rd.source==="attendance"&&rd.state==="unmarked"):(attEntry?(!wasPresent&&!wasAusenteDada&&!wasAusenteReprog):false);
+        const noticeLabel=fromNotice&&!noticeDue?(rd.state==="ausente_reprog"?"📣 Avisó: No dada":"📣 Avisó: Dada"):null;
         // A definitively-cancelled Combo slot is billed and consumed like a given one —
         // isGiven=true (its row still shows "Cancelada", not "Realizada": the leftLabel
         // below checks isCancelled before isGiven). Individual is NOT extended (not a
         // normal Individual flow) — stays isGiven=false, matching getAccountCounters.
-        const isGiven=isPaused?false:isCancelled?(c.packType==="combo"):isReprogWithDate?true:isReprogNoDate?false:wasAusenteReprog?false:attEntry?(wasPresent||wasAusenteDada):isClassDone(ds,classOnDate?.timeEnd);
+        // Stage 1d: a slot moved for this student is given only by explicit attendance at its destination (shared reader).
+        const isGiven=slot.studentMoves?reader.isGiven(ds):isPaused?false:isCancelled?(c.packType==="combo"):isReprogWithDate?true:isReprogNoDate?false:wasAusenteReprog?false:attEntry?(wasPresent||wasAusenteDada):isClassDone(ds,classOnDate?.timeEnd);
         let status;
         if(isPaidDate){status=isGiven?"dada":"adar";}
         else{status=isGiven?"dada_unpaid":"pendiente";}
-        result.push({date:ds,status,comboId:c.id,sourceComboIndex,sourceClassId:c.sourceClassId,packType:c.packType||"combo",isGiven,wasPresent,wasAbsent,wasAusenteDada,wasAusenteReprog,isCancelled,isReprogWithDate,isReprogNoDate,isPaused,isCompensated:slot.isCompensated,displayPaid:displayPaidDate,rescheduledTo:slot.rescheduledTo||null,terminalDate:slot.terminalDate,reschedulePath:slot.reschedulePath,terminalStatus:slot.terminalStatus,historyRows:buildSlotHistoryRows(slot,displayPaidDate,isGiven,myClasses,s.id,classOnDate?.timeEnd)});
+        result.push({date:ds,status,comboId:c.id,sourceComboIndex,sourceClassId:c.sourceClassId,packType:c.packType||"combo",isGiven,wasPresent,wasAbsent,wasAusenteDada,wasAusenteReprog,isCancelled,isReprogWithDate,isReprogNoDate,isPaused,isCompensated:slot.isCompensated,displayPaid:displayPaidDate,rescheduledTo:slot.rescheduledTo||null,terminalDate:slot.terminalDate,reschedulePath:slot.reschedulePath,terminalStatus:slot.terminalStatus,historyRows:buildSlotHistoryRows(slot,displayPaidDate,isGiven,myClasses,s.id,classOnDate?.timeEnd),noticeLabel});
       });
     });
     // Dedup by (sourceComboIndex + date), NOT date alone — two distinct obligations
@@ -7283,9 +7297,13 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
         // BUG-COMBO-01: a reprogrammed slot is judged on its destination (getSlotFulfillmentDate), never on its
         // original date; a pending reprogramming has no destination yet and never counts.
         const givenCount=(c.dates||[]).filter(d=>{
-          const clsD=myClsForCombo.find(cl=>cl.date===d);
+          const clsD=slotCardOn(myClsForCombo,c,d); // stage 2.0: this combo's own class on that date
           if(clsD&&(clsD.paused||clsD.cancelType==="paused")) return false;
           const fulfillment=getSlotFulfillmentDate(d,clsD&&clsD.cancelled,clsD&&clsD.cancelType,clsD&&clsD.rescheduledTo);
+          // Stage 2.1: a slot read through an advance notice follows the notice rule (Dada once the class happened,
+          // No dada never); every other slot keeps this date rule.
+          const rn=fulfillment&&c.sourceClassId!==undefined?readAttendance({classes:myClsForCombo,classId:c.sourceClassId,date:fulfillment,studentId:s.id}):null;
+          if(rn&&rn.source==="notice") return givenByReading(rn,fulfillment,(clsD&&clsD.timeEnd)||"23:59");
           return !!fulfillment&&fulfillment<=TODAY_DATE;
         }).length;
         const paymentDates=rows.map(r=>r.date);
@@ -7824,6 +7842,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               else if(isCancelled){leftBg="#FFF0F0";leftColor="#C62828";leftLabel="⛔ Cancelada";}
               else if(isReprogWithDate){leftBg=SLOT_BADGES.reprogrammed.bg;leftColor=SLOT_BADGES.reprogrammed.color;leftLabel="🔄 Reprogramada";}
               else if(isReprogNoDate){leftBg="#E3F2FD";leftColor="#1565C0";leftLabel="🕐 A Reprogramar";}
+              else if(item.noticeLabel){const nr=item.noticeLabel.endsWith("No dada");leftBg=nr?"#E8EAF6":"#FFF3E0";leftColor=nr?"#3949AB":"#E65100";leftLabel=item.noticeLabel;}
               else if(wasAusenteReprog){leftBg="#E8EAF6";leftColor="#3949AB";leftLabel="↩ A Reprogramar";}
               else if(wasAusenteDada){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="🚫 Ausente (Dada)";}
               else if(wasAbsent){leftBg="#FFF3E0";leftColor="#E65100";leftLabel="🚫 Ausente";}
@@ -9343,7 +9362,9 @@ function StudentApp({ student: initialStudent, onExit, classes=[], notifications
   // Shared "Mis Clases" card rendering — same logic used for the own classes and for family members' classes
   const renderClassCards=(person,personClasses)=>{
     return [...new Map(personClasses.map(c=>[c.title,c])).values()].map(cls=>{
-      const deduped=buildPersonSlotRows(person,personClasses,TODAY_DATE);
+      // Rows of this card's class only (cards are grouped by title; a legacy combo without sourceClassId shows everywhere, as before).
+      const cardSeriesIds=new Set(personClasses.filter(c=>c.title===cls.title).map(c=>String(c._seriesId!==undefined?c._seriesId:c.id)));
+      const deduped=buildPersonSlotRows(person,personClasses,TODAY_DATE).filter(r=>r.sourceClassId===undefined||cardSeriesIds.has(String(r.sourceClassId)));
       return (
         <WhiteCard key={cls.id} style={{marginBottom:12}}>
           {/* The class title is the coach's internal label — the student reads days, time and place only. */}
@@ -11202,9 +11223,24 @@ export default function App() {
     return true;
   };
 
+  // Advance absence notices (BUG-AGENDA-05 stage 2.1), saved from Asistencia on a future date: re-validated on the LATEST class row, one classes write, the class
+  // row only (attendanceNotices); attendanceLog, students, combos and payments are never touched.
+  const saveAbsenceNotices=({seriesId,date,changes})=>{
+    if(isClassesWriteSettled&&!isClassesWriteSettled()) return {status:"refused",reason:"write-pending"};
+    const row=latestClassesRef.current.find(c=>c.id===seriesId);
+    const isMensual=sid=>{const st=latestStudentsRef.current.find(s=>s.id===sid);const combo=resolveStudentComboForClass(st,seriesId,date);return !!(combo&&combo.packType==="mensual");};
+    const refused=noticeWriteRefusal({row,date,changes,todayDate:todayIso(),isMensual});
+    if(refused) return {status:"refused",reason:refused};
+    const at=new Date().toISOString();
+    setClasses(p=>p.map(c=>c.id===seriesId?applyNoticesToClassRow(c,{date,changes,at}):c));
+    return {status:"saved"};
+  };
+
   const handleAttendance=(cls)=>{
     const wD=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
     const classDate=cls.date||new Date().toISOString().split("T")[0];
+    // Stage 2.1: no definitive attendance for a future date (only advance notices); nothing is written.
+    if(classDate>todayIso()) return {status:"future-attendance"};
     const day=wD[new Date(classDate+"T12:00:00").getDay()];
     const presentIds=cls.students||[];
     const ausenteDadaIds=cls.ausente_dada||[];
@@ -11219,7 +11255,21 @@ export default function App() {
       {date:classDate,day,present:presentIds,ausente_dada:ausenteDadaIds,ausente_reprog:ausenteReprogIds}];
     // Save attendance log with full status
     setClasses(p=>p.map(c=>c.id===realId?{...c,attendanceLog:mergedLog}:c));
+    // Stage 1d: `used` is per student and combo, wherever a class of the combo was taken (slotMoves). The class
+    // being saved is read with its merged log; without slotMoves nothing below differs from before.
+    const classesForMoves=classes.map(c=>c.id===realId?{...c,attendanceLog:mergedLog}:c);
     setStudents(p=>p.map(s=>{
+      // A student outside the roster whose combo moved a slot INTO this class and date (a recovery): only that combo.
+      const guestIdx=allClassStudents.includes(s.id)?-1:comboIndexWithMoveInto(s.combos,realId,classDate);
+      if(guestIdx>=0){
+        const combos=[...s.combos];
+        const target=combos[guestIdx];
+        const series=classesForMoves.find(c=>c.id===target.sourceClassId);
+        const newUsed=countUsedForCombo({combo:target,studentId:s.id,dc:series?.dateCancellations||{},attendanceLog:series?.attendanceLog||[],baseClassId:target.sourceClassId,classes:classesForMoves})
+          +dueDadaNoticeCount({combo:target,studentId:s.id,classes:classesForMoves});
+        combos[guestIdx]={...target,used:newUsed};
+        return {...s,combos};
+      }
       if(!allClassStudents.includes(s.id)) return s;
       const combos=[...s.combos];
       if(combos.length===0) return s;
@@ -11248,7 +11298,10 @@ export default function App() {
       // THIS series), so a class reprogrammed and given elsewhere counts; explicit attendance only.
       const targetDates=target.dates||(target.date?[target.date]:[]);
       const seriesDc=(target.sourceClassId===realId||target.sourceClassId===undefined)?(classes.find(c=>c.id===realId)?.dateCancellations||{}):{};
-      const newUsed=countAttendedSlots({dates:targetDates,dc:seriesDc,attendanceLog:mergedLog,studentId:s.id});
+      // Same inputs as before (countAttendedSlots when the combo has no slotMoves); moved slots count at their destination.
+      // Stage 2.1: plus slots consumed only by a due Ausente – Dada notice (0 without notices).
+      const newUsed=countUsedForCombo({combo:{...target,dates:targetDates},studentId:s.id,dc:seriesDc,attendanceLog:mergedLog,baseClassId:target.sourceClassId!==undefined?target.sourceClassId:realId,classes:classesForMoves})
+        +dueDadaNoticeCount({combo:{...target,dates:targetDates},studentId:s.id,classes:classesForMoves});
       combos[lastIdx]={...target,used:newUsed};
       return {...s,combos};
     }));
@@ -11422,21 +11475,12 @@ export default function App() {
       const removedStudentIds=(originalClass?.students||[]).filter(id=>!(cd.students||[]).includes(id));
       if(removedStudentIds.length>0){
         const classDates=new Set(originalClass?.occurrences||[originalClass?.date].filter(Boolean));
+        // Stage 0 (BUG-AGENDA-05): handleSaveClass refuses the edit before any write when a removed student has a
+        // history (studentRemovalBlock judges exactly the combos cleanCombosAfterClassRemoval touches), so this only
+        // ever cleans students added by mistake.
         setStudents(p=>p.map(s=>{
           if(!removedStudentIds.includes(s.id)) return s;
-          const cleanedCombos=(s.combos||[]).map(combo=>{
-            // A combo with a known sourceClassId is only ever touched when it's
-            // THIS class — never stripped by date coincidence once we know for
-            // certain which class it belongs to. Legacy combos (no
-            // sourceClassId) keep the existing date-set heuristic exactly as
-            // before — the only signal available for data that predates this.
-            if(combo.sourceClassId!==undefined&&combo.sourceClassId!==realId) return combo;
-            const comboDates=combo.dates||[combo.date].filter(Boolean);
-            const filteredDates=comboDates.filter(d=>!classDates.has(d));
-            if(filteredDates.length===0) return null;
-            return {...combo, dates:filteredDates, total:filteredDates.length, date:filteredDates[0]};
-          }).filter(Boolean);
-          return {...s,combos:cleanedCombos};
+          return {...s,combos:cleanCombosAfterClassRemoval(s.combos,realId,classDates)};
         }));
       }
     }
@@ -11514,11 +11558,13 @@ export default function App() {
         const lastCombo=targetIdx>=0?combos[targetIdx]:null;
         const lastDate=lastCombo?.dates?.slice(-1)[0]||"";
         const today=new Date().toISOString().slice(0,10);
-        const lastComboFullyUsed=!lastDate||((lastDate<today)&&(lastCombo?.used||0)>=(lastCombo?.total||0));
+        // Stage 2.1: `used` read with due Ausente – Dada notices (= lastCombo.used without them).
+        const lastUsed=lastCombo?effectiveComboUsed({combo:lastCombo,studentId:s.id,classes}):0;
+        const lastComboFullyUsed=!lastDate||((lastDate<today)&&lastUsed>=(lastCombo?.total||0));
         const hasActiveCombo=lastCombo&&(
           (lastDate&&lastDate>=today) ||
           (lastCombo.packType==="mensual") ||
-          ((lastCombo.used||0)<(lastCombo.total||0))
+          (lastUsed<(lastCombo.total||0))
         );
         // Existing mensual combo (modern or legacy) reached via Editar Clase: package and paid are
         // effectively read-only from this screen (Cobros/PagoModal own those — see
@@ -11584,7 +11630,7 @@ export default function App() {
             // class already given/paid) must be rejected outright, not silently
             // clamped — clamping would misrepresent classes the student already
             // received or paid for.
-            const consumed=Number(lastCombo.used||0);
+            const consumed=lastUsed;
             const existingPaidCount=Number(lastCombo.paidCount||0);
             if(newTotal<consumed||newTotal<existingPaidCount){
               alert("No se puede cambiar el paquete de "+s.name+": ya hay "+Math.max(consumed,existingPaidCount)+" clases dadas o pagadas, más que el nuevo total ("+newTotal+"). Elegí un paquete con más clases.");
@@ -11731,9 +11777,23 @@ export default function App() {
   };
 
   // --- Extracted from handleSaveClass (A2: ApplyToAll) ---
-  const applyEditToClass=(cd,realId)=>{
+  const applyEditToClass=(cd,realId,singleDateOverride)=>{
     if(cd._occOnly){
       setClasses(p=>p.map(c=>c.id!==realId?c:{...c,occurrences:cd.occurrences||c.occurrences}));
+      return;
+    }
+    // BUG-AGENDA-05: regenerated occurrences never drop a date with a history (past, attendance, dateCancellations
+    // entry, added date) — read from the real row, not from the edited card.
+    const occurrencesKeepingHistory=(c)=>cd.occurrences?keepDatesWithHistory({previous:c.occurrences||[],next:cd.occurrences,attendanceLog:c.attendanceLog,dateCancellations:c.dateCancellations,addedDates:c.addedDates,todayDate:todayIso()}):c.occurrences;
+    if(cd._singleDate){
+      // "Solo esta clase": the series fields were already checked unchanged in handleSaveClass; none of the card's
+      // fields (date, cancelled, _virtualId…) are merged into the series row. Only the occurrences may change.
+      // Stage 2.2: plus this date's own time/court when it changed (one write, class row only).
+      setClasses(p=>p.map(c=>{
+        if(c.id!==realId) return c;
+        const next={...c,occurrences:occurrencesKeepingHistory(c)};
+        return singleDateOverride?applyOverrideToClassRow(next,singleDateOverride):next;
+      }));
       return;
     }
     if(cd.applyToAll){
@@ -11744,7 +11804,8 @@ export default function App() {
           // edited (expandClasses sets it to just that one date's log entry, or
           // none), never the class's real full history. Force it back to the
           // real value so a plain field edit can never truncate attendance.
-          return {...c,...cd,id:realId,date:c.date,occurrences:cd.occurrences||c.occurrences,attendanceLog:c.attendanceLog};
+          // Stage 0: no card id, card state (paused, cancelled…) or scope flag is ever merged into the series row.
+          return {...c,...seriesFieldsFromEdit(cd),id:realId,date:c.date,occurrences:occurrencesKeepingHistory(c),attendanceLog:c.attendanceLog};
         }
         return c;
       }));
@@ -11843,8 +11904,28 @@ export default function App() {
       const realId=cd._seriesId||cd.id;
       const editDate=cd.date; // the specific date being edited
 
-      // Handle per-date cancellation/pause for recurring classes
-      if((cd.cancelled===true||cd.cancelType==="paused"||cd._resuming||cd._reactivating)&&editDate){
+      // "Solo esta clase" (BUG-AGENDA-05): refused when it changes a series field, checked against the LATEST row;
+      // nothing is written. It never goes through the per-date branch below (the edited card may be paused or
+      // cancelled): only the package changes and the occurrences are saved.
+      // Stage 2.2: time and court change for THIS date only (class.occurrenceOverrides), re-validated on the latest row
+      // (live date, valid times, start before end). Applied directly, as the owner decided (2026-11-21): no extra
+      // confirmation, also on a date with recorded attendance — time/court never touch attendance, students or combos.
+      let singleDateOverride=null;
+      if(cd._singleDate){
+        const latestRow=latestClassesRef.current.find(c2=>c2.id===realId);
+        const changes=singleDateRefusedChanges(latestRow,cd,latestStudentsRef.current.map(s=>s.id));
+        if(changes.length>0) return {status:"single-date-edit-refused",changes};
+        const values=latestRow?overrideValuesFrom(latestRow,cd):null;
+        if(values&&overrideChanges(latestRow,editDate,values)){
+          const why=overrideRefusal({row:latestRow,date:editDate,values,confirmedAttendance:true});
+          if(why) return {status:"override-refused",reason:why};
+          singleDateOverride={date:editDate,values,at:new Date().toISOString()};
+        }
+      }
+
+      // Handle per-date cancellation/pause for recurring classes. An edit (EditClassScreen sends no card state, and
+      // "A Todas las Clases" / "Solo esta clase" are edits) never runs Pausar or Cancelar here.
+      if(!cd._singleDate&&!cd.applyToAll&&(cd.cancelled===true||cd.cancelType==="paused"||cd._resuming||cd._reactivating)&&editDate){
         // A dated reprogramming may never land on a date that already carries another class or reprogramming of this
         // series (that fuses two classes into one — BUG-AGENDA-03). Checked against the LATEST state; nothing is written.
         // "Mover al final del paquete" keeps its own write-time guard (guardEndOfPackageWrite) and is not re-judged here.
@@ -11944,12 +12025,16 @@ export default function App() {
           } else {
             delete dc[editDate];
           }
+          // Stage 2.2: Reprogramar at another time -> that time (and the series duration) for the destination date only.
+          const destValues=cd.cancelled===true&&cd.cancelType==="cancelled_reprog"&&cd.rescheduledTo&&cd._destTime?reprogDestinationValues(c,cd._destTime):null;
+          const withDest=row=>destValues?applyOverrideToClassRow(row,{date:cd.rescheduledTo,values:destValues,at:new Date().toISOString()}):row;
           if(!c.occurrences||c.occurrences.length===0){
-            const {_plannedResumeDate:_prdate2,...cdClean}=cd;
-            return {...c,...cdClean,id:realId,dateCancellations:dc,plannedResume};
+            const {_plannedResumeDate:_prdate2,_destTime:_dt2,...cdClean}=cd;
+            return withDest({...c,...withoutCardOverride(cdClean,cd),id:realId,dateCancellations:dc,plannedResume});
           }
-          const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,_pauseResumeDate:_prd,_reactivating:_ra,_plannedResumeDate:_prdate3,_endOfPackage:_eop,...rest}=cd;
-          return {...c,...rest,id:realId,dateCancellations:dc,occurrences:occ,plannedResume};
+          const {cancelled:_c,cancelType:_ct,rescheduledTo:_rt,date:_d,_virtualId:_v,_seriesId:_s,_isRescheduledInstance:_ri,attendanceLog:_al,applyToAll:_aa,paused:_p,_resuming:_re,_pauseResumeDate:_prd,_reactivating:_ra,_plannedResumeDate:_prdate3,_endOfPackage:_eop,_destTime:_dt3,...rest}=cd;
+          // Stage 2.2: a card's own per-date time/court never reaches the series row.
+          return withDest({...c,...withoutCardOverride(rest,cd),id:realId,dateCancellations:dc,occurrences:occ,plannedResume});
         }));
 
         // Update student combo dates with pre-calculated replacement dates
@@ -11984,7 +12069,17 @@ export default function App() {
         alert(NO_VALID_CLASS_DAYS_MESSAGE);
         return;
       }
-      applyEditToClass(cd, realId);
+      // Stage 0 (BUG-AGENDA-05), against the LATEST state, before any write: a student with a history is never
+      // removed (no combo with payments/attendance is cut or deleted), and an edit never leaves future combo or
+      // individual dates without an Agenda card. Nothing is written when refused.
+      {
+        const latestSeries=latestClassesRef.current.find(c2=>c2.id===realId);
+        const blocked=studentRemovalBlock({series:latestSeries,students:latestStudentsRef.current,nextStudentIds:cd.students});
+        if(blocked.length>0) return {status:"student-removal-blocked",blocked};
+        const affected=comboDatesLeftWithoutCard({series:latestSeries,students:latestStudentsRef.current,nextOccurrences:cd.occurrences,todayDate:todayIso()});
+        if(affected.length>0) return {status:"weekday-change-blocked",affected};
+      }
+      applyEditToClass(cd, realId, singleDateOverride);
       removeStudentsFromClass(cd, realId);
       updateStudentPacks(cd);
       return;
@@ -12166,7 +12261,7 @@ export default function App() {
         {tab==="dashboard"&&!isFirstTime&&<Dashboard students={students} classes={xClasses} onNavigate={handleNavigate} onNewClass={()=>setShowNewClass(true)} onNewStudent={()=>setShowNewStudent(true)} onInvite={()=>setShowInvite(true)} expenses={expenses} coachProfile={coachProfile} onRefresh={handleRefresh}/>}
         {tab==="students"&&<Students students={students} onAdd={()=>setShowNewStudent(true)} onUpdate={updateStudent} onAddStudentDirect={(s)=>setStudents(p=>[...p,s])} onDelete={(id)=>setStudents(p=>p.filter(s=>s.id!==id))} onChat={(s)=>{setChatTarget(s);setTab("chat");}} classes={xClasses} onInvite={()=>setShowInvite(true)} userId={user?.id} onInviteStudent={(s)=>setInviteTarget(s)} onRefresh={handleRefresh} families={families} setFamilies={setFamilies} getLatestClasses={()=>latestClassesRef.current} getLatestStudents={()=>latestStudentsRef.current}/>}
         {inviteTarget&&<InviteModal student={inviteTarget} userId={user?.id} coachName={coachProfile.name} onClose={()=>setInviteTarget(null)}/>}
-        {tab==="agenda"&&<Agenda onReleaseAndRenew={releaseAndRenew} onAddComboDay={addComboDay} students={students} classes={xClasses} rawClasses={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onUpdateStudentsBatch={commitStudentsBatch} isClassesWriteSettled={isClassesWriteSettled} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])} onRefresh={handleRefresh}/>}
+        {tab==="agenda"&&<Agenda onReleaseAndRenew={releaseAndRenew} onAddComboDay={addComboDay} onAbsenceNotice={saveAbsenceNotices} students={students} classes={xClasses} rawClasses={classes} onSaveClass={handleSaveClass} onAttendance={handleAttendance} onAddStudent={(d)=>setStudents(p=>[...p,d])} courts={courts} packages={packages} onUpdateStudent={updateStudent} onUpdateStudentsBatch={commitStudentsBatch} isClassesWriteSettled={isClassesWriteSettled} onDeleteClass={handleDeleteClass} pendingReprog={pendingReprog} onClearPendingReprog={()=>setPendingReprog(null)} onAddPackage={(pkg)=>setPackages(p=>[...p,pkg])} onRefresh={handleRefresh}/>}
         {tab==="chat"&&<Chat key={user?.id||"no-user"} students={students} initialTarget={chatTarget} onClearTarget={()=>setChatTarget(null)} sendNotification={sendNotification} userId={user?.id} unreadChats={unreadChats} onMarkRead={(sid)=>setUnreadChats(p=>{const n={...p};delete n[String(sid)];return n;})}/>}
         {tab==="cobros"&&<Finances releaseRenewal={releaseRenewal} fusedRepair={fusedRepair} students={students} classes={xClasses} initialTab="payments" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} sendNotification={sendNotification} onAttendance={handleAttendance} families={families} onVoidMensualPayment={handleVoidMensualPayment} onRecordMensualPayment={handleRecordMensualPayment} onSaveMensualAmount={handleSaveMensualAmount} isStudentActiveNow={isStudentActiveNow}/>}
         {tab==="finanzas"&&<Finances students={students} classes={xClasses} initialTab="expenses" onUpdate={updateStudent} expenses={expenses} setExpenses={setExpenses} addIncome={addIncome} packages={packages} onEditLinkedMensualIncome={handleEditLinkedMensualIncome}/>}

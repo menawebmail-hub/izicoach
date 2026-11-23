@@ -14,7 +14,8 @@ const slice = (from, to) => {
 
 test("BUG-COMBO-01: attendance recount and payment count read each slot where it happened", () => {
   const att = slice("const handleAttendance=(cls)=>{", "const releaseInFlightRef=useRef(new Set());");
-  assert.match(att, /const newUsed=countAttendedSlots\(\{dates:targetDates,dc:seriesDc,attendanceLog:mergedLog,studentId:s\.id\}\);/);
+  // stage 1d: same inputs, through countUsedForCombo (= countAttendedSlots when the combo has no slotMoves)
+  assert.match(att, /const newUsed=countUsedForCombo\(\{combo:\{\.\.\.target,dates:targetDates\},studentId:s\.id,dc:seriesDc,attendanceLog:mergedLog,/);
   assert.match(att, /target\.sourceClassId===realId\|\|target\.sourceClassId===undefined/);
   assert.doesNotMatch(att, /targetDates\.filter\(d=>\{\s*const entry=mergedLog\.find/);
   const pay = slice("const givenCount=(c.dates||[]).filter(d=>{", "}).length;");

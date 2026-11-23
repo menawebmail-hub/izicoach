@@ -1,8 +1,116 @@
 SESSION_STATE.md — IziCoach
 
-# Current task — Agenda: used, released dates, fused chains, add a day (branch `fix/combo-used-release-date`)
+# Current task — publish BUG-AGENDA-05 (branch `fix/agenda-edit-scope` → `main`, PR opened, NOT merged)
 
-- Branch from `main` `79ea17c`, pushed for local QA; not merged, not deployed; no SQL, no migration.
+- Migration D (`supabase/migrations/20261122120000_student_portal_notices_overrides.sql`) is APPLIED in production
+  `eerocqdoawrciatvqnof` (2026-11-22) with `supabase/ops/20261122-migration-d/`: preflight 32/32, history repair of
+  the 4 hand-applied migrations (history now 19 rows), D in one guarded transaction, post-check 36/36. Details and
+  verification in docs/BUGS.md (BUG-AGENDA-05 → Student portal — Migration D).
+- End-to-end portal check done on Rodri's TEST Portal fixtures (TEST Portal Alumno 1795396069752 with a portal login,
+  TEST Portal Compañero 1795396093709, TEST Portal Clase 1795396217104; notice 30/11, override 02/12): payload has only
+  the student's own notice and that date's time/court; counters = Cobros; non-TEST data unchanged.
+- Remaining: merge to `main` (= Vercel production deploy) and production smoke, each with authorization. Merging
+  publishes 14+ commits (stages 0 → 2.2 and the Asistencia UI), not only 29381a5/85d0630.
+- Pending decision (visual): Mis Clases header / Mi Familia summary should read `seriesValues`.
+- Not verified: the previous production frontend (main 9a26124) with the TEST student (compatibility covered on PGlite).
+
+# Previous step — simplified Asistencia (BUG-AGENDA-05 stage 2.1 UI, branch `fix/agenda-edit-scope`)
+
+- Committed locally (2026-11-22) on top of `29381a5`; not pushed, not merged, not deployed. Owner decision: the separate
+  "Avisar ausencia" menu entry and modal were removed; on a FUTURE date Asistencia saves only the absences as advance
+  notices (`saveAbsenceNotices`, same validation; Presente is not recorded and withdraws an existing notice, history
+  kept); today and past keep the definitive attendance flow. Cycle unchanged: Presente → Ausente – No dada → Ausente –
+  Dada → Presente (mensual: Presente ↔ Ausente). Details: `docs/BUGS.md` stage 2.1.
+- NOT publishable until the student portal reads `occurrenceOverrides` and `attendanceNotices`.
+
+# Previous step — BUG-AGENDA-05 stage 2.2: time and court of one occurrence (branch `fix/agenda-edit-scope`)
+
+- Committed as `29381a5` (2026-11-22) on top of `98fe7c6`; not pushed, not merged, not deployed. Per-date time/court in
+  `class.occurrenceOverrides`, applied by `expandClasses` to that date's card only; "Solo esta clase" saves them for that
+  date and applies directly (prompt keeps its 3 original options; restore = series values back); Reprogramar saves the
+  chosen destination time keeping the duration; a card's own values never reach the series. Details: `docs/BUGS.md`.
+- NOT publishable until the student portal reads `occurrenceOverrides` and `attendanceNotices`.
+
+# Previous step — BUG-AGENDA-05 stage 2.1: advance absence notices (branch `fix/agenda-edit-scope`)
+
+- Committed as `8408d19` and pushed to `origin/fix/agenda-edit-scope` (2026-11-21), on top of `98b7778`; not merged, not deployed: "Avisar ausencia" (card menus + modal),
+  `class.attendanceNotices` (class row only, history kept), reading priority attendance → notice → nothing, Dada notice
+  consumes only after the class, No dada never; Asistencia prefilled and correctable, no definitive attendance for a
+  future date; Inicio shows a No dada notice only after the class. Details: `docs/BUGS.md` stage 2.1.
+- Verified: `npm test` 164/164; snapshot unchanged; build clean; oxlint 364; new jsdom Agenda test (3) passes.
+- Final validation done (2026-11-21): coach-facing Inicio message; no double counting of `used` (recount, stored
+  value, later attendance, payment, mixed notices); 176/176, build clean, oxlint 364, jsdom 9 stage-2.1 UI tests pass.
+- Review fixes (included in the commit): Inicio never reprograms the whole class for an individual absence (message
+  instead; whole-class absences unchanged); `used` unified with the notice rule (recount + export / package checks /
+  mora / payment count read due Dada notices; No dada never). 171/171, build clean, oxlint 364, jsdom Inicio test (2).
+- NOT publishable: the student portal must be updated (SQL RPC whitelist + client) and validated first.
+- Before publishing (merge to `main` = automatic Production deploy): repair the Supabase migration history, update the
+  student portal RPC + client to read notices (filtered per authorized student), validate the portal, controlled test on
+  an authorized TEST account, explicit authorization. Stage 2.2 not started.
+
+# Previous step — BUG-AGENDA-05 stage 2.0: attendance read in each slot's own class (branch `fix/agenda-edit-scope`)
+
+- Committed as `f879be2` and pushed to `origin/fix/agenda-edit-scope` (2026-11-21); not merged, not deployed. On top of `7402d18`: `src/schedule/attendanceRead.js` (single
+  reading: explicit attendance of that class and date -> [2.1 notice] -> nothing), fixed `resolveSlotGiven`, reader,
+  history rows, `isComboClosed`, `PagoModal`. No notices, overrides, guests, recoveries, Reprogramar change, SQL or
+  portal change. Details: `docs/BUGS.md` stage 2.0.
+- Verified: `npm test` 151/151; snapshot unchanged; build clean; oxlint 364; harness unchanged + new jsdom PagoModal test;
+  real account (read-only): 0 differences, no student with two classes on one day.
+- Follow-up committed as `5201fbc` and pushed (2026-11-21); not merged, not deployed: (1) rows per combo + date with `comboIndex`/`sourceClassId`
+  and every consumer reading the row of its own class (Agenda chip + replacement detection, Mis Clases per class card,
+  release readings); (2) the paused-dates extension reads the combo's own class. 156/156, build clean, oxlint 364,
+  new jsdom Mis Clases test (passes here, fails on `72cf5d4`), snapshot changed only by the two added row fields.
+  Details: BUGS.md stage 2.0.
+- Next: stage 2.1 (advance notices) only with separate authorization.
+
+# Previous step — BUG-AGENDA-05 / BUG-AGENDA-03 stage 1d: reading per-student slot moves (branch `fix/agenda-edit-scope`)
+
+- Committed as `608532b` and pushed to `origin/fix/agenda-edit-scope` (2026-11-21); not merged, not deployed. On top of `eca0224`: `src/schedule/slotMoves.js` (read-only support for
+  `combo.slotMoves`, validity rules, per-combo `used`, unused planner), reader overlay + `allClasses`, `handleAttendance`
+  recount through `countUsedForCombo` (+ guests with a move into the class/date). Nothing writes slotMoves; no UI, SQL
+  or portal change. Without slotMoves everything reads as before (snapshot, harness, 0 differences on real data).
+- Verified: `npm test` 142/142; build clean; oxlint 364. Details and pending adaptations: `docs/BUGS.md` stage 1d.
+- Next (each with separate authorization): writers (recovery UI, advance notice, extension), `isComboClosed` and the
+  other direct `combo.dates` readers, Agenda guest cards and the portal RPC are later stages.
+
+# Previous step — BUG-AGENDA-05 stage 1: shared slot reader (branch `fix/agenda-edit-scope`)
+
+- Committed as `6848b19` and pushed to `origin/fix/agenda-edit-scope` (2026-11-21); not merged, not deployed.
+  `src/schedule/slotStatus.js` (helpers moved verbatim +
+  `createSlotReader`), consumers switched (Cobros rows, counters, Por dar, PagoModal status). No visible change:
+  characterization snapshot identical, 128/128, build clean, oxlint 364, harness failure set unchanged, 0 differences
+  on the account's 81 real slots (read-only). Divergent "given" rules left as they are (see BUGS.md stage 1).
+- Next: stage 1d (dormant slotMoves + per-combo used recount) only with separate authorization; merge/publication of
+  stages 0-1 only with explicit authorization (no recoveries enabled).
+
+# Previous step — BUG-AGENDA-05 phase 1 + stage 0 (branch `fix/agenda-edit-scope`, from `main` `9a26124`)
+
+- Committed as `5db25f9` (code + tests) and `81c3bf8` (docs); pushed to `origin/fix/agenda-edit-scope` 2026-11-21; not merged,
+  not deployed.
+  No SQL, no data written.
+  - Phase 1: "Solo esta clase" refuses days/time/court/title/students and writes only the occurrences.
+  - Stage 0: 0.1 dates regenerated from the selected date (or today), no invented past dates, temporary block when a
+    weekday change would leave future combo/individual dates without a card; 0.2 a student with payments, paid months,
+    attendance or class history cannot be removed (no combo is cut or deleted); 0.3 edits never carry card state, never
+    run Pausar/Cancelar, and "A Todas" merges only series fields. Details: `docs/BUGS.md` → BUG-AGENDA-05.
+- Verified: `npm test` 119/119; `vite build` clean; `oxlint` 364 (baseline).
+- Browser (2026-11-21, owner logged in, "Clase test", nothing saved): refusals and messages OK, revisions unchanged (83/158).
+- Combo weekday block verified in the real Agenda UI with synthetic TEST data in the local jsdom harness (5/5, mutation
+  check fails as expected); no account data used. Not verified: any real save.
+- Approved rules for later stages (2026-11-21): per-student attendance and balance; Ausente – No dada recoverable;
+  recoveries linked to one pending slot, pending until explicit Presente / Ausente – Dada; no publication of recoveries
+  before the student portal shows them. Stages 0 and 1 may be published separately after validation and explicit
+  authorization. Not now: `slotMoves`, `resolveStudentSlot`, recoveries, SQL.
+- Next: push/merge/publication of stage 0 only with explicit authorization; then stage 1 (shared slot reader, no visible change).
+- The docs corrections from 2026-11-20 (branch merged/deployed statuses) are in the same uncommitted diff.
+
+# Last closed task — Agenda: used, released dates, fused chains, add a day (branch `fix/combo-used-release-date`)
+
+- Branch from `main` `79ea17c`; no SQL, no migration. Integrated: `main` fast-forwarded to `9a26124` (= the
+  branch tip; the merge date was not recorded) and reported deployed to Production by Vercel's automatic
+  deployment. Check on 2026-11-20 (read-only): `app.izicoach.app` serves `assets/index-B3tA1xVw.js`, which
+  contains "Agregar día al combo", "Separar clases fusionadas" and the BUG-CHAT-03 group notice; the Vercel
+  deployment record itself was not checked (CLI token not authorized). No Production smoke of these features yet.
   - `ca54ba0`: BUG-COMBO-01 (`used` by original date) and BUG-AGENDA-04 (release of a single-hop reprogrammed
     original date; renewal from it in Agenda and Cobros).
   - `070c582`: BUG-AGENDA-03 prevention (no reprogramming onto a date that would fuse two classes) and the
@@ -16,7 +124,9 @@ SESSION_STATE.md — IziCoach
 - Verified on `eb303e5`: `npm test` 92/92; `vite build` clean; `oxlint` 364 = main. Details: `docs/BUGS.md`.
 - Pending, not implemented: BUG-AGENDA-05 (Editar clase "Solo esta clase" changes the whole class; a weekday
   change leaves the combo behind and drops past dates from the Agenda) — postponed by the owner.
-- Next decision: merge the branch to `main` (automatic Production deploy) — separate authorization.
+- Still to do by the owner on Production (test fixtures only): a smoke of "Agregar día al combo", the
+  fused-chain prevention and "Separar clases fusionadas"; Pato Ojeda's 19/10 attendance and renewal from 26/10.
+- The branch `fix/combo-used-release-date` is fully in `main`; it can be deleted (separate authorization).
 
 # Previous task — account isolation (device storage), closed
 
@@ -57,7 +167,7 @@ SESSION_STATE.md — IziCoach
   no SQL, migration or data cleanup; R4 and the outbox untouched.
 - Verified on the branch vs `main` `c241570`: `npm test` 41/41 (main 15/15); `vite build` clean
   on both; `oxlint` 364 problems on both, same warnings (no new one).
-- Open risks before Production (merge to `main` = automatic Vercel deploy):
+- Open risks (in Production since `79ea17c`):
   - Chat groups remain device-local (not in Supabase): another device or browser, or cleared
     site data, shows no groups. Same as before.
   - Existing `izi_groups` on a device: a group is adopted only if every member is one of the
@@ -95,15 +205,20 @@ SESSION_STATE.md — IziCoach
 - Owner's local validation approved. Still to do by the owner on Production: check Alexia
   Monzon and Pato Ojeda in Cobros and in the Student Portal, and Alexia's real payment
   (expected after paying the 10: No pagadas 0, Pagadas 10, Realizadas 10).
-- The branches `fix/cobros-stepper-no-calendar`, `fix/cobros-reprog-badges` and
-  `validate/cobros-01-02` remain on `origin`; they can be deleted.
+- The branches `fix/cobros-stepper-no-calendar`, `fix/cobros-reprog-badges`,
+  `validate/cobros-01-02` and `fix/iso-device-storage` remain on `origin` and are already in
+  `main`; they can be deleted.
 
 ## 2. Open items
 
+- BUG-AGENDA-05 (Editar clase "Solo esta clase" changes the whole class; a weekday change leaves
+  the combo behind and drops past dates from the Agenda): diagnosed, three corrections proposed
+  in `docs/BUGS.md`, not implemented; postponed by the owner.
 - BUG-AGENDA-03 (rescheduling another class of the same series into a vacated original date
-  merges both classes): diagnosed. The full fix (solution B: slot identity = original date,
-  explicit reschedule `path` per slot, staged rollout behind a coach allowlist) is planned
-  and waits for the owner's decisions before Stage 0. Separate branch; nothing implemented.
+  merges both classes): prevention and the "Separar clases fusionadas" repair are in `main`
+  (`070c582`). The full fix (solution B: slot identity = original date, explicit reschedule
+  `path` per slot, staged rollout behind a coach allowlist) is planned and waits for the
+  owner's decisions before Stage 0. Separate branch; not implemented.
 - BUG-ACCOUNT-01 … 04 (`docs/BUGS.md`): pending, on hold for the PaymentCard presentation
   decision.
 - `PagoModal` reads the weekly calendar from `myClasses[0]` only; projections/renewals for

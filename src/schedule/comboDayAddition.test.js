@@ -5,8 +5,8 @@ import assert from "node:assert/strict";
 mock.timers.enable({ apis: ["Date"], now: new Date("2026-10-25T12:00:00").getTime() });
 const { loadAppFunctions } = await import("../test/loadAppFunctions.js");
 const A = await loadAppFunctions([
-  "TODAY_DATE", "isClassDone", "interpretContractDate", "resolveContractSlotStatus", "resolveSlotPayments",
-  "resolveSlotGiven", "buildSlotHistoryRows", "buildPersonSlotRows", "getSlotFulfillmentDate", "isComboClosed",
+  "TODAY_DATE", "isClassDone", "interpretContractDate", "resolveSlotPayments",
+  "buildSlotHistoryRows", "buildPersonSlotRows", "getSlotFulfillmentDate", "isComboClosed",
   "isNextComboPending", "CLASS_DAY_MAP", "CLASS_DAY_ALIASES", "normalizeValidClassDays", "classDowSetFrom",
   "isoOfDate", "collectSlotPathDates", "collectComboOccupiedDates", "isValidIsoDate", "getComboEffectiveEnd",
   "getComboDcCandidates", "buildRenewalDates", "expandClasses", "slotReadingsOf", "sameSlotReadings", "planComboDayAddition",
