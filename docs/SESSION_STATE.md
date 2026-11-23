@@ -1,6 +1,20 @@
 SESSION_STATE.md — IziCoach
 
-# Current task — simplified Asistencia (BUG-AGENDA-05 stage 2.1 UI, branch `fix/agenda-edit-scope`)
+# Current task — publish BUG-AGENDA-05 (branch `fix/agenda-edit-scope` → `main`, PR opened, NOT merged)
+
+- Migration D (`supabase/migrations/20261122120000_student_portal_notices_overrides.sql`) is APPLIED in production
+  `eerocqdoawrciatvqnof` (2026-11-22) with `supabase/ops/20261122-migration-d/`: preflight 32/32, history repair of
+  the 4 hand-applied migrations (history now 19 rows), D in one guarded transaction, post-check 36/36. Details and
+  verification in docs/BUGS.md (BUG-AGENDA-05 → Student portal — Migration D).
+- End-to-end portal check done on Rodri's TEST Portal fixtures (TEST Portal Alumno 1795396069752 with a portal login,
+  TEST Portal Compañero 1795396093709, TEST Portal Clase 1795396217104; notice 30/11, override 02/12): payload has only
+  the student's own notice and that date's time/court; counters = Cobros; non-TEST data unchanged.
+- Remaining: merge to `main` (= Vercel production deploy) and production smoke, each with authorization. Merging
+  publishes 14+ commits (stages 0 → 2.2 and the Asistencia UI), not only 29381a5/85d0630.
+- Pending decision (visual): Mis Clases header / Mi Familia summary should read `seriesValues`.
+- Not verified: the previous production frontend (main 9a26124) with the TEST student (compatibility covered on PGlite).
+
+# Previous step — simplified Asistencia (BUG-AGENDA-05 stage 2.1 UI, branch `fix/agenda-edit-scope`)
 
 - Committed locally (2026-11-22) on top of `29381a5`; not pushed, not merged, not deployed. Owner decision: the separate
   "Avisar ausencia" menu entry and modal were removed; on a FUTURE date Asistencia saves only the absences as advance

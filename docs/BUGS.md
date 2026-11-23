@@ -461,7 +461,7 @@ Past dates, dates with attendance, reprogrammed or arriving dates, resume (pause
 
 ## BUG-AGENDA-05 — Editar clase: "Solo esta clase" changes the whole class; a weekday change leaves the combo behind
 
-**Status:** Phase 1 and stage 0 in `5db25f9` (pushed to `fix/agenda-edit-scope`, not merged); stage 1 (shared slot reader) in `6848b19` (pushed, not merged, 2026-11-21); later stages pending  
+**Status:** Phase 1 → stage 2.2 committed on `fix/agenda-edit-scope` (`5db25f9` … `85d0630`); student portal Migration D applied in production 2026-11-22; PR to `main` opened, not merged; recoveries (stage 3) pending  
 **Area:** `EditClassScreen` (occurrence regeneration), Agenda scope prompt (`editScopeData`), `applyEditToClass`, `updateStudentPacks`  
 **Priority:** High
 
@@ -550,7 +550,7 @@ Branch only: the student portal does not show notices yet (its RPC returns only 
   - Tests: `absenceNoticesReview.test.js` (7: individual vs whole-class absence, message, wiring; Dada notice used/realizadas/restantes/export agree; before the time nothing, No dada never; Pedro identical; equivalence on the characterization fixture; wiring). Local harness: `.local-tests/inicio-individual-absence.jsdom.test.mjs` (real Dashboard: individual alert shows the message and does not navigate; whole-class absence still opens Reprogramar; a future notice is not listed). `npm test` 171/171; build clean; oxlint 364; harness: only the 17 pre-existing failures (the 4 new UI tests fail on HEAD `98b7778`).
 
 ### Stage 2.2 — time and court of one occurrence (2026-11-22)
-Branch only: the student portal does not read `occurrenceOverrides` yet and must be updated before this is published.
+Committed in `29381a5` (Asistencia-only notices UI in `85d0630`). The student portal receives `occurrenceOverrides` through Migration D (below), applied in production on 2026-11-22.
 - **Data:** `class.occurrenceOverrides[date] = {time, timeEnd, court, at, history}` on the class row, by the real date of the occurrence; only fields that differ from the series are stored (null = series value); an entry with all fields null is a restored date kept as history (`src/schedule/occurrenceOverrides.js`).
 - **Reading:** `expandClasses` applies a date's active values to that date's card only (`occurrenceOverride:true`, `seriesValues` kept on the card), so the day and week views, the card's end time read by Cobros (`isClassDone`), the Agenda chips and the due-notice count (`effectiveTimeEnd`) use it; every other date keeps the series values. A reprogrammed origin's values never travel to the destination.
 - **Edit:** the existing "Modificar Clase" screen and the "¿Aplicar cambios a?" prompt are unchanged (only its 3 original options). "Solo esta clase" now saves time and court for that date only (days, title and students stay series-wide: `singleDateRefusedChanges`) and applies directly; restoring = the series values back + "Solo esta clase". `handleSaveClass` re-validates on the latest row (live date, HH:MM, start before end). "A Todas las Clases" from a card with its own values keeps the series value for every field the coach did not touch (`seriesEditFromCard`).
@@ -558,6 +558,13 @@ Branch only: the student portal does not read `occurrenceOverrides` yet and must
 - **Series protection:** per-date flows that merge the edited card into the series (pause, cancel, reprogram, reactivate, resume) drop the card's own time/court (`withoutCardOverride`), so the series is never changed by a date's values.
 - Never touches students, attendance, payments or combo dates.
 - Tests: `occurrenceOverrides.test.js` (10), wiring updates in `classEditScopeWiring.test.js`. Local harness: `.local-tests/per-date-time-court.jsdom.test.mjs` (6, real Agenda, synthetic data, spies). `npm test` green; build clean; oxlint 364; `git diff --check` clean; harness: only the pre-existing failures.
+
+### Student portal — Migration D (applied in production 2026-11-22)
+- **Why:** `get_my_student_portal()` (Migration A) copies only whitelisted class keys, so without it the portal would show the series time on a moved date and count a date with only a notice differently from Cobros (it uses the same slot reader).
+- **What:** `supabase/migrations/20261122120000_student_portal_notices_overrides.sql` redefines the RPC with Migration A's body plus, per class and only when non-empty, `occurrenceOverrides` (active time/timeEnd/court per date, no history or timestamps) and `attendanceNotices` reduced to the authorized ids (`{status}` only, active statuses). Two internal helpers (`portal_class_overrides`, `portal_class_notices`) are not executable by `anon`/`authenticated`. "version" stays 1; backward compatible with the previous frontend.
+- **Applied with** `supabase/ops/20261122-migration-d/` (generated and validated on PGlite, 7/7): read-only preflight 32/32; history repair of the 4 hand-applied migrations (`20260929230000`, `20260930120000`, `20260930150000`, `20261001120000`); D in one guarded transaction; read-only post-check 36/36. Rollback script kept (`05_rollback_migration_d.sql`). The migration file is kept exactly as applied (its closing comment about "Migration B/C" is inherited from Migration A; both were already applied by hand).
+- **Verified:** PGlite `.local-tests/student-portal-notices-overrides.pglite.test.mjs` 6/6 (mutation without the id filter fails the privacy tests); helpers on synthetic literals in production 5/5; end to end with Rodri's TEST Portal fixtures on the branch code (portal payload: only the student's own notice and the 02/12 time/court, no classmate id, no history; counters equal to Cobros; non-TEST data hash-identical).
+- **Not done (visual, needs approval):** Mis Clases card header and Mi Familia summary read a representative card's `time`/`court`; they would show a date's own values if that card is the moved date (`seriesValues` is available on the card).
 
 Tests to add: single-date weekday swap (reprograms only that date, prevention respected), ambiguous change refused, all-classes weekday change with unpaid / partly paid / fully paid combos, past attended dates kept, reprogrammed and added dates not moved, group classes.
 

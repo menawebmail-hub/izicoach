@@ -1,0 +1,345 @@
+-- ============================================================================
+-- Student Portal — Migration D: per-date time/court and advance absence notices
+-- (BUG-AGENDA-05 stages 2.1 and 2.2). Additive, non-breaking.
+--
+-- WHY: the coach app now stores two class keys the Portal must read to show the
+-- same thing as the coach's Cobros/Agenda:
+--   class.occurrenceOverrides[date] = { time, timeEnd, court, at, history }
+--     (stage 2.2: time and court of ONE occurrence; null field = series value)
+--   class.attendanceNotices[date][studentId] = { status, at, history }
+--     (stage 2.1: advance absence; status "ausente_dada" | "ausente_reprog" | null)
+-- get_my_student_portal() (Migration A, 20260929230000) copies only whitelisted
+-- class keys, so neither reaches the Portal: a notice would read as a class
+-- given by time and a moved date would show the series time/court.
+--
+-- WHAT THIS MIGRATION DOES: redefines get_my_student_portal() with Migration A's
+-- body UNCHANGED except one addition per class, and adds two internal helpers
+-- (never callable by clients, like portal_filter_id_array):
+--   - "occurrenceOverrides": only each date's ACTIVE values
+--       { [date]: { time?, timeEnd?, court? } } — no history, no timestamps;
+--       restored dates (all null) and malformed entries are dropped. It holds no
+--       student data. Key present only when at least one date remains.
+--   - "attendanceNotices": reduced to the AUTHORIZED ids (the caller, plus the
+--       family members when the caller is the payment responsible — the same
+--       v_auth_ids that reduce rosters and attendance), active statuses only
+--       ({ status } per student; no history, no timestamps); dates left empty are
+--       dropped. Key present only when at least one notice of an authorized
+--       person remains, so a classmate's notice is never returned nor hinted at.
+-- Every other key, filter, error and grant is exactly Migration A's. Classes
+-- without these keys produce the same JSON as before. "version" stays 1 (the
+-- contract only gains optional keys; the current frontend ignores them).
+--
+-- WHAT THIS MIGRATION DOES NOT DO: no table, policy or grant on coach_data /
+-- coaches changes; no data is written.
+--
+-- ORDER: apply after repairing supabase_migrations.schema_migrations (it stops at
+-- 20260915120000 although 20260929230000, 20260930120000, 20260930150000 and
+-- 20261001120000 are applied). Rollback: re-run Migration A's
+-- get_my_student_portal() definition (the helpers can stay, unused).
+-- ============================================================================
+
+
+-- ----------------------------------------------------------------------------
+-- 1. Internal helper: a class's active per-date time/court.
+--    {} when there is nothing to return (the caller concatenates it as-is).
+-- ----------------------------------------------------------------------------
+create or replace function public.portal_class_overrides(p_overrides jsonb)
+returns jsonb
+language sql
+immutable
+set search_path to ''
+as $function$
+  select case when count(*) = 0 then '{}'::jsonb
+              else jsonb_build_object('occurrenceOverrides', jsonb_object_agg(x.d, x.v)) end
+  from (
+    select o.d,
+           jsonb_strip_nulls(jsonb_build_object('time', o.v->'time', 'timeEnd', o.v->'timeEnd', 'court', o.v->'court')) as v
+    from jsonb_each(case when jsonb_typeof(p_overrides) = 'object' then p_overrides else '{}'::jsonb end) as o(d, v)
+    where jsonb_typeof(o.v) = 'object'
+  ) as x
+  where x.v <> '{}'::jsonb;
+$function$;
+
+alter function public.portal_class_overrides(jsonb) owner to postgres;
+revoke all on function public.portal_class_overrides(jsonb) from public, anon, authenticated;
+
+
+-- ----------------------------------------------------------------------------
+-- 2. Internal helper: a class's advance notices reduced to the authorized ids,
+--    active statuses only, { status } per student. {} when nothing remains.
+-- ----------------------------------------------------------------------------
+create or replace function public.portal_class_notices(p_notices jsonb, p_ids text[])
+returns jsonb
+language sql
+immutable
+set search_path to ''
+as $function$
+  select case when count(*) = 0 then '{}'::jsonb
+              else jsonb_build_object('attendanceNotices', jsonb_object_agg(x.d, x.v)) end
+  from (
+    select n.d,
+           (select coalesce(jsonb_object_agg(s.sid, jsonb_build_object('status', s.v->'status')), '{}'::jsonb)
+            from jsonb_each(n.v) as s(sid, v)
+            where s.sid = any(p_ids)
+              and jsonb_typeof(s.v) = 'object'
+              and (s.v->>'status') in ('ausente_dada', 'ausente_reprog')) as v
+    from jsonb_each(case when jsonb_typeof(p_notices) = 'object' then p_notices else '{}'::jsonb end) as n(d, v)
+    where jsonb_typeof(n.v) = 'object'
+  ) as x
+  where x.v <> '{}'::jsonb;
+$function$;
+
+alter function public.portal_class_notices(jsonb, text[]) owner to postgres;
+revoke all on function public.portal_class_notices(jsonb, text[]) from public, anon, authenticated;
+
+
+-- ----------------------------------------------------------------------------
+-- 3. get_my_student_portal(): Migration A's definition + the two keys per class.
+-- ----------------------------------------------------------------------------
+create or replace function public.get_my_student_portal()
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path to ''
+as $function$
+declare
+  v_uid uuid := auth.uid();
+  v_link_count integer;
+  v_coach_id uuid;
+  v_student_id bigint;
+  v_self_id text;
+
+  v_students jsonb;
+  v_classes jsonb;
+  v_families jsonb;
+  v_expenses jsonb;
+  v_packages jsonb;
+
+  v_self_count integer;
+  v_self_raw jsonb;
+  v_self jsonb;
+  v_family_raw jsonb;
+  v_family jsonb := null;
+  v_members jsonb := '[]'::jsonb;
+  v_people jsonb;
+  v_auth_ids text[];
+
+  v_coach jsonb;
+  v_out_classes jsonb;
+  v_out_packages jsonb;
+  v_out_movements jsonb;
+
+  c_self_keys     constant text[] := array['id','name','avatar','photo','email','phone','status','familyId','sport','combos'];
+  c_member_keys   constant text[] := array['id','name','avatar','photo','status','familyId','sport','combos'];
+  c_family_keys   constant text[] := array['id','name'];
+  c_class_keys    constant text[] := array['id','title','days','time','timeEnd','court','date','startDate','endDate',
+                                           'occurrences','cancelledDates','rescheduledDates','dateCancellations',
+                                           'paused','cancelled','cancelType','rescheduledTo','rescheduled','plannedResume'];
+  c_att_keys      constant text[] := array['date','day'];
+  c_package_keys  constant text[] := array['id','name','type','qty'];
+  c_movement_keys constant text[] := array['pagoLinkId','type','date','amount','method','mes','voided','voidedAt'];
+begin
+  -- 1. Identity: coach and student come ONLY from the caller's own student_auth row.
+  if v_uid is null then
+    raise exception 'get_my_student_portal: not_authenticated' using errcode = 'P0001';
+  end if;
+
+  select count(*) into v_link_count from public.student_auth where id = v_uid;
+  if v_link_count <> 1 then
+    raise exception 'get_my_student_portal: no_student_link' using errcode = 'P0001';
+  end if;
+
+  select coach_id, student_id into v_coach_id, v_student_id
+  from public.student_auth
+  where id = v_uid;
+
+  if v_coach_id is null or v_student_id is null then
+    raise exception 'get_my_student_portal: no_student_link' using errcode = 'P0001';
+  end if;
+
+  -- Only the STUDENT's own access gate (decision 2: a blocked coach does not block the portal).
+  if not public.student_portal_has_access(v_uid) then
+    raise exception 'get_my_student_portal: access_blocked' using errcode = 'P0001';
+  end if;
+
+  v_self_id := v_student_id::text;
+
+  -- 2. Raw datasets of THIS coach only. Missing or non-array -> [].
+  select data_value into v_students from public.coach_data where coach_id = v_coach_id and data_key = 'students';
+  select data_value into v_classes  from public.coach_data where coach_id = v_coach_id and data_key = 'classes';
+  select data_value into v_families from public.coach_data where coach_id = v_coach_id and data_key = 'families';
+  select data_value into v_expenses from public.coach_data where coach_id = v_coach_id and data_key = 'expenses';
+  select data_value into v_packages from public.coach_data where coach_id = v_coach_id and data_key = 'packages';
+  if jsonb_typeof(v_students) is distinct from 'array' then v_students := '[]'::jsonb; end if;
+  if jsonb_typeof(v_classes)  is distinct from 'array' then v_classes  := '[]'::jsonb; end if;
+  if jsonb_typeof(v_families) is distinct from 'array' then v_families := '[]'::jsonb; end if;
+  if jsonb_typeof(v_expenses) is distinct from 'array' then v_expenses := '[]'::jsonb; end if;
+  if jsonb_typeof(v_packages) is distinct from 'array' then v_packages := '[]'::jsonb; end if;
+
+  -- 3. Own record: exactly one roster entry with this id.
+  select count(*) into v_self_count
+  from jsonb_array_elements(v_students) as t(e)
+  where jsonb_typeof(e) = 'object' and e->>'id' = v_self_id;
+
+  if v_self_count = 0 then
+    raise exception 'get_my_student_portal: student_not_found' using errcode = 'P0001';
+  elsif v_self_count > 1 then
+    raise exception 'get_my_student_portal: integrity_error' using errcode = 'P0001';
+  end if;
+
+  select e into v_self_raw
+  from jsonb_array_elements(v_students) as t(e)
+  where jsonb_typeof(e) = 'object' and e->>'id' = v_self_id;
+
+  select coalesce(jsonb_object_agg(k, v), '{}'::jsonb) into v_self
+  from jsonb_each(v_self_raw) as t(k, v)
+  where k = any(c_self_keys);
+
+  -- 4. Family — only when the caller is its payment responsible. First match in array order,
+  --    the same one StudentApp's families.find(...) picks today. A family without an id never
+  --    yields members (StudentApp would otherwise match every student with no familyId).
+  select f into v_family_raw
+  from jsonb_array_elements(v_families) with ordinality as t(f, o)
+  where jsonb_typeof(f) = 'object'
+    and f->'responsible'->>'studentId' = v_self_id
+  order by o
+  limit 1;
+
+  if v_family_raw is not null and (v_family_raw->>'id') is not null then
+    select coalesce(jsonb_agg(m.rec order by m.o), '[]'::jsonb) into v_members
+    from (
+      select (select coalesce(jsonb_object_agg(mk, mv), '{}'::jsonb)
+              from jsonb_each(e) as t2(mk, mv)
+              where mk = any(c_member_keys)) as rec,
+             o
+      from jsonb_array_elements(v_students) with ordinality as t(e, o)
+      where jsonb_typeof(e) = 'object'
+        and (e->>'id') is not null
+        and e->>'id' <> v_self_id
+        and e->>'familyId' = v_family_raw->>'id'
+    ) as m;
+
+    select coalesce(jsonb_object_agg(fk, fv), '{}'::jsonb)
+             || jsonb_build_object('responsibleStudentId', v_self->'id', 'members', v_members)
+      into v_family
+    from jsonb_each(v_family_raw) as t(fk, fv)
+    where fk = any(c_family_keys);
+  end if;
+
+  -- Authorized people and ids: the caller, plus members only when responsible.
+  v_people := jsonb_build_array(v_self) || v_members;
+  select coalesce(array_agg(p->>'id'), array[]::text[]) into v_auth_ids
+  from jsonb_array_elements(v_people) as t(p)
+  where (p->>'id') is not null;
+
+  -- 5. Classes: rosters and attendance reduced to authorized ids; coach-only keys never copied.
+  select coalesce(jsonb_agg(
+           (select coalesce(jsonb_object_agg(ck, cv), '{}'::jsonb)
+            from jsonb_each(c) as t2(ck, cv)
+            where ck = any(c_class_keys))
+           || jsonb_build_object(
+                'students', public.portal_filter_id_array(c->'students', v_auth_ids),
+                'attendanceLog', (
+                  select coalesce(jsonb_agg(
+                           (select coalesce(jsonb_object_agg(ak, av), '{}'::jsonb)
+                            from jsonb_each(a) as t4(ak, av)
+                            where ak = any(c_att_keys))
+                           || jsonb_build_object(
+                                'present',        public.portal_filter_id_array(a->'present', v_auth_ids),
+                                'ausente_dada',   public.portal_filter_id_array(a->'ausente_dada', v_auth_ids),
+                                'ausente_reprog', public.portal_filter_id_array(a->'ausente_reprog', v_auth_ids))
+                           order by ao), '[]'::jsonb)
+                  from jsonb_array_elements(
+                         case when jsonb_typeof(c->'attendanceLog') = 'array' then c->'attendanceLog' else '[]'::jsonb end
+                       ) with ordinality as t3(a, ao)
+                  where jsonb_typeof(a) = 'object'))
+           -- Migration D (BUG-AGENDA-05 stages 2.1 / 2.2): per-date time/court and advance notices, only when present.
+           || public.portal_class_overrides(c->'occurrenceOverrides')
+           || public.portal_class_notices(c->'attendanceNotices', v_auth_ids)
+           order by co), '[]'::jsonb)
+    into v_out_classes
+  from jsonb_array_elements(v_classes) with ordinality as t(c, co)
+  where jsonb_typeof(c) = 'object'
+    and jsonb_array_length(public.portal_filter_id_array(c->'students', v_auth_ids)) > 0;
+
+  -- 6. Packages referenced by an authorized combo (name/type/qty only, never price).
+  select coalesce(jsonb_agg(
+           (select coalesce(jsonb_object_agg(pk2, pv2), '{}'::jsonb)
+            from jsonb_each(pk) as t2(pk2, pv2)
+            where pk2 = any(c_package_keys))
+           order by po), '[]'::jsonb)
+    into v_out_packages
+  from jsonb_array_elements(v_packages) with ordinality as t(pk, po)
+  where jsonb_typeof(pk) = 'object'
+    and (pk->>'id') in (
+      select cb->>'packId'
+      from jsonb_array_elements(v_people) as pp(p),
+           jsonb_array_elements(case when jsonb_typeof(p->'combos') = 'array' then p->'combos' else '[]'::jsonb end) as cbs(cb)
+      where jsonb_typeof(cb) = 'object' and (cb->>'packId') is not null
+    );
+
+  -- 7. Payment movements: income rows linked (pagoLinkId) to an authorized person's own combos,
+  --    each tagged with that person's studentId. Never general expenses, never other students' incomes.
+  with links as (
+    select distinct p->'id' as student_id, l.link
+    from jsonb_array_elements(v_people) as pp(p),
+         jsonb_array_elements(case when jsonb_typeof(p->'combos') = 'array' then p->'combos' else '[]'::jsonb end) as cbs(cb),
+         lateral (
+           select ms.m->>'pagoLinkId'
+           from jsonb_array_elements(case when jsonb_typeof(cb->'mensualidades') = 'array' then cb->'mensualidades' else '[]'::jsonb end) as ms(m)
+           union all
+           select hs.h->>'pagoLinkId'
+           from jsonb_array_elements(case when jsonb_typeof(cb->'mensualidades') = 'array' then cb->'mensualidades' else '[]'::jsonb end) as ms2(m2),
+                jsonb_array_elements(case when jsonb_typeof(ms2.m2->'historialPagos') = 'array' then ms2.m2->'historialPagos' else '[]'::jsonb end) as hs(h)
+           union all
+           select ps.py->>'pagoLinkId'
+           from jsonb_array_elements(case when jsonb_typeof(cb->'payments') = 'array' then cb->'payments' else '[]'::jsonb end) as ps(py)
+         ) as l(link)
+    where jsonb_typeof(cb) = 'object'
+      and l.link is not null
+      and l.link <> ''
+  )
+  select coalesce(jsonb_agg(
+           (select coalesce(jsonb_object_agg(ek, ev), '{}'::jsonb)
+            from jsonb_each(e) as t2(ek, ev)
+            where ek = any(c_movement_keys))
+           || jsonb_build_object('studentId', links.student_id)
+           order by eo, links.student_id::text), '[]'::jsonb)
+    into v_out_movements
+  from jsonb_array_elements(v_expenses) with ordinality as t(e, eo)
+  join links on links.link = e->>'pagoLinkId'
+  where jsonb_typeof(e) = 'object'
+    and e->>'type' = 'ingreso';
+
+  -- 8. Minimal public coach profile (never email, phone, country, created_at).
+  select jsonb_build_object('id', co.id, 'name', co.name, 'photo', co.photo, 'sport', co.sport, 'currency', co.currency)
+    into v_coach
+  from public.coaches as co
+  where co.id = v_coach_id;
+
+  return jsonb_build_object(
+    'version', 1,
+    'coach', v_coach,
+    'student', v_self,
+    'family', v_family,
+    'classes', v_out_classes,
+    'packages', v_out_packages,
+    'payment_movements', v_out_movements,
+    'generated_at', now()
+  );
+end;
+$function$;
+
+alter function public.get_my_student_portal() owner to postgres;
+revoke all on function public.get_my_student_portal() from public, anon;
+grant execute on function public.get_my_student_portal() to authenticated, postgres, service_role;
+
+
+-- ----------------------------------------------------------------------------
+-- 3. Deliberately NOT done here (later, separate migrations, only after the new
+--    frontend is live and verified):
+--
+--   Migration B:  drop policy "student_read_coach_data" on public.coach_data;
+--   Migration C:  drop policy "student_read_coach" on public.coaches;
+-- ----------------------------------------------------------------------------
