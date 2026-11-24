@@ -1,9 +1,12 @@
 SESSION_STATE.md — IziCoach
 
-# Current task — BUG-AGENDA-06 safe "Eliminar clase" (branch `fix/delete-class-safe` from `main` ad80504)
+# Last task — BUG-AGENDA-06 safe "Eliminar clase": DONE (merged and deployed 2026-11-24)
 
-- Implemented, tested and committed locally (authorized 2026-11-24; see docs/BUGS.md BUG-AGENDA-06). NOT pushed, no PR,
-  not merged, not deployed — each needs authorization. No production writes were made.
+- PR menawebmail-hub/izicoach#2 merged into `main` as `10f39bc` (branch `fix/delete-class-safe`, `6690886`); production
+  serves `index-D4CxLY4T.js` (sha256 = local build of main). Read-only smoke OK; details in docs/BUGS.md BUG-AGENDA-06.
+- The owner's manual tests deleted future instances of 5 classes in Rodri's account (incl. Scapinni / Lui / Test Mensual
+  UX); nothing was erased and every marker keeps `prev`, so they are restorable if needed (owner decision).
+- No pending work on this task. Open items elsewhere: portal header `seriesValues` (visual), stage 3 recoveries.
 
 # Previous task — publish BUG-AGENDA-05: MERGED and DEPLOYED (2026-11-23)
 

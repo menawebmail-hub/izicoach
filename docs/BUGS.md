@@ -460,7 +460,7 @@ Past dates, dates with attendance, reprogrammed or arriving dates, resume (pause
 ---
 
 ## BUG-AGENDA-06 — Eliminar clase (red trash) destroyed combos, payments and Finanzas incomes
-**Status:** fixed on branch `fix/delete-class-safe` (from `main` `ad80504`), committed locally 2026-11-24, NOT pushed, NOT deployed  
+**Status:** FIXED and DEPLOYED 2026-11-24 — `6690886` merged via PR menawebmail-hub/izicoach#2 as `main` `10f39bc`; production bundle `index-D4CxLY4T.js`  
 **Area:** Agenda class modal / Editar Clase → `handleDeleteClass`  
 **Priority:** High
 
@@ -477,6 +477,9 @@ Past dates, dates with attendance, reprogrammed or arriving dates, resume (pause
 
 ### Verification
 `src/schedule/classDeletion.test.js` (13; mutations: without the deletion reading 8 fail, without the debt rule 2 fail); `npm test` 199/199 (2 existing tests list the new helper `deletedSlotCounts`); local harness `.local-tests/delete-class-modal.jsdom.test.mjs` (5, real Agenda + Edit screen, spies) — the other harness failures are identical on `main`; build clean; oxlint 363 (baseline 364); dev server visual check of the modal on a TEST fixture, Cancelar, revisions unchanged. No production write.
+
+### Production (2026-11-24)
+izicoach.app and app.izicoach.app serve `index-D4CxLY4T.js`, sha256 identical to the local build of `main` `10f39bc`; the bundle contains the approved modal texts. Read-only smoke (Rodri, no writes; revisions unchanged during the smoke): the owner's manual tests had deleted future instances of 5 classes (Lui, SmokeB Combo4, Test Mensual UX, Test Mensual Regresion, Scapinni) — markers with `held`/`prev` present, `deletion` cut + history recorded; students (rev 84) and expenses (rev 60) byte-identical to the baseline before the tests, linked combos (incl. Scapunni's paid combo and a mensual) intact. Everything is restorable by removing the markers (no data was erased).
 
 ### Risks / not covered
 Legacy single-date classes (no occurrences) are only hidden. A manual "Agregar día al combo" or Editar Clase weekday change after a deletion can add visible dates again (explicit coach action). Students tab / Cobros "GRUPOS" labels still name a fully deleted class.
