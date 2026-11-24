@@ -13,7 +13,7 @@ const { loadAppFunctions } = await import("../test/loadAppFunctions.js");
 const A = await loadAppFunctions([
   "TODAY_DATE", "isClassDone", "interpretContractDate", "resolveSlotPayments", "buildSlotHistoryRows", "buildPersonSlotRows",
   "getSlotFulfillmentDate", "isComboClosed", "getClassEntitlements", "getCountedClassEntitlements", "getAccountCounters",
-  "getEffectiveTotal", "getClaseRem", "expandClasses", "getComboExportCounters", "resolveComboClassName", "formatDateDDMMYYYY", "buildComboExportRows",
+  "getEffectiveTotal", "getClaseRem", "expandClasses", "getComboExportCounters", "resolveComboClassName", "formatDateDDMMYYYY", "buildComboExportRows", "deletedSlotCounts",
 ]);
 
 const J = "juan", P = "pedro";

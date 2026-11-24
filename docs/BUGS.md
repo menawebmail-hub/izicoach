@@ -459,6 +459,30 @@ Past dates, dates with attendance, reprogrammed or arriving dates, resume (pause
 
 ---
 
+## BUG-AGENDA-06 — Eliminar clase (red trash) destroyed combos, payments and Finanzas incomes
+**Status:** fixed on branch `fix/delete-class-safe` (from `main` `ad80504`), committed locally 2026-11-24, NOT pushed, NOT deployed  
+**Area:** Agenda class modal / Editar Clase → `handleDeleteClass`  
+**Priority:** High
+
+### Root cause
+`handleDeleteClass` removed the whole class row (attendance, reprogrammings, notices, overrides), deleted every combo of each roster student that shared ANY date with the series (no `sourceClassId` check, so other classes' combos too), cleared ALL combos of a student left without classes, and deleted "Cobros clases" incomes matched by student NAME and date. Three separate writes, no history, no undo.
+
+### Fix (approved design: only visual change = the modal)
+- Modal: "Todas las instancias o instancias futuras de X serán eliminadas del calendario…" + Eliminar todas las instancias / Eliminar las instancias futuras (from the selected card's date) / Cancelar. Editar Clase → Eliminar Clase (unchanged screen) = all.
+- ONE classes write (`planClassDeletion`, `src/schedule/classDeletion.js`): each deleted date gets `dateCancellations[date] = {cancelType:"deleted", at, op, scope, held, prev}`; the row keeps `deletion` (cut) and `deletions` (history). Students, combos, payments, attendance and expenses are never written. No SQL (the portal RPC already sends dateCancellations).
+- Reading (`normalizeDeletedDates`, `src/schedule/deletedDates.js`, applied in `interpretContractDate` and `expandClasses`): a held date keeps its previous reading; a future one reads as an existing "A Reprogramar" pending slot flagged `isDeleted`. Cards carry `deletedOccurrence`; `scheduleCards` hides them in Agenda, Dashboard (A Reprogramar alerts, today) and the portal's next class / Tus clases / class cards. Cobros keeps reading them.
+- Economics: paid deleted slots stay as classes in favour (Restantes) until an internal expiry 60 days after the combo's last given class (or the deletion); then they leave Restantes and the combo can close (`isComboClosed`). Unpaid deleted slots are never debt (No pagadas, Restantes, rows, PagoModal payable rows, xlsx export, Finanzas "por cobrar"). Historical debt is kept.
+- A student who comes back starts a new combo (`comboEndedByDeletion` in `updateStudentPacks`). Dates a later pause/resume adds after the cut are deleted too (`markAddedDatesDeleted`), so nothing reappears.
+- Mensual combos untouched; no blocking. Pausar, Cancelar, Editar Clase and recoveries unchanged.
+
+### Verification
+`src/schedule/classDeletion.test.js` (13; mutations: without the deletion reading 8 fail, without the debt rule 2 fail); `npm test` 199/199 (2 existing tests list the new helper `deletedSlotCounts`); local harness `.local-tests/delete-class-modal.jsdom.test.mjs` (5, real Agenda + Edit screen, spies) — the other harness failures are identical on `main`; build clean; oxlint 363 (baseline 364); dev server visual check of the modal on a TEST fixture, Cancelar, revisions unchanged. No production write.
+
+### Risks / not covered
+Legacy single-date classes (no occurrences) are only hidden. A manual "Agregar día al combo" or Editar Clase weekday change after a deletion can add visible dates again (explicit coach action). Students tab / Cobros "GRUPOS" labels still name a fully deleted class.
+
+---
+
 ## BUG-AGENDA-05 — Editar clase: "Solo esta clase" changes the whole class; a weekday change leaves the combo behind
 
 **Status:** Phase 1 → stage 2.2 committed on `fix/agenda-edit-scope` (`5db25f9` … `85d0630`); student portal Migration D applied in production 2026-11-22; PR to `main` opened, not merged; recoveries (stage 3) pending  
