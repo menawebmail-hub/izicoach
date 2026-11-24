@@ -2,6 +2,7 @@ import { resolveComboDateStatus, traceRescheduleHistory } from "./rescheduleChai
 import { countUsedForCombo, hasSlotMoves, planSlotMove, resolveComboMoves } from "./slotMoves.js";
 import { readAttendance, seriesIdOf, slotCardOn, slotClassId } from "./attendanceRead.js";
 import { effectiveTimeEnd } from "./occurrenceOverrides.js";
+import { normalizeDeletedDates } from "./deletedDates.js";
 
 /*
  * Per-slot reading of a student's combo (Cobros, Mis Clases, Agenda payment chips, "Por dar").
@@ -30,7 +31,9 @@ export const isClassDone=(date,timeEnd)=>{
 // A terminal that is paused reads as Pausada (expandClasses deliberately hides
 // non-live terminals from its cards, which is right for Agenda but made Cobros
 // read such a chain as "A Reprogramar"). Never mutates its input.
-export const interpretContractDate=(dateCancellations,originalDate)=>{
+export const interpretContractDate=(rawDateCancellations,originalDate)=>{
+  // Safe class deletion: a deleted date reads with the existing semantics (src/schedule/deletedDates.js).
+  const dateCancellations=normalizeDeletedDates(rawDateCancellations);
   const {terminal,cancelInfo,broken}=resolveComboDateStatus(dateCancellations,originalDate);
   const {path}=traceRescheduleHistory(dateCancellations,originalDate);
   const wasRescheduled=path.length>1;
@@ -44,7 +47,8 @@ export const interpretContractDate=(dateCancellations,originalDate)=>{
   const isReprogramPending=t==="cancelled_reprog"||(wasRescheduled&&cancelInfo!==null&&!isPaused&&!isCancelled);
   const terminalStatus=isPaused?"paused":isCancelled?"cancelled":isReprogramPending?"pending":isReprogrammed?"reprogrammed":"normal";
   const isCompensated=isPaused&&!!(cancelInfo&&cancelInfo.compensated);
-  return {originalDate,terminalDate:terminal,cancelInfo,reschedulePath:path,terminalStatus,isPaused,isCompensated,isCancelled,isReprogrammed,isReprogramPending,wasRescheduled};
+  const isDeleted=!!(cancelInfo&&cancelInfo.deleted);
+  return {originalDate,terminalDate:terminal,cancelInfo,reschedulePath:path,terminalStatus,isPaused,isCompensated,isCancelled,isReprogrammed,isReprogramPending,wasRescheduled,isDeleted};
 };
 
 // Shared by getAccountCounters and PagoModal.buildAllDates so list and counters

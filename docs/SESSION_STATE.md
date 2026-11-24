@@ -1,6 +1,22 @@
 SESSION_STATE.md — IziCoach
 
-# Current task — publish BUG-AGENDA-05 (branch `fix/agenda-edit-scope` → `main`, PR opened, NOT merged)
+# Current task — BUG-AGENDA-06 safe "Eliminar clase" (branch `fix/delete-class-safe` from `main` ad80504)
+
+- Implemented, tested and committed locally (authorized 2026-11-24; see docs/BUGS.md BUG-AGENDA-06). NOT pushed, no PR,
+  not merged, not deployed — each needs authorization. No production writes were made.
+
+# Previous task — publish BUG-AGENDA-05: MERGED and DEPLOYED (2026-11-23)
+
+- PR menawebmail-hub/izicoach#1 merged into `main` as `ad80504` (tree = `45da7b5`); Vercel production now serves
+  `index-fv4SNTk9.js` on izicoach.app and app.izicoach.app, sha256 identical to the local build of `45da7b5`; app
+  loads with no console errors.
+- Production smoke as Rodri (read-only, revisions unchanged: classes 99 / students 84): TEST Portal Clase shows
+  19:00 - 20:00 · Cancha TEST on 02/12 and 18:00 - 19:00 · Cancha 1 on 09/12 and 30/11; the 30/11 card marks both
+  notices; Asistencia 30/11 shows "📣 Avisó" for both, "Fecha futura" note, "Guardar avisos" (closed with Cancelar);
+  the card menu has no "Avisar ausencia". Portal in production not opened (same bundle verified on 5180 with the same
+  database; would need signing Rodri out on app.izicoach.app).
+
+# Previous step — publish preparation (PR opened)
 
 - Migration D (`supabase/migrations/20261122120000_student_portal_notices_overrides.sql`) is APPLIED in production
   `eerocqdoawrciatvqnof` (2026-11-22) with `supabase/ops/20261122-migration-d/`: preflight 32/32, history repair of
