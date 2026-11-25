@@ -600,9 +600,9 @@ const buildMensualLegacySummary=(legacyMensual)=>{
 // mensual month (buildMensualHistoryEvents: a voided payment stays listed as anulado next to the later one that
 // replaced it). Each entry's key is the record's own identity (its combo's identity + the payment's own fields /
 // the mensualidad's mes), never a position in any array. Read-only, never written back.
-const buildStudentPaymentHistory=(s,expenses)=>(s.combos||[]).flatMap(c=>{
+const buildStudentPaymentHistory=(s,expenses)=>(s.combos||[]).flatMap((c,comboIndex)=>{
   const comboKey=[c.packType,c.id,c.sourceClassId,c.date].map(v=>v===undefined||v===null?"":String(v)).join("|");
-  const reg=(c.payments||[]).map(p=>({...p,comboTotal:c.total,packType:c.packType,key:"p|"+comboKey+"|"+[p.id,p.date,p.amount,p.qty,p.method].map(v=>v===undefined||v===null?"":String(v)).join("|")}));
+  const reg=(c.payments||[]).map(p=>({...p,comboTotal:c.total,packType:c.packType,comboIndex,key:"p|"+comboKey+"|"+[p.id,p.date,p.amount,p.qty,p.method].map(v=>v===undefined||v===null?"":String(v)).join("|")}));
   const mens=(c.mensualidades||[]).flatMap(m=>{
     const events=buildMensualHistoryEvents(m,expenses);
     return events.map(ev=>({key:"m|"+comboKey+"|"+m.mes+"|"+(ev.pagoLinkId===null?"sin-vinculo:"+ev.estado:ev.pagoLinkId),
@@ -612,6 +612,28 @@ const buildStudentPaymentHistory=(s,expenses)=>(s.combos||[]).flatMap(c=>{
   });
   return [...reg,...mens];
 });
+// Historial de Pagos / Compartir: the dates a payment's classes actually take place on, read with the same slot reader
+// Detalles de Pagos uses — a reprogrammed class (also through a chain X→Y→Z, or a recovery) shows its final date; any
+// other class keeps its contractual date. payment.dates (the stored identity of the paid slots) is never changed.
+// Also for an archived combo, or one whose class no longer lists the student (its class is found by sourceClassId).
+// paymentDateChains: one chain per stored date — [stored] or, for a reprogramming with a destination, its whole path
+// [original, …intermediate, final] (the same reschedulePath Detalles de Pagos draws). effectivePaymentDates = each final.
+const paymentDateChains=(student,payment,cards)=>{
+  const dates=(payment&&payment.dates)||[];
+  const combo=payment&&payment.comboIndex!==undefined?((student&&student.combos)||[])[payment.comboIndex]:null;
+  if(!combo||dates.length===0||combo.packType==="mensual") return dates.map(d=>[d]);
+  const sid=student.id;
+  const mine=(cards||[]).filter(c=>(c.students||[]).includes(sid)||(combo.sourceClassId!==undefined&&String(c._seriesId!==undefined?c._seriesId:c.id)===String(combo.sourceClassId)));
+  if(mine.length===0) return dates.map(d=>[d]);
+  const reader=createSlotReader({classes:mine,combo,studentId:sid,allClasses:cards});
+  return dates.map(d=>{
+    const st=reader.status(d);
+    if(!(st&&st.isReprogWithDate&&st.terminalDate)) return [d];
+    const path=Array.isArray(st.reschedulePath)&&st.reschedulePath.length>1?st.reschedulePath:[d,st.terminalDate];
+    return path[path.length-1]===st.terminalDate?path:[...path,st.terminalDate];
+  });
+};
+const effectivePaymentDates=(student,payment,cards)=>paymentDateChains(student,payment,cards).map(c=>c[c.length-1]);
 // Months the Detalles selector offers — present/future and still-open operations only, never a
 // history browser: every unpaid past month since the combo started (open debt), the current month and
 // the next two, paid months still inside the void window, and half-done voids of any age. Sorted, unique.
@@ -2146,9 +2168,12 @@ function resolveComboIndex(combos, row) {
 
 // Shared per-date account counters for a student's active class combos (individual/combo).
 // Not applicable to mensual (returns all-zero, mensual has its own separate UI/logic).
-function getAccountCounters(s, classes=[]) {
+// opts.closedVisibleFallback (Detalles de Pagos only): when the student has no open combo/individual, count the closed
+// ones the list still shows (completed, not archived) — the same set its rows come from — instead of nothing.
+function getAccountCounters(s, classes=[], opts={}) {
   const myClasses=classes.filter(c=>c.students&&c.students.includes(s.id));
-  const activeCombosForCount=getCountedClassEntitlements(s, classes);
+  const countedEntitlements=getCountedClassEntitlements(s, classes);
+  const activeCombosForCount=(opts&&opts.closedVisibleFallback&&countedEntitlements.length===0)?getVisibleClassEntitlements(s, classes):countedEntitlements;
   const allDatesRaw=activeCombosForCount.flatMap(({combo:c,sourceComboIndex})=>{
     let dates=[...(c.dates||[])];
     const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
@@ -2288,7 +2313,7 @@ const SLOT_BADGES={
   cancelled:{bg:"#FFF0F0",color:"#C62828",icon:"⛔ ",text:"Cancelada"},
   pending:{bg:"#E3F2FD",color:"#1565C0",icon:"🕐 ",text:"A Reprogramar"},
 };
-function SlotGroup({number,item,dateText,dateTag,circle,left,right,paidNow,fmt,borderColor,dateColor,compact}) {
+function SlotGroup({number,item,dateText,dateTag,circle,left,right,paidNow,fmt,borderColor,dateColor,compact,showFinalState=false}) {
   const subRows=(item.historyRows||[]).filter(h=>h.depth>0);
   const groupPaused=!!item.isPaused;
   // One badge per date of a reschedule chain (BUG-COBROS-02): the original row of a rescheduled
@@ -2316,7 +2341,7 @@ function SlotGroup({number,item,dateText,dateTag,circle,left,right,paidNow,fmt,b
         const paid=h.isPaid||paidNow;
         const rb=slotPaymentBadge({isPaid:paid,isPaused:h.status==="paused"},compact);
         const rBg=rb.bg,rCol=rb.color,rLabel=rb.label;
-        const shown=slotRowBadges({rescheduled,isTerminal:h.isTerminal,status:h.status,paid});
+        const shown=slotRowBadges({rescheduled,isTerminal:h.isTerminal,status:h.status,paid,showFinalState});
         return (
           <div key={h.depth} data-slot-history={h.depth} style={{display:"flex",alignItems:"center",flexWrap:"wrap",gap:"4px 8px",marginTop:6,marginLeft:(compact?34:36)+(h.depth-1)*12,paddingLeft:10,borderLeft:"2px solid "+(groupPaused?"#FFCC80":"#A5D6A7"),minWidth:0}}>
             <div style={{flex:"1 1 120px",minWidth:0,fontSize:12,fontWeight:600,color:txt,textAlign:"left"}}>↳ {fmt(h.date)}</div>
@@ -7579,9 +7604,11 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               not from paid state. Targeting/writing in handleConfirm is untouched by
               this — purely a display concern. */}
           {pagoTipo==="clases"&&allDates.length>0&&(()=>{
-            const {noPagadas,pagadas,realizadas,restantes,pausadas,totalEntitlementCombo,realizadasCombo}=getAccountCounters(s,classes);
-            // Same combo progress as the Cobros card (real noPagadas, not the stepper preview); combo only.
-            const showProgress=totalEntitlementCombo>0;
+            // A completed combo still listed here (closed, not archived) is counted when nothing is open (never in Cobros).
+            const {noPagadas,pagadas,realizadas,restantes,pausadas,totalEntitlementCombo,realizadasCombo}=getAccountCounters(s,classes,{closedVisibleFallback:true});
+            // Same combo progress as the Cobros card (real noPagadas, not the stepper preview); combo only — and, as before,
+            // never for a completed combo counted through the fallback above (no open combo).
+            const showProgress=totalEntitlementCombo>0&&getCountedClassEntitlements(s,classes).length>0;
             const previewQty=Math.min(parseInt(localClasses)||0, payableRows.length);
             const previewNoPagadas=Math.max(0, noPagadas-previewQty);
             const previewPagadas=pagadas+previewQty;
@@ -7900,7 +7927,7 @@ function PagoModal({s, combo, newClasses, setNewClasses, newAmount, setNewAmount
               const rightBadge=slotPaymentBadge({isPaid:isPaid||!!item.displayPaid,isPaused:isPausedItem},false);
               const rightBg=rightBadge.bg,rightColor=rightBadge.color,rightLabel=rightBadge.label;
               return (
-                <SlotGroup key={localI} number={localI+1} item={item} fmt={formatDate} paidNow={isPaidNow} borderColor="#E3F2FD" dateColor="#1A237E"
+                <SlotGroup showFinalState key={localI} number={localI+1} item={item} fmt={formatDate} paidNow={isPaidNow} borderColor="#E3F2FD" dateColor="#1A237E"
                   dateText={formatDate(item.date)}
                   dateTag={item.packType==="individual"&&<span style={{fontSize:9,fontWeight:700,color:"#6B7BAD",background:"#E8EAF6",borderRadius:6,padding:"2px 6px",marginLeft:6}}>Individual</span>}
                   circle={{size:28,numSize:11,bg:isPausedItem?"#FFF3E0":isCancelled?"#FFF0F0":isReprogWithDate?"#E8F5E9":isReprogNoDate?"#E3F2FD":C.blueL,border:isPausedItem?"#E65100":isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":"#1976D2",color:isPausedItem?"#E65100":isCancelled?"#C62828":isReprogWithDate?"#2E7D32":isReprogNoDate?"#1565C0":C.blue2}}
@@ -8349,7 +8376,9 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             <div style={{flex:1,overflowY:"auto",padding:16}}>
               {(()=>{
                 if(!selected) return <div style={{textAlign:"center",padding:"40px 0",color:C.mutedDark}}>Sin historial de pagos</div>;
-                const p=selected;
+                // The classes' effective dates (reprogrammings and their chains); the stored payment is never changed.
+                // dates stay the stored ones; dateChains adds each class's reprogramming path (shown like Detalles de Pagos).
+                const p={...selected,dateChains:paymentDateChains(s,selected,classes)};
                 // Mensual entries are payment events: pagado (the active one), anulado (kept as history)
                 // or incompleta (a half-done void — completed only from Detalles de Pagos).
                 const isMensualEvent=!!p.eventEstado;
@@ -8400,13 +8429,34 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
                     {p.dates&&p.dates.length>0&&p.qty>0?(
                       <WhiteCard>
                         <div style={{fontSize:12,fontWeight:700,color:C.mutedDark,marginBottom:10}}>FECHAS DE CLASE</div>
-                        {p.dates.map((ds,i)=>(
-                          <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderBottom:i<p.dates.length-1?"1px solid "+C.border:"none"}}>
-                            <div style={{width:26,height:26,borderRadius:"50%",background:C.greenL,border:"2px solid "+C.green,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:C.green,flexShrink:0}}>{i+1}</div>
-                            <div style={{flex:1,fontSize:12,fontWeight:600,color:C.text}}>{fmtDate(ds)}</div>
-                            <span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:C.greenL,color:C.green,fontWeight:700}}>Pagada</span>
-                          </div>
-                        ))}
+                        {p.dates.map((ds,i)=>{
+                          // A reprogrammed class: its original date, then "↳" each later date like Detalles de Pagos
+                          // (green, indented); one number, "Pagada" only on the final date.
+                          const chain=(p.dateChains&&p.dateChains[i])||[ds];
+                          const paidPill=<span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:C.greenL,color:C.green,fontWeight:700}}>Pagada</span>;
+                          const num=<div style={{width:26,height:26,borderRadius:"50%",background:C.greenL,border:"2px solid "+C.green,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:C.green,flexShrink:0}}>{i+1}</div>;
+                          if(chain.length<=1) return (
+                            <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderBottom:i<p.dates.length-1?"1px solid "+C.border:"none"}}>
+                              {num}
+                              <div style={{flex:1,fontSize:12,fontWeight:600,color:C.text}}>{fmtDate(ds)}</div>
+                              {paidPill}
+                            </div>
+                          );
+                          return (
+                            <div key={i} data-history-chain={i+1} style={{padding:"7px 0",borderBottom:i<p.dates.length-1?"1px solid "+C.border:"none"}}>
+                              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                                {num}
+                                <div style={{flex:1,fontSize:12,fontWeight:600,color:C.text}}>{fmtDate(chain[0])}</div>
+                              </div>
+                              {chain.slice(1).map((d,k)=>(
+                                <div key={k} style={{display:"flex",alignItems:"center",gap:8,marginTop:6,marginLeft:36+k*12,paddingLeft:10,borderLeft:"2px solid #A5D6A7"}}>
+                                  <div style={{flex:1,fontSize:12,fontWeight:600,color:"#2E7D32"}}>↳ {fmtDate(d)}</div>
+                                  {k===chain.length-2&&paidPill}
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })}
                       </WhiteCard>
                     ):(!p.qty||p.qty===0)&&p.date?(
                       <WhiteCard>
@@ -8441,7 +8491,10 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             const mN2=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
             const fmtShort=(ds)=>{const d=new Date(ds+"T12:00:00");return d.getDate()+" "+mN2[d.getMonth()];};
             const dates=p.dates||[];
-            const canvasH=340+(dates.length>0?40+dates.length*28:0)+60;
+            // Each class: its stored date, or — reprogrammed — the original plus one "↳" line per later date.
+            const chains=dates.map((ds,i)=>(p.dateChains&&p.dateChains[i])||[ds]);
+            const lineCount=chains.reduce((n,c)=>n+c.length,0);
+            const canvasH=340+(dates.length>0?40+lineCount*28:0)+60;
             const canvas=document.createElement("canvas");
             canvas.width=600; canvas.height=canvasH;
             const ctx=canvas.getContext("2d");
@@ -8478,12 +8531,17 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
             if(dates.length>0){
               ctx.fillStyle="#6B7BAD"; ctx.font="bold 12px Arial"; ctx.fillText("FECHAS DE CLASE",40,yOff);
               yOff+=20;
-              dates.forEach((ds,i)=>{
+              chains.forEach((chain,i)=>{
                 ctx.fillStyle="#0D1B4B"; ctx.font="13px Arial";
-                ctx.fillText((i+1)+".  "+fmtShort(ds),40,yOff);
-                ctx.fillStyle="#43A047"; ctx.font="bold 11px Arial";
-                ctx.fillText("Pagada",200,yOff);
+                ctx.fillText((i+1)+".  "+fmtShort(chain[0]),40,yOff);
+                if(chain.length<=1){ctx.fillStyle="#43A047"; ctx.font="bold 11px Arial"; ctx.fillText("Pagada",200,yOff);}
                 yOff+=28;
+                chain.slice(1).forEach((x,k)=>{
+                  ctx.fillStyle="#2E7D32"; ctx.font="13px Arial";
+                  ctx.fillText("↳ "+fmtShort(x),62+k*12,yOff);
+                  if(k===chain.length-2){ctx.fillStyle="#43A047"; ctx.font="bold 11px Arial"; ctx.fillText("Pagada",200,yOff);}
+                  yOff+=28;
+                });
               });
             }
             // Confirmed badge
@@ -8542,12 +8600,26 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
                     <div style={{marginTop:14}}>
                       <div style={{fontSize:11,fontWeight:700,color:"#6B7BAD",marginBottom:8}}>FECHAS DE CLASE</div>
                       {p.dates.map((ds,i)=>{
-                        const d=new Date(ds+"T12:00:00");
                         const mN3=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
-                        return (
+                        const short=(x)=>{const d=new Date(x+"T12:00:00");return d.getDate()+" "+mN3[d.getMonth()];};
+                        const chain=(p.dateChains&&p.dateChains[i])||[ds];
+                        const paidPill=<span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:"#EDFBEC",color:"#43A047",fontWeight:700}}>Pagada</span>;
+                        if(chain.length<=1) return (
                           <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",borderBottom:"1px solid #EEF2FF"}}>
-                            <span style={{fontSize:12,color:"#0D1B4B",fontWeight:600}}>{(i+1)+". "+d.getDate()+" "+mN3[d.getMonth()]}</span>
-                            <span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:"#EDFBEC",color:"#43A047",fontWeight:700}}>Pagada</span>
+                            <span style={{fontSize:12,color:"#0D1B4B",fontWeight:600}}>{(i+1)+". "+short(ds)}</span>
+                            {paidPill}
+                          </div>
+                        );
+                        // Reprogrammed: original date, then "↳" each later date (green); "Pagada" only on the final one.
+                        return (
+                          <div key={i} style={{padding:"5px 0",borderBottom:"1px solid #EEF2FF"}}>
+                            <span style={{fontSize:12,color:"#0D1B4B",fontWeight:600}}>{(i+1)+". "+short(chain[0])}</span>
+                            {chain.slice(1).map((x,k)=>(
+                              <div key={k} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:4,marginLeft:14+k*12,paddingLeft:8,borderLeft:"2px solid #A5D6A7"}}>
+                                <span style={{fontSize:12,color:"#2E7D32",fontWeight:600}}>{"↳ "+short(x)}</span>
+                                {k===chain.length-2&&paidPill}
+                              </div>
+                            ))}
                           </div>
                         );
                       })}

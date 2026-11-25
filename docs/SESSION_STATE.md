@@ -1,5 +1,10 @@
 SESSION_STATE.md — IziCoach
 
+# Current task — BUG-COBROS-07 Historial de Pagos dates / Detalles counters / final-date badges (branch `fix/payment-history-dates` from `main` fbc575e)
+
+- A (original + "↳" reprogrammed dates in Historial and Compartir), B and C implemented, tested and committed locally
+  (authorized 2026-11-24; see docs/BUGS.md BUG-COBROS-07). NOT pushed, no PR, not deployed — each needs authorization.
+
 # Last task — BUG-AGENDA-06 safe "Eliminar clase": DONE (merged and deployed 2026-11-24)
 
 - PR menawebmail-hub/izicoach#2 merged into `main` as `10f39bc` (branch `fix/delete-class-safe`, `6690886`); production

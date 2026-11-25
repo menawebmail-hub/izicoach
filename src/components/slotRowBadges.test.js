@@ -63,7 +63,10 @@ test("SlotGroup draws through slotRowBadges; the data and its helpers are untouc
   assert.match(slotGroup, /\{mainBadges\.state&&pill\(left\.bg,left\.color,left\.label,"l"\)\}/);
   // A hidden payment badge leaves an invisible pill in its column (the state badge keeps its column).
   assert.match(slotGroup, /\{pill\(right\.bg,right\.color,right\.label,"r",!mainBadges\.payment\)\}/);
-  assert.match(slotGroup, /const shown=slotRowBadges\(\{rescheduled,isTerminal:h\.isTerminal,status:h\.status,paid\}\);/);
+  assert.match(slotGroup, /const shown=slotRowBadges\(\{rescheduled,isTerminal:h\.isTerminal,status:h\.status,paid,showFinalState\}\);/);
+  // Only Detalles de Pagos shows the final date's real state; the Student Portal keeps the previous presentation.
+  assert.match(app, /<SlotGroup showFinalState key=\{localI\}/);
+  assert.equal((app.match(/<SlotGroup [^>]*showFinalState/g) || []).length, 1);
   assert.match(slotGroup, /\{shown\.state&&pill\(/);
   assert.match(slotGroup, /\{pill\(rBg,rCol,rLabel,"p",!shown\.payment\)\}/);
   assert.match(slotGroup, /aria-hidden=\{hidden\|\|undefined\}/);
@@ -79,4 +82,14 @@ test("SlotGroup draws through slotRowBadges; the data and its helpers are untouc
   assert.match(app, /return \{date,depth,status,isPaid:!!displayPaid,isTerminal\};/);
   // Both views use the shared SlotGroup (Detalles de Pagos and the Student Portal).
   assert.equal((app.match(/<SlotGroup /g) || []).length, 2);
+});
+
+test("Detalles de Pagos (showFinalState): original/intermediate dates keep only 'Reprogramada'; the final date shows its real state and payment", () => {
+  const final = (status, paid) => slotRowBadges({ rescheduled: true, isTerminal: true, status, paid, showFinalState: true });
+  assert.deepEqual(final("done", true), { state: true, payment: true }, "Realizada + Pagada");
+  assert.deepEqual(final("done", false), { state: true, payment: true }, "Realizada + Pendiente");
+  assert.deepEqual(final("scheduled", true), { state: true, payment: true }, "future: Programada + Pagada");
+  assert.deepEqual(slotRowBadges({ rescheduled: true, isTerminal: false, status: "reprogrammed", paid: true, showFinalState: true }), { state: true, payment: false }, "never a payment badge on an original/intermediate date");
+  assert.deepEqual(slotRowBadges({ rescheduled: false, isTerminal: true, status: "done", paid: true, showFinalState: true }), { state: true, payment: true });
+  assert.deepEqual(slotRowBadges({ rescheduled: true, isTerminal: true, status: "done", paid: true }), { state: false, payment: true }, "portal default unchanged");
 });

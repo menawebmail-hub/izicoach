@@ -459,6 +459,26 @@ Past dates, dates with attendance, reprogrammed or arriving dates, resume (pause
 
 ---
 
+## BUG-COBROS-07 — Historial de Pagos shows original class dates; Detalles counters 0 for a completed combo; final date hides "Realizada"
+**Status:** fixed on branch `fix/payment-history-dates` (from `main` `fbc575e`), committed locally 2026-11-24, NOT pushed, NOT deployed  
+**Area:** PaymentCard → Historial de Pagos / Compartir, PagoModal (Detalles de Pagos), `slotRowBadges`  
+**Priority:** Medium
+
+### Root causes (real case: Pato Ojeda, class 4 reprogrammed 04/11 -> 23/11)
+- A. `payments[].dates` stores the paid slots' contractual dates (their identity); Historial de Pagos and the comprobante (preview + shared image) drew them as-is, never through the slot reader Detalles uses.
+- B. PagoModal lists `getVisibleClassEntitlements` (a completed, not archived combo stays listed) but its counters came from `getAccountCounters`, which counts only `getCountedClassEntitlements` (closed combos excluded) -> 0 / 0 / 0.
+- C. `slotRowBadges` (BUG-COBROS-02) hid the state badge of a final date that was done and paid ("Pagada" only).
+
+### Fix
+- A. `paymentDateChains(student, payment, cards)`: each stored date read with `createSlotReader`; a reprogramming with a destination (chains, recoveries) yields its whole path. Historial and Compartir (preview and image) draw it like Detalles de Pagos: one number, the original date, then "↳" each later date in green, "Pagada" only on the final date; a class never reprogrammed is unchanged. History entries carry their `comboIndex`; the class is also found by `sourceClassId` (archived combos, student no longer on the roster). The panel and Compartir use the same dates; the stored payment (dates, fecha de pago, monto, forma de pago, cantidad) is never changed.
+- B. `getAccountCounters(s, classes, {closedVisibleFallback:true})`, used only by PagoModal: when no open combo/individual exists, it counts the visible closed ones (Pato: 8 Pagadas / 8 Realizadas / 0 Restantes). With an open combo the result is identical to Cobros; Cobros and the card are unchanged; the progress bar keeps its previous rule (only with an open combo).
+- C. `slotRowBadges({..., showFinalState})`, passed only by PagoModal's SlotGroup: original/intermediate dates keep only "Reprogramada"; the final date shows its real state (Realizada / Programada…) plus its payment badge. The Student Portal keeps the previous presentation (no portal change).
+
+### Verification
+`src/schedule/paymentHistoryDates.test.js` (9; mutations of A and B fail as expected), `slotRowBadges.test.js` (+1, wiring updated); `npm test` 209/209; local harness `.local-tests/payment-history-dates.jsdom.test.mjs` (2, real PaymentCard/PagoModal); other harness failures identical on `main`; build clean; oxlint 363 (= main). No production access.
+
+---
+
 ## BUG-AGENDA-06 — Eliminar clase (red trash) destroyed combos, payments and Finanzas incomes
 **Status:** FIXED and DEPLOYED 2026-11-24 — `6690886` merged via PR menawebmail-hub/izicoach#2 as `main` `10f39bc`; production bundle `index-D4CxLY4T.js`  
 **Area:** Agenda class modal / Editar Clase → `handleDeleteClass`  

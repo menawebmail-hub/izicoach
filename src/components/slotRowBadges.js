@@ -9,10 +9,12 @@
  *   - any other final state, and every date of a slot that was never rescheduled: both
  *     badges, exactly as before.
  * It never changes what is paid, given or rescheduled; it only decides what is drawn.
+ * showFinalState (Cobros → Detalles de Pagos only): the final date always shows its real state badge (Realizada when
+ * it was given, Programada when it is ahead…) next to its payment badge; original and intermediate dates are unchanged.
  */
-export function slotRowBadges({ rescheduled, isTerminal, status, paid }) {
+export function slotRowBadges({ rescheduled, isTerminal, status, paid, showFinalState = false }) {
   if (!rescheduled) return { state: true, payment: true };
   if (!isTerminal) return { state: true, payment: false };
-  if (status === "done" && paid) return { state: false, payment: true };
+  if (status === "done" && paid && !showFinalState) return { state: false, payment: true };
   return { state: true, payment: true };
 }
