@@ -460,7 +460,7 @@ Past dates, dates with attendance, reprogrammed or arriving dates, resume (pause
 ---
 
 ## BUG-COBROS-07 — Historial de Pagos shows original class dates; Detalles counters 0 for a completed combo; final date hides "Realizada"
-**Status:** fixed on branch `fix/payment-history-dates` (from `main` `fbc575e`), committed locally 2026-11-24, NOT pushed, NOT deployed  
+**Status:** FIXED and DEPLOYED 2026-11-24 — `aff2d4f` merged via PR menawebmail-hub/izicoach#3 as `main` `44976b8`; production bundle `index-CDnJPXpX.js` (sha256 = local build of main)  
 **Area:** PaymentCard → Historial de Pagos / Compartir, PagoModal (Detalles de Pagos), `slotRowBadges`  
 **Priority:** Medium
 

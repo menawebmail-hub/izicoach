@@ -1,11 +1,13 @@
 SESSION_STATE.md — IziCoach
 
-# Current task — BUG-COBROS-07 Historial de Pagos dates / Detalles counters / final-date badges (branch `fix/payment-history-dates` from `main` fbc575e)
+# Last task — BUG-COBROS-07 Historial de Pagos dates / Detalles counters / final-date badges: DONE (merged and deployed 2026-11-24)
 
-- A (original + "↳" reprogrammed dates in Historial and Compartir), B and C implemented, tested and committed locally
-  (authorized 2026-11-24; see docs/BUGS.md BUG-COBROS-07). NOT pushed, no PR, not deployed — each needs authorization.
+- PR menawebmail-hub/izicoach#3 merged into `main` as `44976b8` (branch `fix/payment-history-dates`, `aff2d4f`);
+  production serves `index-CDnJPXpX.js` (sha256 = local build of main). Details in docs/BUGS.md BUG-COBROS-07.
+- Not verified signed in with real data (no production session). Possible follow-up: align the portal's Mis Clases final-date
+  badges with Detalles (one-line change, touches the portal).
 
-# Last task — BUG-AGENDA-06 safe "Eliminar clase": DONE (merged and deployed 2026-11-24)
+# Previous task — BUG-AGENDA-06 safe "Eliminar clase": DONE (merged and deployed 2026-11-24)
 
 - PR menawebmail-hub/izicoach#2 merged into `main` as `10f39bc` (branch `fix/delete-class-safe`, `6690886`); production
   serves `index-D4CxLY4T.js` (sha256 = local build of main). Read-only smoke OK; details in docs/BUGS.md BUG-AGENDA-06.
