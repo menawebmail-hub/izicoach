@@ -459,6 +459,42 @@ Past dates, dates with attendance, reprogrammed or arriving dates, resume (pause
 
 ---
 
+## BUG-AGENDA-07 — A mensual class reads grey "Sin pagar" (and locks Asistencia) because of another class's combo
+**Status:** FIXED on branch `fix/agenda-grey-class-combos` (not committed yet)  
+**Area:** Agenda grey cards (day + week view), Asistencia lock, Renovar Combo, Pausar → end of package (`isNextComboPending`)  
+**Priority:** High (Asistencia locked on a paid mensual class)
+
+### Root cause (reported case: Competencia, mensual student Camila who once took individual classes)
+`isNextComboPending` took EVERY non-mensual combo of each student (`total>0 || packType!=="mensual"`, archived ones
+included) from ANY class, pooled their dates and greyed the card when its date was after the last one (or in a gap).
+Camila's old individual of another class ends in October, so every later Competencia card read grey "Sin pagar", its
+Asistencia button was locked and "Renovar Combo" was offered. Pre-Com read white because none of its students has a
+non-mensual combo. Renovar Combo had the same gap: it renewed the student's last combo of any class.
+
+### Fix
+- `src/schedule/classCombos.js` (pure): `comboClassMembership` / `mensualClassMembership` / `classCombosAt`. A combo
+  belongs to a class by `sourceClassId`; legacy (none, or an orphan id naming no existing class — Pausar's rule) only
+  when exactly one class the student is enrolled in holds its dates; ambiguous (none or several) is never assumed.
+  When a mensual of that class has started, combos started before it never grey the card (whatever the mensual's
+  payment state); a combo of that class started after it still does.
+- `isNextComboPending(cls, students, scope)` reads only `classCombosOfCard` (= `classCombosAt` with the student's
+  `getClassEntitlements` / `getAllMensualEntitlements`); the rest of its rule (inside / gap / after) is unchanged.
+- Agenda passes `greyScope` (raw class rows + their ids) to the day card, the week view, the Asistencia lock and
+  Renovar Combo. Renovar renews only `classCombosOfCard` combos of that class and stamps the new combo with
+  `sourceClassId` (as Cobros' renewal and Pato's release already do).
+- Pausar → end of package passes its series (`id`, `classes:[series]`, `knownSeriesIds`) and `ignoreMensual`: its grey
+  reading stays combo-only and only sees the combos its own step 1 already associates with the series.
+
+### Verification
+`src/schedule/classCombos.test.js` (13: reported case, mora, mensual ↔ combo in the same class, multiple classes,
+archived, groups, legacy / ambiguous / orphan, legacy mensual, Renovar, wiring, Pausar); `releaseWiring` assertions
+updated; `npm test` 222/222; old-vs-new comparison on 20,400 random cards and 2,400 Pausar targets whose combos are all
+of the class: identical (scratch, not committed); local harness `.local-tests/agenda-grey-class-combos.jsdom.test.mjs`
+(2, real Agenda: fails on `main`, passes on the branch); other harness failures identical on `main`; build clean;
+oxlint 364 (= main). Not checked with real data (no production access).
+
+---
+
 ## BUG-COBROS-07 — Historial de Pagos shows original class dates; Detalles counters 0 for a completed combo; final date hides "Realizada"
 **Status:** FIXED and DEPLOYED 2026-11-24 — `aff2d4f` merged via PR menawebmail-hub/izicoach#3 as `main` `44976b8`; production bundle `index-CDnJPXpX.js` (sha256 = local build of main)  
 **Area:** PaymentCard → Historial de Pagos / Compartir, PagoModal (Detalles de Pagos), `slotRowBadges`  

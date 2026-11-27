@@ -1,6 +1,13 @@
 SESSION_STATE.md — IziCoach
 
-# Last task — Cobros «Próxima mensualidad» badge: DONE (merged and deployed 2026-11-26)
+# Current task — BUG-AGENDA-07 grey "Sin pagar" from another class's combo: IMPLEMENTED, awaiting commit authorization
+
+- Branch `fix/agenda-grey-class-combos` (from `main` `dbc876d`), uncommitted: `src/schedule/classCombos.js` (+ test),
+  `isNextComboPending` / `classCombosOfCard`, Agenda `greyScope`, Renovar Combo, Pausar call; three test loader lists
+  and `releaseWiring` assertions updated. Details and verification in docs/BUGS.md BUG-AGENDA-07.
+- Remaining: commit / push / PR / merge / deploy, each only with authorization. Not checked against Camila's real data.
+
+# Previous task — Cobros «Próxima mensualidad» badge: DONE (merged and deployed 2026-11-26)
 
 - PR menawebmail-hub/izicoach#4 merged into `main` as `ca8c177` (branch `fix/next-mensual-pending-badge`, `6185a1c`);
   production serves `index-DCOF_ZbZ.js` (sha256 = local build of main). In the Cobros PaymentCard «Próxima mensualidad»

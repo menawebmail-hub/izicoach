@@ -23,7 +23,8 @@ import { additionMessage, applyAdditionToClassRow, applyAdditionToStudents, find
 import { cleanCombosAfterClassRemoval, comboDatesLeftWithoutCard, editableFromCard, editRefusalMessage, keepDatesWithHistory, regenerateOccurrences, seriesFieldsFromEdit, singleDateEditMessage, singleDateRefusedChanges, studentRemovalBlock, studentRemovalMessage, weekdayChangeMessage } from "./schedule/classEditScope.js";
 import { createSlotReader, dueDadaNoticeCount, effectiveComboUsed, getSlotFulfillmentDate, givenByReading, interpretContractDate, isClassDone } from "./schedule/slotStatus.js";
 import { comboIndexWithMoveInto, countUsedForCombo, hasSlotMoves } from "./schedule/slotMoves.js";
-import { noticeOf, readAttendance, slotCardOn, slotClassId } from "./schedule/attendanceRead.js";
+import { noticeOf, readAttendance, seriesIdOf, slotCardOn, slotClassId } from "./schedule/attendanceRead.js";
+import { classCombosAt } from "./schedule/classCombos.js";
 import { applyOverrideToClassRow, withoutCardOverride, overrideCardFields, overrideChanges, overrideRefusal, overrideValuesFrom, reprogDestinationValues, seriesEditFromCard } from "./schedule/occurrenceOverrides.js";
 import { applyNoticesToClassRow, individualRecoveryMessage, isWholeClassAbsence, noticeMessage, noticeWriteRefusal, pendingNoticeStudentIds } from "./schedule/absenceNotices.js";
 import { isDeletedEntry, markAddedDatesDeleted, normalizeDeletedDates } from "./schedule/deletedDates.js";
@@ -1265,7 +1266,7 @@ const resolveEndOfPackageTarget=({series,students,slotDate,todayDate,knownSeries
     if(++scanned>END_OF_PACKAGE_SCAN_LIMIT) break;
     if(g<=limitDate||(todayDate&&g<=todayDate)) continue;
     if(occupied.has(g)||dc[g]||chainTargets.has(g)||loggedDates.has(g)) continue;
-    const grey=affected.every(a=>isNextComboPending({date:g,students:[a.studentId],dateCancellations:dc,_isRescheduledInstance:false},students));
+    const grey=affected.every(a=>isNextComboPending({id:seriesId,date:g,students:[a.studentId],dateCancellations:dc,_isRescheduledInstance:false},students,{classes:[series],knownSeriesIds,ignoreMensual:true}));
     if(!grey) continue;
     return {ok:true,date:g,terminalDate,sourceClassId:seriesId,limitDate,affectedComboRefs:affected.map(a=>({studentId:a.studentId,comboIndex:a.comboIndex,comboId:a.combo.id}))};
   }
@@ -1735,13 +1736,17 @@ function resolveInitialMensualPaidVal(combo,classDate){
 function getEffectiveTotal(_s, c, _classes=[]) {
   return c?.total||0;
 }
-// Check if a class date is beyond the active combo (combo done, next unpaid)
-function isNextComboPending(cls, students) {
+// Check if a class date is beyond the active combo (combo done, next unpaid).
+// Only the combos of THIS class count (classCombosAt: sourceClassId, or an unambiguous legacy combo); a student whose
+// current modality in this class is mensual never makes it grey. scope = {classes, knownSeriesIds}: every class (raw
+// rows or cards) used to place legacy combos; without it only this card is known. Pausar (end of package) passes its
+// series and ignoreMensual: it only ever moves combo slots, so its grey reading stays combo-only, as before.
+function isNextComboPending(cls, students, scope={}) {
   if(cls._isRescheduledInstance) return false;
   const clsStudents=(cls.students||[]).map(id=>students.find(s=>s.id===id)).filter(Boolean);
   if(clsStudents.length===0) return false;
   return clsStudents.some(s=>{
-    const combos=(s.combos||[]).filter(c=>c.total>0||(c.packType&&c.packType!=="mensual"));
+    const combos=classCombosOfCard(s,cls,scope);
     if(combos.length===0) return false;
     const coveredDates=new Set(combos.flatMap(c=>c.dates||[]));
     // If the date is in the combo → not grey
@@ -1759,6 +1764,11 @@ function isNextComboPending(cls, students) {
     if(cls.date>allDates[0]&&cls.date<lastDate) return true;
     return false;
   });
+}
+// The class combos of the card's class that decide it for one student (see isNextComboPending).
+function classCombosOfCard(s, cls, scope={}) {
+  return classCombosAt({classCombos:getClassEntitlements(s),mensuals:scope.ignoreMensual?[]:getAllMensualEntitlements(s),seriesId:seriesIdOf(cls),studentId:s.id,
+    date:cls.date,classes:scope.classes||[cls],knownSeriesIds:scope.knownSeriesIds});
 }
 // getRem is a thin compatibility wrapper: mensual keeps exclusive priority for any
 // existing caller that only understands one combined number (unchanged contract).
@@ -6076,6 +6086,9 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAb
   // written until the coach confirms; the App orchestrator re-validates everything against the latest state.
   const [releaseBusy,setReleaseBusy]=useState(false);
   const [addDayFor,setAddDayFor]=useState(null); // series id of the open "Agregar día al combo"
+  // Grey "Sin pagar" cards, the Asistencia lock and Renovar Combo read only the combos of each card's own class.
+  const greyScopeClasses=rawClasses||classes;
+  const greyScope={classes:greyScopeClasses,knownSeriesIds:new Set((greyScopeClasses||[]).map(seriesIdOf))};
   const releaseCandidateOf=(c)=>{
     if(!onReleaseAndRenew||!c||!c.cancelled||c.cancelType!=="cancelled_reprog"||!c.rescheduledTo) return null;
     const cand=resolveReleaseCandidate({classes:rawClasses||classes,students,seriesId:c._seriesId||c.id,date:c.date,todayDate:todayIso()});
@@ -6246,7 +6259,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAb
               // A releasable original date reads as a neutral grey card (cv), never as "Reprogramada".
               const relCand=releaseCandidateOf(c);
               const cv=relCand?{...c,cancelled:false,cancelType:null,rescheduledTo:null,paused:false}:c;
-              const isGreyCard=!!relCand||isNextComboPending(c,students);
+              const isGreyCard=!!relCand||isNextComboPending(c,students,greyScope);
               const isCancelled=cv.cancelled&&cv.cancelType==="cancelled";
               const agSt=resolveAgendaCardStatus(c,students,classes,TODAY_DATE);
               const agMenu=resolveAgendaMenu(c,agSt,WEEK_AGO);
@@ -6327,7 +6340,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAb
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                     {[
                       {label:"Editar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,action:()=>{setEditCls(c);setHighlightCls(null);},disabled:false,color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
-                      {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt({...c,attendanceLog:c.attendanceLog||[]});setHighlightCls(null);},disabled:isNextComboPending(c,students),color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
+                      {label:"Asistencia",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>,action:()=>{setAtt({...c,attendanceLog:c.attendanceLog||[]});setHighlightCls(null);},disabled:isNextComboPending(c,students,greyScope),color:"linear-gradient(135deg,#2E7D32,#43A047,#65CE5A)"},
                       {label:c.paused||c.cancelType==="paused"?"▶ Reanudar":"⏸ Pausar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{c.paused||c.cancelType==="paused"?<polygon points="5 3 19 12 5 21 5 3"/>:<g><line x1="10" y1="4" x2="10" y2="20"/><line x1="14" y1="4" x2="14" y2="20"/></g>}</svg>,action:()=>{if(c.paused||c.cancelType==="paused"){setShowResume(c);}else{setShowPause(c);}setHighlightCls(null);},disabled:c.date<WEEK_AGO,color:c.date<WEEK_AGO?"#ccc":c.paused||c.cancelType==="paused"?"linear-gradient(135deg,#2E7D32,#43A047)":"linear-gradient(135deg,#E65100,#FF8F00)"},
                       {label:c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo?"Asignar fecha":c.cancelled?"Reactivar":"Reprogramar / Cancelar",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="15" x2="15" y2="15"/></svg>,action:()=>{if(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo){setShowCancel(c);}else if(c.cancelled){onSaveClass({...c,cancelled:false,cancelType:null,rescheduledTo:null,applyToAll:false,_reactivating:true},true);}else{setShowCancel(c);}setHighlightCls(null);},disabled:(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo)?false:c.date<WEEK_AGO,color:(c.cancelled&&c.cancelType==="cancelled_reprog"&&!c.rescheduledTo)?"linear-gradient(135deg,#1565C0,#42A5F5)":c.date<WEEK_AGO?"#ccc":c.cancelled&&!c.rescheduledTo?"linear-gradient(135deg,#1565C0,#42A5F5)":c.cancelled?"linear-gradient(135deg,#1565C0,#42A5F5)":"linear-gradient(135deg,#E65100,#FF8F00)"},
                     ].map(btn=>(
@@ -6346,7 +6359,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAb
                   {(()=>{
                     // Use selDay (the currently selected date) to check if this is a gray class
                     const clsForCheck={...c,date:selDay};
-                    const needsRenewal=isNextComboPending(clsForCheck,students);
+                    const needsRenewal=isNextComboPending(clsForCheck,students,greyScope);
                     if(!needsRenewal) return null;
                     const handleRenovar=()=>{
                       // Fail-fast, before any onUpdateStudent write below: if this class has a
@@ -6356,10 +6369,12 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAb
                       // Checked once here, for the whole class, so an invalid calendar blocks every
                       // student's renewal rather than only the per-student date list coming up empty.
                       const classDowSetRenovar=classDowSetFrom(c.days||[]);
+                      // Only combos of THIS class are ever renewed (never another class's, never before a current mensual).
+                      const renewableCombosOf=(st)=>classCombosOfCard(st,clsForCheck,greyScope).filter(x=>x.total>0&&x.packType!=="mensual"&&x.packType!=="individual");
                       const hasRenewableCombo=(c.students||[]).some(sid=>{
                         const st=students.find(s=>s.id===sid);
                         if(!st) return false;
-                        return (st.combos||[]).some(x=>x.total>0&&x.packType!=="mensual"&&x.packType!=="individual");
+                        return renewableCombosOf(st).length>0;
                       });
                       if(hasRenewableCombo&&classDowSetRenovar.size===0){
                         alert(NO_CALENDAR_PAGO_MESSAGE);
@@ -6369,7 +6384,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAb
                         const st=students.find(s=>s.id===sid);
                         if(!st) return;
                         const combos=st.combos||[];
-                        const classCombos=combos.filter(x=>x.total>0&&x.packType!=="mensual"&&x.packType!=="individual");
+                        const classCombos=renewableCombosOf(st);
                         const lastCombo=classCombos[classCombos.length-1];
                         if(!lastCombo) return;
                         // Use real occurrences from the class
@@ -6395,7 +6410,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAb
                             }
                           }
                         }
-                        const newCombo={id:combos.length+1,total:lastCombo.total,packType:lastCombo.packType||"combo",used:0,paid:false,paidCount:0,date:newDates[0]||selDay,amount:lastCombo.amount,dates:newDates,payments:[]};
+                        const newCombo={id:combos.length+1,total:lastCombo.total,packType:lastCombo.packType||"combo",sourceClassId:c._seriesId||c.id,used:0,paid:false,paidCount:0,date:newDates[0]||selDay,amount:lastCombo.amount,dates:newDates,payments:[]};
                         onUpdateStudent({...st,combos:[...combos,newCombo]});
                       });
                       setHighlightCls(null);
@@ -6502,7 +6517,7 @@ function Agenda({ students, classes, rawClasses, onSaveClass, onAttendance, onAb
                     const rvInfo=revertInfoOf(c,agMenu);
                     const cvRel=releaseCandidateOf(c);
                     const cv=cvRel?{...c,cancelled:false,cancelType:null,rescheduledTo:null,paused:false}:c;
-                    const cvGrey=!!cvRel||isNextComboPending(c,students);
+                    const cvGrey=!!cvRel||isNextComboPending(c,students,greyScope);
                     const canOpenMenu=!agMenu.readOnly||!!rvInfo||!!cvRel;
                     const reprogTo=c.rescheduledTo||agSt.reprogSettledTo;
                     return (
