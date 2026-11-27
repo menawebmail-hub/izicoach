@@ -54,10 +54,10 @@ test("Agenda: a releasable date reads grey and opens only the renewal, in the da
   assert.match(app, /<Agenda onReleaseAndRenew=\{releaseAndRenew\} /);
   assert.match(app, /const releaseCandidateOf=\(c\)=>\{/);
   assert.equal((app.match(/\{const rc=releaseCandidateOf\(c\);if\(rc\) return renderReleaseModal\(c,rc\);\}\s*\n\s*if\(resolveAgendaMenu\(c,resolveAgendaCardStatus\(c,students,classes,TODAY_DATE\),WEEK_AGO\)\.readOnly\) return renderRevertModal\(c\);/g) || []).length, 2);
-  assert.match(app, /const isGreyCard=!!relCand\|\|isNextComboPending\(c,students\);/);
+  assert.match(app, /const isGreyCard=!!relCand\|\|isNextComboPending\(c,students,greyScope\);/);
   assert.match(app, /const isReprogWithDate=cv\.cancelled&&cv\.cancelType==="cancelled_reprog"&&reprogTo;/);
   assert.match(app, /const canOpenMenu=!agMenu\.readOnly\|\|!!rvInfo\|\|!!relCand;/);
-  assert.match(app, /const cvGrey=!!cvRel\|\|isNextComboPending\(c,students\);/);
+  assert.match(app, /const cvGrey=!!cvRel\|\|isNextComboPending\(c,students,greyScope\);/);
   assert.match(app, /const canOpenMenu=!agMenu\.readOnly\|\|!!rvInfo\|\|!!cvRel;/);
   assert.match(app, /onReleaseAndRenew\(\{seriesId:cand\.seriesId,date:cand\.date\}\)/);
 });

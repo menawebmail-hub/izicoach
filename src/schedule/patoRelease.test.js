@@ -8,7 +8,7 @@ const { loadAppFunctions } = await import("../test/loadAppFunctions.js");
 const A = await loadAppFunctions([
   "TODAY_DATE", "isClassDone", "interpretContractDate", "resolveSlotPayments",
   "buildSlotHistoryRows", "buildPersonSlotRows", "getSlotFulfillmentDate", "isComboClosed",
-  "isNextComboPending", "CLASS_DAY_MAP", "CLASS_DAY_ALIASES", "normalizeValidClassDays", "classDowSetFrom",
+  "isNextComboPending", "classCombosOfCard", "getClassEntitlements", "getAllMensualEntitlements", "CLASS_DAY_MAP", "CLASS_DAY_ALIASES", "normalizeValidClassDays", "classDowSetFrom",
   "isoOfDate", "collectSlotPathDates", "collectComboOccupiedDates", "isValidIsoDate", "getComboEffectiveEnd",
   "getComboDcCandidates", "buildRenewalDates", "expandClasses", "slotReadingsOf", "sameSlotReadings",
   "planRelease", "buildRenewalAfterRelease", "resolveReleaseCandidate", "findReleaseCandidateForStudent",
