@@ -8237,7 +8237,7 @@ function PaymentCard({ student:s, onUpdate, classes, addIncome, packages=[], sen
                         <span style={{fontWeight:700,color:C.mutedDark}}>Próxima mensualidad:</span><br/>
                         <b>{mensualPeriodLabel(nextMes)+" · "+fmtMoney(nextMonto)}</b>
                       </div>
-                      <span style={{fontSize:10,fontWeight:700,color:nextPaid?"#2E7D32":"#F57F17",background:C.white,border:"1px solid "+(nextPaid?"#66BB6A":"#FFB74D"),borderRadius:20,padding:"3px 9px",whiteSpace:"nowrap"}}>{nextPaid?"✓ Pagado":"⏳ Pendiente"}</span>
+                      {nextPaid&&<span style={{fontSize:10,fontWeight:700,color:"#2E7D32",background:C.white,border:"1px solid #66BB6A",borderRadius:20,padding:"3px 9px",whiteSpace:"nowrap"}}>✓ Pagado</span>}
                     </div>
                   );
                 })()}

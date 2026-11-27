@@ -1,5 +1,16 @@
 SESSION_STATE.md — IziCoach
 
+# Current task — Cobros «Próxima mensualidad» badge: IMPLEMENTED, awaiting commit authorization
+
+- Branch `fix/next-mensual-pending-badge` (from `main` `1d05844`), uncommitted. Change in the Cobros PaymentCard
+  «Próxima mensualidad» box (App.jsx, `{nextPaid&&<span …>✓ Pagado</span>}`): an unpaid next month shows no badge
+  (was «⏳ Pendiente»); paid in advance keeps the same green «✓ Pagado» badge. Box background/text/amount unchanged;
+  `buildMensualSummary` and the Student Portal (`nextStatus`, still «Pendiente») untouched.
+- Verified: unit tests 209/209, build OK, oxlint count unchanged vs main; local jsdom `.local-tests/next-mensual-badge`
+  4/4 (unpaid, paid in advance, mora, portal unchanged); `mensual-precios.jsdom` and `portal-mensual-november`
+  assertions on the old badge updated (local, git-excluded). Not checked in a signed-in browser.
+- Remaining: commit / push / PR / merge / deploy, each only with authorization.
+
 # Last task — BUG-COBROS-07 Historial de Pagos dates / Detalles counters / final-date badges: DONE (merged and deployed 2026-11-24)
 
 - PR menawebmail-hub/izicoach#3 merged into `main` as `44976b8` (branch `fix/payment-history-dates`, `aff2d4f`);
