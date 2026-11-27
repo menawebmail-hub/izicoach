@@ -1,17 +1,15 @@
 SESSION_STATE.md — IziCoach
 
-# Current task — Cobros «Próxima mensualidad» badge: IMPLEMENTED, awaiting commit authorization
+# Last task — Cobros «Próxima mensualidad» badge: DONE (merged and deployed 2026-11-26)
 
-- Branch `fix/next-mensual-pending-badge` (from `main` `1d05844`), uncommitted. Change in the Cobros PaymentCard
-  «Próxima mensualidad» box (App.jsx, `{nextPaid&&<span …>✓ Pagado</span>}`): an unpaid next month shows no badge
-  (was «⏳ Pendiente»); paid in advance keeps the same green «✓ Pagado» badge. Box background/text/amount unchanged;
-  `buildMensualSummary` and the Student Portal (`nextStatus`, still «Pendiente») untouched.
-- Verified: unit tests 209/209, build OK, oxlint count unchanged vs main; local jsdom `.local-tests/next-mensual-badge`
-  4/4 (unpaid, paid in advance, mora, portal unchanged); `mensual-precios.jsdom` and `portal-mensual-november`
-  assertions on the old badge updated (local, git-excluded). Not checked in a signed-in browser.
-- Remaining: commit / push / PR / merge / deploy, each only with authorization.
+- PR menawebmail-hub/izicoach#4 merged into `main` as `ca8c177` (branch `fix/next-mensual-pending-badge`, `6185a1c`);
+  production serves `index-DCOF_ZbZ.js` (sha256 = local build of main). In the Cobros PaymentCard «Próxima mensualidad»
+  box an unpaid next month shows no badge (was «⏳ Pendiente»); paid in advance keeps the green «✓ Pagado» badge. Box
+  background/text/amount, `buildMensualSummary` and the Student Portal (still «Pendiente») untouched.
+- Verified: unit tests 209/209, build, oxlint unchanged; local jsdom `.local-tests/next-mensual-badge` 4/4. Not checked
+  signed in with real data.
 
-# Last task — BUG-COBROS-07 Historial de Pagos dates / Detalles counters / final-date badges: DONE (merged and deployed 2026-11-24)
+# Previous task — BUG-COBROS-07 Historial de Pagos dates / Detalles counters / final-date badges: DONE (merged and deployed 2026-11-24)
 
 - PR menawebmail-hub/izicoach#3 merged into `main` as `44976b8` (branch `fix/payment-history-dates`, `aff2d4f`);
   production serves `index-CDnJPXpX.js` (sha256 = local build of main). Details in docs/BUGS.md BUG-COBROS-07.
