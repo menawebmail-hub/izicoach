@@ -460,7 +460,7 @@ Past dates, dates with attendance, reprogrammed or arriving dates, resume (pause
 ---
 
 ## BUG-AGENDA-07 — A mensual class reads grey "Sin pagar" (and locks Asistencia) because of another class's combo
-**Status:** FIXED on branch `fix/agenda-grey-class-combos` (not committed yet)  
+**Status:** FIXED and DEPLOYED 2026-11-26 — `630ff7c` merged via PR menawebmail-hub/izicoach#5 as `main` `b7a0a94`; production bundle `index-Du1o6QCI.js` (sha256 = local build of main)  
 **Area:** Agenda grey cards (day + week view), Asistencia lock, Renovar Combo, Pausar → end of package (`isNextComboPending`)  
 **Priority:** High (Asistencia locked on a paid mensual class)
 
