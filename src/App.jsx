@@ -1788,18 +1788,27 @@ function getRem(s, classes=[]) {
 // (isClassDone) still applies. A slot still owing a makeup (ausente_reprog, or
 // cancelled_reprog with no rescheduledTo yet or a future one) never resolves, however
 // much time has passed — see getSlotFulfillmentDate.
-function isComboClosed(c, myClasses, studentId) {
+// The time-based fallback uses the class's own end time (+ margin, isClassDone) — the same rule Realizadas uses
+// (createSlotReader.isGiven) — so a combo closes once its last class reads Realizada, never only at midnight.
+// A pause already compensated by a resume (its replacement dates are in combo.dates) no longer keeps the combo open;
+// an active pause still does, and so does a compensated one whose combo holds fewer live slots than its total.
+// opts.slotsOnly: every slot resolved, whatever the payment state (getAccountCounters, renewed combos with debt).
+function isComboClosed(c, myClasses, studentId, opts={}) {
   const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
-  if(!(c.paid&&paidCount>=(c.total||1))) return false;
+  if(!opts.slotsOnly&&!(c.paid&&paidCount>=(c.total||1))) return false;
   // Stage 2.0: each slot is read in its own class (card and attendance), never another class on the same date.
   const nonPausedDates=(c.dates||[]).filter(d=>{
     const cl=slotCardOn(myClasses,c,d);
     return !(cl&&(cl.paused||cl.cancelType==="paused"));
   });
-  const hasPausedDates=(c.dates||[]).some(d=>{
+  const pausedDates=(c.dates||[]).filter(d=>{
     const cl=slotCardOn(myClasses,c,d);
     return cl&&(cl.paused||cl.cancelType==="paused");
   });
+  // Compensated = the same reading as the Pausada counter (dateCancellations.compensated or combo.resumeOperations).
+  const pauseReader=pausedDates.length>0?createSlotReader({classes:myClasses,combo:c,studentId}):null;
+  const hasActivePause=pausedDates.some(d=>!pauseReader.status(d).isCompensated);
+  const hasPausedDates=hasActivePause||(pausedDates.length>0&&nonPausedDates.length<(c.total||0));
   // Safe class deletion: a paid slot of a deleted date is resolved only once its internal expiry has passed.
   const deletion=(c.dates||[]).some(d=>slotCardOn(myClasses,c,d)?.deletedOccurrence)?comboDeletionOf({cards:myClasses,combo:c,studentId,todayDate:TODAY_DATE}):null;
   const allDone=nonPausedDates.length>0&&nonPausedDates.every(d=>{
@@ -1817,7 +1826,7 @@ function isComboClosed(c, myClasses, studentId) {
       const r=readAttendance({classes:myClasses,classId:slotCls,date:fulfillmentDate,studentId});
       if(r.state==="present"||(r.source==="attendance"&&r.state==="ausente_dada")) return true;
       if(r.state==="ausente_reprog") return false;
-      return isClassDone(fulfillmentDate,"23:59");
+      return isClassDone(fulfillmentDate,(cl&&cl.timeEnd)||"23:59");
     }
     const attEntry=myClasses.flatMap(cls=>cls.attendanceLog||[]).find(e=>e.date===fulfillmentDate);
     const wasPresent=attEntry?(attEntry.present||[]).includes(studentId):false;
@@ -1825,9 +1834,8 @@ function isComboClosed(c, myClasses, studentId) {
     const wasAusenteReprog=attEntry?(attEntry.ausente_reprog||[]).includes(studentId):false;
     if(wasPresent||wasAusenteDada) return true;
     if(wasAusenteReprog) return false;
-    // No explicit action recorded for this student on fulfillmentDate — preserve the
-    // historical time-based fallback.
-    return isClassDone(fulfillmentDate,"23:59");
+    // No explicit action recorded for this student on fulfillmentDate — the time-based fallback.
+    return isClassDone(fulfillmentDate,(cl&&cl.timeEnd)||"23:59");
   });
   return allDone&&!hasPausedDates;
 }
@@ -2184,6 +2192,18 @@ function getAccountCounters(s, classes=[], opts={}) {
   const myClasses=classes.filter(c=>c.students&&c.students.includes(s.id));
   const countedEntitlements=getCountedClassEntitlements(s, classes);
   const activeCombosForCount=(opts&&opts.closedVisibleFallback&&countedEntitlements.length===0)?getVisibleClassEntitlements(s, classes):countedEntitlements;
+  // Renewal: a combo whose every slot is resolved (isComboClosed slotsOnly — only its payment is missing) and that a
+  // LATER combo of the same class renewed is finished history: it keeps only its debt (No pagadas); Pagadas,
+  // Realizadas, Restantes, the other counters and the progress bar read the new combo. Never assumed when the class of
+  // either combo is unknown. A fully paid finished combo is already closed and not counted at all.
+  const comboClassKey=(c)=>{const id=slotClassId(myClasses,c,(c.dates||[])[0]||c.date);return id===undefined||id===null?null:String(id);};
+  const priorDebtOnly=new Set(activeCombosForCount.filter(({combo:c,sourceComboIndex:i})=>{
+    if(c.packType!=="combo") return false;
+    const key=comboClassKey(c);
+    if(key===null) return false;
+    const renewed=(s.combos||[]).slice(i+1).some(n=>n&&n.packType==="combo"&&comboClassKey(n)===key);
+    return renewed&&isComboClosed(c,myClasses,s.id,{slotsOnly:true});
+  }).map(({sourceComboIndex})=>sourceComboIndex));
   const allDatesRaw=activeCombosForCount.flatMap(({combo:c,sourceComboIndex})=>{
     let dates=[...(c.dates||[])];
     const paidCount=c.paidCount!==undefined?c.paidCount:(c.paid?c.total:0);
@@ -2223,7 +2243,7 @@ function getAccountCounters(s, classes=[], opts={}) {
       // contributes 0 or 1 to realizadas, never 2. A definitively-cancelled Combo slot is
       // billed and consumed like a given one (Individual is deliberately not extended).
       const isGiven=reader.isGiven(d);
-      return {date:d,isPaid,isGiven,isPast:isDone,isCancelled,isReprogWithDate,isReprogNoDate,isPaused,isCompensated:slot.isCompensated,isDisplaced,isDeleted:!!slot.isDeleted,deletedExpired:!!(deletion&&deletion.expired),packType:c.packType,sourceComboIndex,comboId:c.id,sourceClassId:c.sourceClassId,terminalDate:slot.terminalDate,reschedulePath:slot.reschedulePath,terminalStatus:slot.terminalStatus};
+      return {date:d,isPaid,isGiven,isPast:isDone,isCancelled,isReprogWithDate,isReprogNoDate,isPaused,isCompensated:slot.isCompensated,isDisplaced,isDeleted:!!slot.isDeleted,deletedExpired:!!(deletion&&deletion.expired),packType:c.packType,sourceComboIndex,priorDebtOnly:priorDebtOnly.has(sourceComboIndex),comboId:c.id,sourceClassId:c.sourceClassId,terminalDate:slot.terminalDate,reschedulePath:slot.reschedulePath,terminalStatus:slot.terminalStatus};
     });
   });
   // Dedup by (sourceComboIndex + date), NOT date alone: two distinct obligations
@@ -2244,29 +2264,32 @@ function getAccountCounters(s, classes=[], opts={}) {
   // cancelled slots keep the prior behavior of never appearing in either counter, and
   // never counting as given.
   // Safe class deletion: an unpaid slot of a deleted date is never debt.
+  // Renewal: the debt of a renewed, finished combo stays in No pagadas; every other figure reads `current` only.
   const noPagadas=allDates.filter(d=>!d.isPaid&&!d.isDisplaced&&!d.isDeleted&&(!d.isCancelled||d.packType==="combo")).length;
-  const pagadas=allDates.filter(d=>d.isPaid&&(!d.isCancelled||d.packType==="combo")).length;
-  const realizadas=allDates.filter(d=>d.isGiven&&!d.isPaused).length;
-  const canceladas=allDates.filter(d=>d.isCancelled).length;
-  const reprogramadas=allDates.filter(d=>d.isReprogWithDate).length;
-  const aReprogramar=allDates.filter(d=>d.isReprogNoDate&&!d.isDeleted).length;
+  const current=allDates.filter(d=>!d.priorDebtOnly);
+  const pagadas=current.filter(d=>d.isPaid&&(!d.isCancelled||d.packType==="combo")).length;
+  const realizadas=current.filter(d=>d.isGiven&&!d.isPaused).length;
+  const canceladas=current.filter(d=>d.isCancelled).length;
+  const reprogramadas=current.filter(d=>d.isReprogWithDate).length;
+  const aReprogramar=current.filter(d=>d.isReprogNoDate&&!d.isDeleted).length;
   // "Pausada" is the ACTIVE pause: a pause already compensated by a resume stays visible as
   // history in the lists but no longer counts here.
-  const pausadas=allDates.filter(d=>d.isPaused&&!d.isCompensated).length;
+  const pausadas=current.filter(d=>d.isPaused&&!d.isCompensated).length;
   // The same active pauses attributed to the class series that owns each contractual slot
   // (combo.sourceClassId), for consumers that list one entry per series (Dashboard alert).
   const pausadasBySource={};
-  allDates.forEach(d=>{if(d.isPaused&&!d.isCompensated){const k=String(d.sourceClassId);pausadasBySource[k]=(pausadasBySource[k]||0)+1;}});
-  const totalEntitlement=activeCombosForCount.reduce((sum,{combo:c})=>sum+(c.total||0),0);
+  current.forEach(d=>{if(d.isPaused&&!d.isCompensated){const k=String(d.sourceClassId);pausadasBySource[k]=(pausadasBySource[k]||0)+1;}});
+  const currentCombos=activeCombosForCount.filter(({sourceComboIndex})=>!priorDebtOnly.has(sourceComboIndex));
+  const totalEntitlement=currentCombos.reduce((sum,{combo:c})=>sum+(c.total||0),0);
   // Restantes represents ONLY Combo entitlement — an Individual (any state: programada,
   // realizada, pagada o no) never contributes, by construction (scoped to packType==="combo").
-  const totalEntitlementCombo=activeCombosForCount.filter(({combo:c})=>c.packType==="combo").reduce((sum,{combo:c})=>sum+(c.total||0),0);
+  const totalEntitlementCombo=currentCombos.filter(({combo:c})=>c.packType==="combo").reduce((sum,{combo:c})=>sum+(c.total||0),0);
   // realizadasCombo already includes definitively-cancelled Combo slots (isGiven=true
   // for those) — restantes must NOT subtract canceladasCombo separately, or a cancelled
   // slot would be discounted twice (once as "cancelled", once as "realized").
-  const realizadasCombo=allDates.filter(d=>d.isGiven&&!d.isPaused&&d.packType==="combo").length;
+  const realizadasCombo=current.filter(d=>d.isGiven&&!d.isPaused&&d.packType==="combo").length;
   // Safe class deletion: an unpaid slot of a deleted date, or a paid one past its internal expiry, is no longer remaining.
-  const deletedOutCombo=allDates.filter(d=>d.packType==="combo"&&d.isDeleted&&(!d.isPaid||d.deletedExpired)).length;
+  const deletedOutCombo=current.filter(d=>d.packType==="combo"&&d.isDeleted&&(!d.isPaid||d.deletedExpired)).length;
   const restantes=Math.max(0,totalEntitlementCombo-realizadasCombo-deletedOutCombo);
   return {noPagadas,pagadas,realizadas,restantes,canceladas,reprogramadas,aReprogramar,pausadas,pausadasBySource,totalEntitlement,totalEntitlementCombo,realizadasCombo};
 }

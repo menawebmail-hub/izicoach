@@ -1,6 +1,13 @@
 SESSION_STATE.md — IziCoach
 
-# Last task — BUG-AGENDA-07 grey "Sin pagar" from another class's combo: DONE (merged and deployed 2026-11-26)
+# Current task — BUG-COBROS-08 Renovar Combo counters: IMPLEMENTED, awaiting authorization (2026-11-27)
+
+- Branch `fix/combo-renewal-counters` from `main` `aa2b376`; uncommitted changes: `src/App.jsx` (`isComboClosed`,
+  `getAccountCounters`), new `src/schedule/comboRenewal.test.js`, docs. Details in docs/BUGS.md BUG-COBROS-08.
+- Verified: unit 236/236, local harness combo-renewal (3, fail on main), build, oxlint 364. Not checked with real data.
+- Next: owner authorization for commit / push / PR / merge / deploy. No SQL, no production writes.
+
+# Previous task — BUG-AGENDA-07 grey "Sin pagar" from another class's combo: DONE (merged and deployed 2026-11-26)
 
 - PR menawebmail-hub/izicoach#5 merged into `main` as `b7a0a94` (branch `fix/agenda-grey-class-combos`, `630ff7c`);
   production serves `index-Du1o6QCI.js` (sha256 = local build of main). Details in docs/BUGS.md BUG-AGENDA-07.
