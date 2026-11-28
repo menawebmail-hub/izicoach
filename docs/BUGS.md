@@ -495,6 +495,51 @@ oxlint 364 (= main). Not checked with real data (no production access).
 
 ---
 
+## BUG-COBROS-08 — After Renovar Combo the card adds the finished combo to the new one (4/4/4/4, «4 de 8»)
+**Status:** FIXED on branch `fix/combo-renewal-counters` (not committed / not deployed yet)  
+**Area:** `isComboClosed`, `getAccountCounters` (Cobros card, Detalles de Pagos, Student Portal Estado de Cuenta, Dashboard «Combos a renovar»)  
+**Priority:** Medium
+
+### Root cause (reported case: Gaby Garelli, combo of 4 paid and given, renewed right after its last class)
+Every Renovar entry point (PagoModal success step, Cobros card, Agenda grey card) appends an independent combo (used 0,
+unpaid, no payments); nothing extends the previous one. The card counters pool every combo that is not closed, and:
+- A. `isComboClosed`'s time fallback waited for 23:59 (+ margin, i.e. the next day) while Realizadas counts a class from
+  its own end time + 30 min. Between the end of the last class and midnight (no attendance taken) the old combo read
+  Realizada but not closed → 4 No pagadas / 4 Pagadas / 4 Realizadas / 4 Restantes, «4 de 8». The success-step
+  Renovar (paid + used = total) is offered exactly in that window.
+- E. Any paused date kept a combo open forever, even a pause already compensated by a resume.
+- F. A renewed combo with debt (not paid, so never closed) kept counting in Pagadas / Realizadas / Restantes / the bar.
+
+### Fix
+- `isComboClosed`: the time fallback uses the card's own `timeEnd` (the same rule as Realizadas, `createSlotReader`);
+  a paused date blocks only while the pause is active (compensated = the same reading as the Pausada counter:
+  `dateCancellations.compensated` or `combo.resumeOperations`), and a compensated pause still blocks when the combo holds
+  fewer live slots than its total. New `opts.slotsOnly` (all slots resolved, whatever the payment). Pausar / Reanudar
+  untouched.
+- `getAccountCounters`: a combo whose slots are all resolved and that a LATER combo of the same class (`sourceClassId`,
+  legacy: the class of its first date) renewed keeps only its unpaid slots in No pagadas; every other figure and the
+  progress bar read the new combo. Unknown class → never assumed. A combo with a class really pending (not given,
+  A Reprogramar, future recovery, Ausente – No dada, active pause) still counts in full (early renewal from Agenda
+  unchanged).
+- No write changes: combos, payments, attendance and Finanzas are never touched; no UI or design change.
+- Consequences: on the day of the last class a fully paid combo now closes at its end time + 30 min instead of the next
+  day (Cobros card «Renovar combo», Dashboard «Combos a renovar», Detalles «Combo anterior» group appear then).
+
+### Verification
+`src/schedule/comboRenewal.test.js` (14: cases A–F, never-closed-early guards, early renewal, multiple classes,
+individuals, groups, BUG-COBROS-07 fallback, no writes, wiring of the three entry points and readers; mutations of
+each of the three parts fail 6 / 1 / 2 tests); `npm test` 236/236; local harness
+`.local-tests/combo-renewal.jsdom.test.mjs` (2) + `combo-renewal-agenda.jsdom.test.mjs` (1) — real PaymentCard,
+PagoModal (pay last class → Renovar Combo) and Agenda, then card + Detalles counters — fail on `main` (PagoModal path
+reproduces 4/4/4/4 «4 de 8») and pass here; other harness failures identical on `main`; build clean; oxlint 364 (= main).
+Not checked with real data (Gaby).
+
+### Risks / not covered
+Detalles de Pagos keeps listing a renewed combo with debt in the «Vigente» rows (unchanged list; its counters now read
+the new combo + debt). Student Portal reads the same counters (not rendered in the harness).
+
+---
+
 ## BUG-COBROS-07 — Historial de Pagos shows original class dates; Detalles counters 0 for a completed combo; final date hides "Realizada"
 **Status:** FIXED and DEPLOYED 2026-11-24 — `aff2d4f` merged via PR menawebmail-hub/izicoach#3 as `main` `44976b8`; production bundle `index-CDnJPXpX.js` (sha256 = local build of main)  
 **Area:** PaymentCard → Historial de Pagos / Compartir, PagoModal (Detalles de Pagos), `slotRowBadges`  
